@@ -26,7 +26,7 @@ GraphicsEngine::GraphicsEngine(ContextImpl &context,
                          [&](auto &&i) { return FrameSyncObjects(*this); });
 }
 
-std::optional<SwapFrame> GraphicsEngine::beginFrame() {
+std::optional<SwapFrame> GraphicsEngine::m_beginFrame() {
   assert(!m_currentFrame);
   auto &frameSync = m_frameSyncs.at(getCurrentFrameId());
   frameSync.waitIfNeeded();
@@ -46,7 +46,7 @@ std::optional<SwapFrame> GraphicsEngine::beginFrame() {
   return *m_currentFrame;
 }
 
-void GraphicsEngine::endFrame() {
+void GraphicsEngine::m_endFrame() {
   assert(m_currentFrame);
   auto &frameSync = m_frameSyncs.at(getCurrentFrameId());
   endAndAdvanceFrame();
@@ -58,14 +58,25 @@ void GraphicsEngine::endFrame() {
   q.get().submit(submitInfo, frameSync.fence);
   q.get().present(presentInfo);
   frameSync.needFenceWait = true;
+  m_currentFrame.reset();
 }
 
 void GraphicsEngine::m_recreate_swapchain() {
   queue().acquire().get().waitIdle();
+  for (auto &&callback :
+       m_swapChainCallbacks |
+           std::views::transform(
+               [](auto &&pair) -> decltype(auto) { return pair.first; }))
+    std::invoke(callback);
   m_swapchain.reset();
   m_swapchain = std::make_unique<Swapchain>(
       context().device(), queue(),
       m_swapchainFactory.getCreateInfo(context().device()));
+  for (auto &&callback :
+       m_swapChainCallbacks |
+           std::views::transform(
+               [](auto &&pair) -> decltype(auto) { return pair.second; }))
+    std::invoke(callback, *m_swapchain);
 }
 
 bool GraphicsEngine::m_surface_minimized() {
@@ -76,6 +87,7 @@ bool GraphicsEngine::m_surface_minimized() {
   return extents.width == 0 || extents.height == 0;
 }
 
-GraphicsEngine::~GraphicsEngine() { queue().acquire().get().waitIdle(); }
+GraphicsEngine::~GraphicsEngine() = default;
 
+void GraphicsEngine::m_terminate() { queue().acquire().get().waitIdle(); }
 } // namespace imvk

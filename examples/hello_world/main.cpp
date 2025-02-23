@@ -1,6 +1,7 @@
 #include "imvk/base/Context.hpp"
 #include "imvk/graphics/Engine.hpp"
 
+#include "IMVKBasicRenderPass.hpp"
 #include "IMVKDevice.hpp"
 #include "IMVKShaderLoader.hpp"
 #include "IMVKWindow.hpp"
@@ -34,14 +35,20 @@ int main() try {
                                       .maxFramesInFlight = 2};
   auto graphicsEngine = imvkContext.createGraphicsEngine(geCI);
 
+  // Create basic render pass.
+  auto renderPass = imvk::examples::BasicRenderPass{*graphicsEngine};
+
   // Main application loop.
-  while (!window.shouldClose()) {
-    window.pollEvents();
-    auto frame = graphicsEngine->beginFrame();
-    if (!frame)
-      continue;
-    graphicsEngine->endFrame();
-  }
+  graphicsEngine->run(
+      [&](auto &frame) {
+        renderPass.run(frame, []() {
+          // TODO
+        });
+      },
+      [&]() {
+        window.pollEvents();
+        return !window.shouldClose();
+      });
 
   return 0;
 } catch (std::runtime_error &e) {
