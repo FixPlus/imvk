@@ -67,7 +67,10 @@ bool Window::shouldClose() const {
   return glfwWindowShouldClose(m_handle.get());
 }
 
-void Window::pollEvents() { glfwPollEvents(); }
+void Window::pollEvents() {
+  glfwPollEvents();
+  m_clock.frame();
+}
 
 std::vector<std::string> Window::surfaceExtensions() {
   init();

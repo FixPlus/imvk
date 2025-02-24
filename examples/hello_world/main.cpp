@@ -38,15 +38,28 @@ int main() try {
   // Create basic render pass.
   auto renderPass = imvk::examples::BasicRenderPass{*graphicsEngine};
 
+  auto vertexStage = std::make_shared<imvk::examples::BasicVertexStage>(
+      *graphicsEngine, "hello.vert");
+  auto fragmentStage = std::make_shared<imvk::examples::BasicFragmentStage>(
+      *graphicsEngine, "hello.frag", renderPass.pass(), 0u);
+  auto pipelinePool =
+      imvk::GraphicsPipelinePool<2u>{*graphicsEngine, /* cache size*/ 10u};
+
   // Main application loop.
   graphicsEngine->run(
-      [&](auto &frame) {
-        renderPass.run(frame, []() {
-          // TODO
+      [&](const imvk::SwapFrame &frame) {
+        renderPass.run(frame, [&]() {
+          auto &pipeline = pipelinePool.get(vertexStage, fragmentStage);
+          frame.frame().use(pipeline);
+          auto &commands = frame.frame().commands();
+          commands.bindGraphicsPipeline(pipeline->pipeline());
+          commands.draw(3u, 1u);
         });
       },
       [&]() {
         window.pollEvents();
+        if (window.clock().totalFrames() % 10000 == 0u)
+          std::cout << "fps: " << window.clock().fps() << std::endl;
         return !window.shouldClose();
       });
 

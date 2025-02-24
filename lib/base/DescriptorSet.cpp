@@ -7,7 +7,7 @@
 
 namespace imvk {
 DescriptorPool::DescriptorPool(vkw::Device &device,
-                               const vkw::DescriptorSetLayout &layout,
+                               vkw::DescriptorSetLayout &&layout,
                                uint32_t setsPerPool)
     : m_settings([&]() {
         PoolSettings ret{};
@@ -26,7 +26,7 @@ DescriptorPool::DescriptorPool(vkw::Device &device,
                                });
         return ret;
       }()),
-      m_state(std::make_shared<State>(device, layout)) {}
+      m_state(std::make_shared<State>(device, std::move(layout))) {}
 
 void DescriptorPool::SetDeleter::operator()(vkw::DescriptorSet *set) const {
   auto lock = std::unique_lock(m_origPool->second);
@@ -69,7 +69,7 @@ DescriptorPool::SetHandle DescriptorPool::get() {
         curIt = list.begin();
         continue;
       }
-      return {new vkw::DescriptorSet(pool.first, m_state->m_layout.get()),
+      return {new vkw::DescriptorSet(pool.first, m_state->m_layout),
               SetDeleter(m_state, curIt)};
     } while (startIt != curIt);
 
@@ -82,7 +82,7 @@ DescriptorPool::SetHandle DescriptorPool::get() {
       std::make_tuple());
   m_state->poolCount.fetch_add(1u);
   auto poolIt = list.begin();
-  return {new vkw::DescriptorSet(poolIt->first, m_state->m_layout.get()),
+  return {new vkw::DescriptorSet(poolIt->first, m_state->m_layout),
           SetDeleter(m_state, poolIt)};
 }
 
@@ -124,7 +124,7 @@ DescriptorSet::DescriptorSet(
 }
 
 const std::shared_ptr<DescriptorSetHandle> &
-DescriptorSet::get(const Frame &frame) {
+DescriptorSet::get(const Frame &frame) const {
   auto &set = m_fullCow ? m_sets.front() : m_sets[frame.id()];
 
   // keep primitives up to date.
@@ -142,4 +142,6 @@ DescriptorSet::get(const Frame &frame) {
 }
 
 DescriptorSet::~DescriptorSet() = default;
+
+DescriptorSetHandle::~DescriptorSetHandle() = default;
 } // namespace imvk

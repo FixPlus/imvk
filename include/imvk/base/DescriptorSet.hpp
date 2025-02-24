@@ -19,7 +19,7 @@ namespace imvk {
 /// desctruction which enables sharing allocated sets to other threads.
 class DescriptorPool {
 public:
-  DescriptorPool(vkw::Device &device, const vkw::DescriptorSetLayout &layout,
+  DescriptorPool(vkw::Device &device, vkw::DescriptorSetLayout &&layout,
                  uint32_t setsPerPool);
 
   virtual ~DescriptorPool() = default;
@@ -33,10 +33,10 @@ private:
   using PoolList = std::list<std::pair<vkw::DescriptorPool, std::mutex>>;
 
   struct State {
-    State(vkw::Device &device, const vkw::DescriptorSetLayout &layout)
-        : m_device(device), m_layout(layout) {}
+    State(vkw::Device &device, vkw::DescriptorSetLayout &&layout)
+        : m_device(device), m_layout(std::move(layout)) {}
     vkw::StrongReference<vkw::Device> m_device;
-    vkw::StrongReference<const vkw::DescriptorSetLayout> m_layout;
+    vkw::DescriptorSetLayout m_layout;
     PoolList pools;
     std::atomic<size_t> poolCount = 0u;
     std::mutex poolsMutex;
@@ -58,11 +58,11 @@ private:
 public:
   using SetHandle = std::unique_ptr<vkw::DescriptorSet, SetDeleter>;
 
-  const auto &descriptorLayout() const { return m_state->m_layout.get(); }
+  const auto &descriptorLayout() const { return m_state->m_layout; }
 
   /// @return range of pairs (binding id, binding info)
   auto bindingMap() const {
-    auto &layout = m_state->m_layout.get();
+    auto &layout = m_state->m_layout;
     return std::ranges::iota_view{0u, layout.info().bindingCount} |
            std::views::transform([&layout](auto &&i) {
              return std::make_pair(i, layout.info().pBindings[i]);
@@ -121,7 +121,13 @@ public:
   DescriptorSet(FramedEngine &engine, DescriptorPool &pool,
                 std::span<std::pair<Primitive *, unsigned>> primitives);
 
-  const std::shared_ptr<DescriptorSetHandle> &get(const Frame &frame);
+  DescriptorSet(const DescriptorSet &) = delete;
+  DescriptorSet(DescriptorSet &&) noexcept = default;
+
+  DescriptorSet &operator=(const DescriptorSet &) = delete;
+  DescriptorSet &operator=(DescriptorSet &&) noexcept = default;
+
+  const std::shared_ptr<DescriptorSetHandle> &get(const Frame &frame) const;
 
   ~DescriptorSet();
 

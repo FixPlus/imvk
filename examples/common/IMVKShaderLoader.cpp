@@ -11,7 +11,7 @@ ShaderLoader::ShaderLoader(const ShaderLoaderCreateInfo &CI)
 
 std::shared_ptr<vkw::SPIRVModule>
 ShaderLoader::getModule(std::string_view name) {
-  auto shaderPath = m_shaderDir / name / ".spv";
+  auto shaderPath = m_shaderDir / (std::string(name) + ".spv");
 
   if (!std::filesystem::exists(shaderPath))
     throw std::runtime_error([&]() {
@@ -36,7 +36,7 @@ ShaderLoader::getModule(std::string_view name) {
       return ss.str();
     }());
 
-  std::ifstream is{shaderPath.c_str()};
+  std::ifstream is{shaderPath.c_str(), std::ios::binary};
 
   if (!is)
     throw std::runtime_error([&]() {

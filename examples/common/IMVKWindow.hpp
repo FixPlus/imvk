@@ -5,9 +5,13 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <chrono>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
+
+using namespace std::chrono_literals;
 
 namespace imvk::examples {
 
@@ -15,6 +19,56 @@ struct WindowSettings {
   std::string_view title;
   unsigned width;
   unsigned height;
+};
+
+class FrameClock {
+public:
+  using Milliseconds = std::chrono::duration<double, std::milli>;
+  FrameClock() { tStart = std::chrono::high_resolution_clock::now(); }
+
+  void frame() {
+    tFinish = std::chrono::high_resolution_clock::now();
+    auto frameTime =
+        std::chrono::duration<double, std::milli>(tFinish - tStart);
+    tStart = tFinish;
+    m_total_time += frameTime;
+    m_frames_elapsed++;
+    m_time_elapsed += frameTime;
+    if (m_time_elapsed > 1000ms) {
+      m_fps = (double)m_frames_elapsed * 1000.0f / m_time_elapsed.count();
+      m_time_elapsed = 0ms;
+      m_frames_elapsed = 0u;
+    }
+    m_frame_times_log.push_back(frameTime);
+    if (m_frame_times_log.size() > m_logLength)
+      m_frame_times_log.pop_front();
+    ++m_totalFrames;
+  }
+
+  Milliseconds currentFrameTime() const {
+    auto cur = std::chrono::high_resolution_clock::now();
+    return {cur - tStart};
+  }
+
+  Milliseconds frameTime() const { return m_frame_times_log.back(); }
+  auto &frameTimeLog() const { return m_frame_times_log; }
+
+  double fps() const { return m_fps; }
+
+  auto totalFrames() const { return m_totalFrames; }
+  Milliseconds totalTime() const { return m_total_time; }
+
+private:
+  std::chrono::time_point<std::chrono::high_resolution_clock,
+                          std::chrono::duration<double>>
+      tStart, tFinish;
+  std::deque<Milliseconds> m_frame_times_log;
+  size_t m_logLength = 200u;
+  double m_fps = 0.0;
+  Milliseconds m_total_time = 0ms;
+  uint64_t m_totalFrames = 0ull;
+  uint32_t m_frames_elapsed = 0u;
+  Milliseconds m_time_elapsed = 0ms;
 };
 
 class Window : public imvk::SwapchainFactory {
@@ -38,6 +92,8 @@ public:
   bool shouldClose() const;
 
   void pollEvents();
+
+  const auto &clock() const { return m_clock; }
 
   bool cursorEnabled() const { return m_cursor_enabled; }
 
@@ -114,6 +170,7 @@ private:
   std::vector<WindowResizeCallback> m_windowResizeCallbacks{};
   std::pair<double, double> m_lastPos;
   bool m_cursor_enabled = true;
+  FrameClock m_clock;
   static std::unordered_map<GLFWwindow *, Window *> m_windowMap;
 };
 

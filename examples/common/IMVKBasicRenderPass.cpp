@@ -88,12 +88,64 @@ void BasicRenderPass::run(const SwapFrame &frame,
   auto &commands = frame.frame().commands();
 
   VkClearValue clearValue{.color = {0.8, 0.5, 0.2, 0.0}};
-
-  commands.beginRenderPass(m_pass, fb, fb.getFullRenderArea(),
+  auto drawArea = fb.getFullRenderArea();
+  commands.beginRenderPass(m_pass, fb, drawArea,
                            /*use secondary */ false,
                            std::span<const VkClearValue>{&clearValue, 1u});
+  auto &drawAreaExtent = drawArea.extent;
+  VkViewport viewport;
+  viewport.height = drawAreaExtent.height;
+  viewport.width = drawAreaExtent.width;
+  viewport.x = viewport.y = 0.0f;
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+  VkRect2D scissor;
+  scissor.extent.width = drawAreaExtent.width;
+  scissor.extent.height = drawAreaExtent.height;
+  scissor.offset.x = 0;
+  scissor.offset.y = 0;
+  commands.setViewports({&viewport, 1});
+  commands.setScissors({&scissor, 1});
 
   std::invoke(callback);
   commands.endRenderPass();
 }
+
+BasicVertexStage::BasicVertexStage(GraphicsEngine &engine,
+                                   std::string_view shaderName)
+    : GraphicsPipelineStage(
+          engine,
+          [&]() {
+            PipelineStage::Description desc{};
+            desc.shaders.emplace_back(
+                engine.context().shaderFactory().getModule(shaderName));
+            return desc;
+          }(),
+          VK_SHADER_STAGE_VERTEX_BIT) {}
+
+void BasicVertexStage::amendCreateInfo(
+    vkw::GraphicsPipelineCreateInfo &info) const {
+  info.addInputAssemblyState(vkw::InputAssemblyStateCreateInfo{});
+}
+
+BasicFragmentStage::BasicFragmentStage(GraphicsEngine &engine,
+                                       std::string_view shaderName,
+                                       vkw::RenderPass &pass, unsigned subPass)
+    : GraphicsPipelineStage(
+          engine,
+          [&]() {
+            PipelineStage::Description desc{};
+            desc.shaders.emplace_back(
+                engine.context().shaderFactory().getModule(shaderName));
+            return desc;
+          }(),
+          VK_SHADER_STAGE_FRAGMENT_BIT),
+      m_pass(pass), m_subPass(subPass) {}
+
+void BasicFragmentStage::amendCreateInfo(
+    vkw::GraphicsPipelineCreateInfo &info) const {
+  info.addDynamicState(VK_DYNAMIC_STATE_VIEWPORT);
+  info.addDynamicState(VK_DYNAMIC_STATE_SCISSOR);
+}
+
 } // namespace imvk::examples

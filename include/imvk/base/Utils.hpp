@@ -26,7 +26,6 @@ public:
   /// @return pair of slot index and reference to constructed Mapped object
   std::tuple<IT, Mapped &> emplace(auto &&...args) {
     auto index = m_getNextIndex();
-    m_freeList.pop_back();
     return {index, m_map[index].emplace(std::forward<decltype(args)>(args)...)};
   }
 
@@ -109,6 +108,65 @@ private:
   std::vector<std::optional<Mapped>> m_map;
   std::vector<IT> m_freeList;
   const size_t m_reserveChunkSize;
+};
+
+enum class CachePolicy { LRU };
+
+template <typename Key, std::movable T, CachePolicy Policy = CachePolicy::LRU,
+          std::default_initializable KeyHash = std::hash<Key>>
+class Cache {};
+
+template <typename Key, std::movable T, std::default_initializable KeyHash>
+class Cache<Key, T, CachePolicy::LRU, KeyHash> final {
+public:
+  Cache(size_t size) : m_size(size) {}
+
+  template <std::convertible_to<Key> KeyLike>
+  T &get(KeyLike &&key, auto &&...args) {
+    if (!m_elementTable.contains(key)) {
+      auto &ret = m_elementList.emplace_front(
+          std::piecewise_construct, std::forward_as_tuple(key),
+          std::forward_as_tuple(std::forward<decltype(args)>(args)...));
+      m_elementTable.emplace(key, m_elementList.begin());
+      if (m_elementTable.size() > m_size)
+        m_remove_last();
+      return ret.second;
+    }
+    auto elemIt = m_elementTable.at(key);
+    m_move_forward(elemIt);
+    return elemIt->second;
+  }
+
+  template <std::convertible_to<Key> KeyLike>
+  T &replace(KeyLike &&key, auto &&...args) {
+    assert(m_elementTable.contains(key));
+    auto elemIt = m_elementTable.at(key);
+    T Tmp{std::forward<decltype(args)>(args)...};
+    std::swap(elemIt->second, Tmp);
+    return elemIt->second;
+  }
+
+  void clear() {
+    m_elementTable.clear();
+    m_elementList.clear();
+  }
+
+  auto size() const { return m_elementTable.size(); }
+
+private:
+  using ListType = std::list<std::pair<Key, T>>;
+  void m_move_forward(ListType::iterator it) {
+    m_elementList.splice(m_elementList.begin(), m_elementList, it);
+  }
+  void m_remove_last() {
+    auto last = std::prev(m_elementList.end());
+    m_elementTable.erase(last->first);
+    m_elementList.erase(last);
+  }
+  const size_t m_size;
+
+  std::list<std::pair<Key, T>> m_elementList;
+  std::unordered_map<Key, typename ListType::iterator, KeyHash> m_elementTable;
 };
 
 } // namespace imvk
