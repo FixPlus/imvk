@@ -5,6 +5,7 @@
 
 namespace imvk {
 
+/// @brief abstracts away vkw::SPIRVModule creation and caching.
 class ShaderFactory {
 public:
   /// @brief Get shader module with specified name. It may be called mutiple

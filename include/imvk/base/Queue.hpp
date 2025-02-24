@@ -5,13 +5,13 @@
 
 namespace imvk {
 
+/// @brief Represents a reference to a vkw::Queue object.
+/// Accesses to that object are provided either asynchronously or
+/// synchronously, depending on whether a lock was manually introduced.
+/// Either way all accesses to underlying vkw::Queue must be done using
+/// provided HandedQueue object.
 class Queue {
 public:
-  /// Represents a reference to a vkw::Queue object.
-  /// Accesses to that object are provided either asynchronously or
-  /// synchronously, depending on whether a lock was manually introduced.
-  /// Either way all accesses to underlying vkw::Queue must be done using
-  /// provided HandedQueue object.
   Queue(vkw::Queue queue, bool sync) : m_queue(std::move(queue)) {
     if (sync)
       m_mutex.emplace();

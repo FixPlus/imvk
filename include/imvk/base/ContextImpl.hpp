@@ -18,7 +18,6 @@ class ContextImpl {
 public:
   auto &device() { return m_device; }
   auto &shaderFactory() { return m_shaderFactory; }
-  /// TODO: add queue management.
 
   /// @brief Hands over one queue that satisfy all required capabilities.
   /// This queue may be already acquired by another engine in which case

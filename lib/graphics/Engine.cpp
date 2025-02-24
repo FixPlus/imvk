@@ -89,5 +89,23 @@ bool GraphicsEngine::m_surface_minimized() {
 
 GraphicsEngine::~GraphicsEngine() = default;
 
-void GraphicsEngine::m_terminate() { queue().acquire().get().waitIdle(); }
+void GraphicsEngine::m_terminate() {
+  for (auto &&frameSync : m_frameSyncs)
+    frameSync.waitIfNeeded();
+  queue().acquire().get().waitIdle();
+  FramedEngine::terminate();
+}
+
+GraphicsEngine::FrameSyncObjects::FrameSyncObjects(GraphicsEngine &engine)
+    : renderComplete(engine.context().device()),
+      presentComplete(engine.context().device()),
+      fence(engine.context().device()) {}
+
+void GraphicsEngine::FrameSyncObjects::waitIfNeeded() {
+  if (needFenceWait) {
+    fence.wait();
+    fence.reset();
+    needFenceWait = false;
+  }
+}
 } // namespace imvk

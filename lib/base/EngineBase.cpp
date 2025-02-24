@@ -10,7 +10,8 @@ FramedEngine::FramedEngine(ContextImpl &ctx, const QueueCapsInfo &queueInfo,
   m_frames.reserve(frameInFlightCount);
   std::ranges::transform(std::ranges::iota_view{0u, frameInFlightCount},
                          std::back_inserter(m_frames), [this](auto &&i) {
-                           return std::make_unique<Frame>(*this, i);
+                           return std::unique_ptr<Frame>(
+                               FrameCreator::create(*this, i));
                          });
 }
 
@@ -30,6 +31,10 @@ const Frame &FramedEngine::beginAndGetCurrentFrame() const {
   Frame &frame = *m_frames.at(m_currentFrame);
   frame.begin();
   return frame;
+}
+void FramedEngine::terminate() {
+  for (auto &&frame : m_frames)
+    frame->terminate();
 }
 
 } // namespace imvk

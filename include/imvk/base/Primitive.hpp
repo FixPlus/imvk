@@ -4,6 +4,7 @@
 
 #include "boost/container/small_vector.hpp"
 
+#include <atomic>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -12,33 +13,28 @@ namespace imvk {
 
 /// @brief Type-erased interface for any allocatable object used by frame.
 /// Lifetime of this object is controlled via reference counting system.
-class PrimitiveHandleBase {
+class PrimitiveHandleBase : public FrameObject {
 public:
-  PrimitiveHandleBase(FramedEngine &engine) {
-    m_frameIds.resize(engine.getFIFCount(), 0u);
-  }
+  PrimitiveHandleBase(FramedEngine &engine) : FrameObject(engine) {}
   virtual ~PrimitiveHandleBase() = default;
 
-  void setIDforFrame(unsigned frameID, unsigned id) {
-    assert(m_frameIds.size() > frameID);
-    m_frameIds[frameID] = id;
-  }
-  unsigned getIDforFrame(unsigned frameID) const {
-    assert(m_frameIds.size() > frameID);
-    return m_frameIds[frameID];
-  }
-
-private:
-  boost::container::small_vector<unsigned, 3> m_frameIds;
+  virtual void write(vkw::DescriptorSet &set, unsigned binding,
+                     unsigned writeOpID) = 0;
 };
 
 /// @brief Type-aware implementation for any allocatable object used by frame.
 /// @tparam T - type of primitive (usually vulkan allocatable object).
-template <typename T>
+/// @tparam PrimitiveTraits - traits
+template <typename T, typename PrimitiveTraits>
 class PrimitiveHandleImpl : public PrimitiveHandleBase, public T {
 public:
   PrimitiveHandleImpl(FramedEngine &engine, auto &&...args)
       : T(std::forward<decltype(args)...>(args)){};
+
+  void write(vkw::DescriptorSet &set, unsigned binding,
+             unsigned writeOpID) override {
+    std::invoke(PrimitiveTraits::write, *this, set, binding, writeOpID);
+  }
 };
 
 using PrimitiveHandle = std::shared_ptr<PrimitiveHandleBase>;
@@ -69,15 +65,18 @@ private:
 
 /// @brief Type-aware interface for primitive. Is used to get references to
 /// fully typed primitive objects.
-template <typename T> class PrimitiveImpl : public Primitive {
+template <typename T, typename PrimitiveTraits>
+class PrimitiveImpl : public Primitive {
 public:
   PrimitiveImpl(Type type) : Primitive(type) {}
 
   /// @brief Type-aware wrapper for get()
   /// @param frame
   /// @return Typed shared reference to primitive object.
-  std::shared_ptr<PrimitiveImpl<T>> getImpl(const Frame &frame) const {
-    return std::static_pointer_cast<PrimitiveImpl<T>>(get(frame));
+  std::shared_ptr<PrimitiveHandleImpl<T, PrimitiveTraits>>
+  getImpl(const Frame &frame) const {
+    return std::static_pointer_cast<PrimitiveHandleImpl<T, PrimitiveTraits>>(
+        get(frame));
   }
 };
 
@@ -94,17 +93,23 @@ public:
 ///        However, order of completion for such calls may be different than
 ///        order of their submission.
 /// @tparam T - Type of primitive.
+/// @tparam Traits - traits of primitive
 /// @tparam Allocator - COWAllocator-like type that must implement
 ///         'allocate' method.
-template <typename T, typename Allocator>
-class COWPrimitive : public PrimitiveImpl<T> {
+template <typename T, typename PrimitiveTraits, typename Allocator>
+class COWPrimitive : public PrimitiveImpl<T, PrimitiveTraits> {
 private:
   struct State {
     State(FramedEngine &engine, auto &&...args)
         : engine(engine), allocator(std::forward<decltype(args)>(args)...) {}
     FramedEngine &engine;
     Allocator allocator;
-    std::shared_ptr<PrimitiveHandleImpl<T>> primitive = nullptr;
+    std::shared_ptr<PrimitiveHandleImpl<T, PrimitiveTraits>> primitive =
+        nullptr;
+    ~State() {
+      if (primitive)
+        primitive->disown();
+    }
     mutable std::mutex mutex;
   };
 
@@ -114,7 +119,7 @@ public:
   /// @param engine Frame engine this primitive object shall be used for.
   /// @param args parameters for constructor of Allocator object.
   COWPrimitive(FramedEngine &engine, auto &&...args)
-      : PrimitiveImpl<T>(Primitive::Type::cow),
+      : PrimitiveImpl<T, PrimitiveTraits>(Primitive::Type::cow),
         m_state(std::make_shared<State>(
             engine, std::forward<decltype(args)>(args)...)) {}
 
@@ -145,7 +150,7 @@ public:
                                                   std::move(args)]() mutable {
       // Allocate object and get initialization future.
       auto &&[newPrimitive, initFuture] =
-          std::shared_ptr<PrimitiveHandleImpl<T>>(
+          std::shared_ptr<PrimitiveHandleImpl<T, PrimitiveTraits>>(
               stateCopy->m_allocator.allocate(
                   stateCopy->engine, std::forward<decltype(args)>(args)...));
       return std::async(std::launch::deferred,
@@ -162,19 +167,10 @@ public:
                                 auto lock = std::unique_lock{stateCopy->mutex};
                                 auto stale = stateCopy->primitive;
                                 stateCopy->primitive = newPrimitive;
-#if 0
-                                auto &BoundToCp = stateCopy->m_boundTo;
-#endif
                                 lock.unlock();
                                 // delete old primitive after mutex unlock.
+                                stale->disown();
                                 stale.reset();
-#if 0
-                                // Notify descriptors sets that are bound to
-                                // this primitive.
-                                for (auto &&[Descriptor, Binding] : BoundToCp) {
-                                  Descriptor->notifyCOW(newPrimitive, Binding);
-                                }
-#endif
                               });
                         });
     });
@@ -192,19 +188,10 @@ public:
                         auto lock = std::unique_lock{stateCopy->mutex};
                         auto stale = stateCopy->primitive;
                         stateCopy->primitive = nullptr;
-#if 0
-                        auto &BoundToCp = stateCopy->m_boundTo;
-#endif
                         lock.unlock();
                         // delete old primitive after mutex unlock.
+                        stale->disown();
                         stale.reset();
-#if 0
-                        // Notify descriptors sets that are bound to
-                        // this primitive.
-                        for (auto &&[Descriptor, Binding] : BoundToCp) {
-                          Descriptor->notifyCOW(nullptr, Binding);
-                        }
-#endif
                       });
   }
 
@@ -223,28 +210,40 @@ private:
 ///        within this frame. All accesses to this primitive must be externally
 ///        synchronized with frame operation.
 /// @tparam T - Type of primitive.
+/// @tparam Traits - traits of primitive
 /// @tparam Allocator - SwapAllocator-like type that must implement
 ///         'allocate' and 'write' methods.
-template <typename T, typename Allocator>
-class SwapPrimitive : public PrimitiveImpl<T> {
+template <typename T, typename PrimitiveTraits, typename Allocator>
+class SwapPrimitive : public PrimitiveImpl<T, PrimitiveTraits> {
+private:
+  struct Disowner {
+    void operator()(SwapPrimitive<T, PrimitiveTraits, Allocator> *prim) {
+      for (auto &&prim : prim->m_prims)
+        prim.disown();
+    }
+  };
+
 public:
   /// @brief Constructs swap primitive. All primitive object are in invalid
   /// state after construction.
   /// @param engine Frame engine this primitive object shall be used for.
   /// @param args parameters for constructor of Allocator object.
   SwapPrimitive(FramedEngine &engine, auto &&...args)
-      : PrimitiveImpl<T>(Primitive::Type::cow), m_engine(engine),
-        m_allocator(std::forward<decltype(args)>(args)...),
-        m_prims(m_engine.get().getFIFCount()) {}
+      : PrimitiveImpl<T, PrimitiveTraits>(Primitive::Type::cow),
+        m_engine(engine), m_allocator(std::forward<decltype(args)>(args)...),
+        m_prims(m_engine.get().getFIFCount()), m_disowner(this) {}
 
   /// @brief Recreates object for specified frame. This method must only be
   /// called within specified frame scope.
   /// @param frame
   /// @param args additional arguments to pass to Allocator's 'allocate' method.
   void reset(const Frame &frame, auto &&...args) {
+    auto stale = m_prims.at(frame.id());
     m_prims.at(frame.id()) =
-        std::shared_ptr<PrimitiveHandleImpl<T>>(m_allocator.allocate(
-            m_engine.get(), std::forward<decltype(args)>(args)...));
+        std::shared_ptr<PrimitiveHandleImpl<T, PrimitiveTraits>>(
+            m_allocator.allocate(m_engine.get(),
+                                 std::forward<decltype(args)>(args)...));
+    stale.disown();
   }
 
   /// @brief Recreated objects for every frame. This method must only be called
@@ -252,9 +251,13 @@ public:
   /// @param args additional arguments to pass to Allocator's 'allocate' method.
   /// Each object is constructed using same argument list.
   void resetAll(auto &&...args) {
-    for (auto &prim : m_prims)
-      prim = std::shared_ptr<PrimitiveHandleImpl<T>>(m_allocator.allocate(
-          m_engine.get(), std::forward<decltype(args)>(args)...));
+    for (auto &prim : m_prims) {
+      auto stale = prim;
+      prim = std::shared_ptr<PrimitiveHandleImpl<T, PrimitiveTraits>>(
+          m_allocator.allocate(m_engine.get(),
+                               std::forward<decltype(args)>(args)...));
+      stale->disown();
+    }
   }
 
   /// @brief Write new data to object for specified frame. This method must only
@@ -275,7 +278,9 @@ public:
 private:
   std::reference_wrapper<FramedEngine> m_engine;
   Allocator m_allocator;
-  std::vector<std::shared_ptr<PrimitiveHandleImpl<T>>> m_prims;
+  std::vector<std::shared_ptr<PrimitiveHandleImpl<T, PrimitiveTraits>>> m_prims;
+  std::unique_ptr<SwapPrimitive<T, PrimitiveTraits, Allocator>, Disowner>
+      m_disowner;
 };
 
 } // namespace imvk

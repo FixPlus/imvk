@@ -7,14 +7,12 @@
 
 namespace imvk {
 
+/// @brief Engine base is common base class for any engine. It allocates
+/// a queue and command pool for this queue to be used for submitting
+/// work recorded by engine. Engine implementation is expected to not
+/// use any other queues.
 class EngineBase {
 public:
-  /// @class EngineBase
-  /// Engine base is common base class for any engine. It allocates
-  /// a queue and command pool for this queue to be used for submitting
-  /// work recorded by engine. Engine implementation is expected to not
-  /// use any other queues.
-
   /// @brief  EngineBase constructor
   /// @param ctx reference to context this engine will be operating within.
   /// @param queueInfo create info for engine queue.
@@ -43,13 +41,11 @@ private:
 
 class Frame;
 
+/// @brief Implements a common interface for frame-based engines.
+/// It allows to allocate resources on a per-frame basis and manage
+/// switching of frames.
 class FramedEngine : public EngineBase {
 public:
-  /// @class FramedEngine
-  /// Implements a common interface for frame-based engines.
-  /// It allows to allocate resources on a per-frame basis and manage
-  /// switching of frames.
-
   /// @brief  FramedEngine constructor
   /// @param ctx context passed to EngineBase
   /// @param queueInfo queueInfo passed to EngineBase
@@ -65,6 +61,7 @@ public:
   void setDynamicFIFCount(unsigned count);
 
 protected:
+  void terminate();
   void endAndAdvanceFrame();
   unsigned getCurrentFrameId() const { return m_currentFrame; }
 

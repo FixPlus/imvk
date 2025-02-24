@@ -8,6 +8,8 @@ namespace imvk {
 class GraphicsEngine;
 class Swapchain;
 
+/// @brief Thin wrapper over Frame class that includes information about current
+/// swapchain state.
 class SwapFrame {
 public:
   SwapFrame(const Frame &frame, const Swapchain &swapchain)
@@ -20,15 +22,6 @@ public:
 private:
   std::reference_wrapper<const Frame> m_frame;
   std::reference_wrapper<const Swapchain> m_swapchain;
-};
-
-class FrameSyncObjects final {
-public:
-  FrameSyncObjects(GraphicsEngine &engine);
-  vkw::Semaphore renderComplete, presentComplete;
-  bool needFenceWait = false;
-  vkw::Fence fence;
-  void waitIfNeeded();
 };
 
 } // namespace imvk

@@ -10,6 +10,8 @@
 
 namespace imvk {
 
+/// @brief Thin wrapper over vkw::SwapChain that creates image views for
+/// swapchain images and transits image layout to present_src.
 class Swapchain : public vkw::SwapChain {
 public:
   Swapchain(vkw::Device &device, Queue &queue,

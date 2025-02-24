@@ -2,11 +2,11 @@
 #include "vkw/Surface.hpp"
 #include "vkw/SwapChain.hpp"
 
-
 #include <memory>
 
 namespace imvk {
 
+/// @brief abstracts away external surface and swapchain creation.
 class SwapchainFactory {
 public:
   using RecreateCallbackType = void (*)(void);
