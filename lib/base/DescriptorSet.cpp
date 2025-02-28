@@ -91,7 +91,7 @@ DescriptorSetHandle::DescriptorSetHandle(FramedEngine &engine,
     : FrameObject(engine), m_set(pool.get()),
       m_boundPrimitives(pool.descriptorLayout().info().bindingCount) {}
 
-void DescriptorSetHandle::write(std::shared_ptr<PrimitiveHandleBase> Primitive,
+void DescriptorSetHandle::write(std::shared_ptr<PrimitiveHandle> Primitive,
                                 unsigned binding, unsigned writeOpID) {
   Primitive->write(*m_set, binding, writeOpID);
   m_boundPrimitives[binding] = Primitive;
@@ -99,7 +99,7 @@ void DescriptorSetHandle::write(std::shared_ptr<PrimitiveHandleBase> Primitive,
 
 DescriptorSet::DescriptorSet(
     FramedEngine &engine, DescriptorPool &pool,
-    std::span<std::pair<Primitive *, unsigned>> primitives) {
+    std::span<std::pair<PrimitiveBase *, unsigned>> primitives) {
   auto primIt = primitives.begin();
   for (auto &&[binding, info] : pool.bindingMap()) {
     if (info.descriptorCount == 0) {
@@ -112,7 +112,7 @@ DescriptorSet::DescriptorSet(
                                "binding points available");
     auto &prim = *primIt;
     m_primitives.emplace_back(prim);
-    if (prim.first->type() != Primitive::Type::cow)
+    if (!prim.first->hasOnePrimitive())
       m_fullCow = false;
     ++primIt;
   }
@@ -124,17 +124,21 @@ DescriptorSet::DescriptorSet(
 }
 
 const std::shared_ptr<DescriptorSetHandle> &
-DescriptorSet::get(const Frame &frame) const {
+DescriptorSet::get(const Frame &frame, bool checkBoundDescriptors) const {
   auto &set = m_fullCow ? m_sets.front() : m_sets[frame.id()];
-
+  if (!checkBoundDescriptors)
+    return set;
   // keep primitives up to date.
   for (auto &&i : std::ranges::iota_view{0u, m_primitives.size()} |
                       std::views::filter(
                           [&](auto &&i) { return m_primitives[i].first; })) {
-    auto setPrim = set->primitive(i);
+    auto &setPrim = set->primitive(i);
     if (setPrim && !setPrim->isDisowned())
       continue;
     auto &&[prim, writeOp] = m_primitives[i];
+    auto primHandle = prim->get(frame);
+    assert(primHandle &&
+           "trying to get set with uninitialized primitive handles");
     set->write(prim->get(frame), i, writeOp);
   }
 

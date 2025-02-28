@@ -8,11 +8,8 @@ class GraphicsPipelineStage : public PipelineStage {
 public:
   using PipeT = vkw::GraphicsPipeline;
 
-  GraphicsPipelineStage(GraphicsEngine &engine, const Description &description,
-                        VkShaderStageFlagBits shaderStage)
-      : PipelineStage(engine, description), m_stage(shaderStage) {}
-
-  auto getShaderStage() const { return m_stage; }
+  GraphicsPipelineStage(GraphicsEngine &engine, const Description &description)
+      : PipelineStage(engine, description) {}
 
   virtual bool isProvoking() const { return false; }
 
@@ -24,14 +21,27 @@ public:
   static PipeT createPipeline(
       FramedEngine &engine, const vkw::PipelineLayout &layout,
       std::span<const std::shared_ptr<GraphicsPipelineStage>> stages);
-
-private:
-  VkShaderStageFlagBits m_stage;
 };
 
 using GraphicsPipelineStageSet = PipelineStageSet<GraphicsPipelineStage>;
 using GraphicsPipeline = Pipeline<GraphicsPipelineStage>;
-template <unsigned StageCount>
-using GraphicsPipelinePool = PipelinePool<GraphicsPipelineStage, StageCount>;
 
+template <std::derived_from<GraphicsPipelineStage>... Stages>
+class GraphicsPipelinePool
+    : public PipelinePool<GraphicsPipelineStage, sizeof...(Stages)> {
+public:
+  GraphicsPipelinePool(GraphicsEngine &engine, size_t cacheSize,
+                       VkPipelineLayoutCreateFlags flags = 0)
+      : PipelinePool<GraphicsPipelineStage, sizeof...(Stages)>(
+            engine, cacheSize, flags){};
+
+  template <typename... Args>
+  auto &get(Args &&...args)
+    requires(std::is_convertible_v<Args, std::shared_ptr<Stages>> && ... &&
+             true)
+  {
+    return PipelinePool<GraphicsPipelineStage, sizeof...(Stages)>::get(
+        std::forward<Args>(args)...);
+  }
+};
 } // namespace imvk

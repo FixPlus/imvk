@@ -8,10 +8,10 @@
 namespace imvk {
 
 struct QueueCapsInfo {
-  bool present;
-  bool graphics;
-  bool compute;
-  bool transfer;
+  bool present = false;
+  bool graphics = false;
+  bool compute = false;
+  bool transfer = false;
 };
 
 class ContextImpl {

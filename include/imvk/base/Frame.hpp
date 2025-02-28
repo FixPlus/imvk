@@ -72,9 +72,7 @@ private:
 
 /// @brief Base class for any frame objects. Frame objects are required to be
 /// managed by shared_ptr to be used in frame. This allows frame to prolong
-/// object's life till the end of frame scope they are used in, meanwhile their
-/// respective owners could asynchronously 'disown' them. Act of disowning must
-/// call 'disown' method.
+/// object's life till the end of frame scope they are used in.
 class FrameObject {
 public:
   /// @brief Create a frame object. This frame object must only be used within
@@ -83,12 +81,6 @@ public:
   FrameObject(FramedEngine &engine) {
     m_frameIds.resize(engine.getFIFCount(), 0u);
   }
-
-  bool isDisowned() const { return m_disowned.load(); }
-
-  /// @brief Disowns the object. Must be called by main owner of object before
-  /// reference to it is disposed. Thread safe.
-  void disown() { m_disowned.store(true); }
 
   virtual ~FrameObject() = default;
 
@@ -107,7 +99,6 @@ private:
   }
 
   boost::container::small_vector<unsigned, 3> m_frameIds;
-  std::atomic<bool> m_disowned = false;
 };
 
 } // namespace imvk

@@ -18,7 +18,7 @@ vkw::GraphicsPipeline GraphicsPipelineStage::createPipeline(
     if (!pStage->hasShader())
       continue;
     auto *pShader = &pStage->getShader();
-    switch (pStage->getShaderStage()) {
+    switch (pStage->stage()) {
     case VK_SHADER_STAGE_VERTEX_BIT:
       vertexShaderParts.emplace_back(pShader);
       break;
@@ -36,21 +36,15 @@ vkw::GraphicsPipeline GraphicsPipelineStage::createPipeline(
          "stages does not define fragment shader");
 
   vkw::VertexShader vShader{
-      device, vertexShaderParts.size() > 1
-                  ? vkw::SPIRVModule{vertexShaderParts |
-                                     std::views::transform(
-                                         [](auto &&ptr) -> decltype(auto) {
-                                           return *ptr;
-                                         })}
-                  : vkw::SPIRVModule{*vertexShaderParts.front()}};
+      device,
+      vkw::SPIRVModule{vertexShaderParts |
+                       std::views::transform(
+                           [](auto &&ptr) -> decltype(auto) { return *ptr; })}};
   vkw::FragmentShader fShader{
-      device, fragmentShaderParts.size() > 1
-                  ? vkw::SPIRVModule{fragmentShaderParts |
-                                     std::views::transform(
-                                         [](auto &&ptr) -> decltype(auto) {
-                                           return *ptr;
-                                         })}
-                  : vkw::SPIRVModule{*fragmentShaderParts.front()}};
+      device,
+      vkw::SPIRVModule{fragmentShaderParts |
+                       std::views::transform(
+                           [](auto &&ptr) -> decltype(auto) { return *ptr; })}};
 
   auto createInfo = (*foundProvoking)->initCreateInfo(layout);
 

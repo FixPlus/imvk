@@ -31,8 +31,8 @@ Queue &ContextImpl::allocateQueue(const QueueCapsInfo &queueInfo) {
   };
   auto viableMatch = [&](auto &&family) {
     return (!queueInfo.graphics || family.graphics()) &&
-           (!queueInfo.compute == family.compute()) &&
-           (!queueInfo.transfer == family.transfer());
+           (!queueInfo.compute || family.compute()) &&
+           (!queueInfo.transfer || family.transfer());
   };
 
   auto tryAllocateNew = [&](auto &&queueFamily) -> Queue * {

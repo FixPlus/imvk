@@ -15,7 +15,7 @@ function(imvk_add_component NAME)
   target_link_libraries(imvk_${NAME} PUBLIC ${VK_LIB})
 endfunction()
 
-set(IMVK_COMPONENTS base graphics)
+set(IMVK_COMPONENTS base graphics copy)
 
 foreach(COMPONENT ${IMVK_COMPONENTS})
   imvk_add_component(${COMPONENT})

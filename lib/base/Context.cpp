@@ -4,7 +4,6 @@
 #include "imvk/graphics/Engine.hpp"
 #include <iostream>
 
-
 namespace imvk {
 
 Context::~Context() = default;
@@ -23,8 +22,7 @@ Context::createComputeEngine(const ComputeEngineCreateInfo &CI) {
 
 EngineHandle<CopyEngine>
 Context::createCopyEngine(const CopyEngineCreateInfo &CI) {
-  // TODO
-  return nullptr;
+  return std::make_unique<CopyEngine>(*m_pimpl, CI);
 }
 
 } // namespace imvk

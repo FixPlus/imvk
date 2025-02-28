@@ -71,7 +71,9 @@ public:
 
   /// @brief get count of internal vkw::DescriptorPool objects.
   /// @return count of internal vkw::DescriptorPool objects.
-  auto poolCount() const { return m_state->poolCount.load(); }
+  auto poolCount() const {
+    return m_state->poolCount.load(std::memory_order_relaxed);
+  }
 
   /// @return count of sets per pool
   auto setsPerPool() const { return m_settings.setsPerPool; }
@@ -81,8 +83,8 @@ public:
   SetHandle get();
 };
 
-class PrimitiveHandleBase;
-class Primitive;
+class PrimitiveHandle;
+class PrimitiveBase;
 class FramedEngine;
 
 /// @brief Wrapper over vkw::DescriptorSet that saves references to
@@ -95,7 +97,7 @@ public:
   /// @brief Writes new primitive to descriptor.
   /// @param Primitive to be written over current one.
   /// @param binding number of binding point
-  void write(std::shared_ptr<PrimitiveHandleBase> Primitive, unsigned binding,
+  void write(std::shared_ptr<PrimitiveHandle> Primitive, unsigned binding,
              unsigned writeOpID);
 
   auto &primitive(unsigned binding) const {
@@ -107,7 +109,7 @@ public:
   ~DescriptorSetHandle();
 
 private:
-  boost::container::small_vector<std::shared_ptr<PrimitiveHandleBase>, 3>
+  boost::container::small_vector<std::shared_ptr<PrimitiveHandle>, 3>
       m_boundPrimitives;
   DescriptorPool::SetHandle m_set;
 };
@@ -119,7 +121,7 @@ class Frame;
 class DescriptorSet final {
 public:
   DescriptorSet(FramedEngine &engine, DescriptorPool &pool,
-                std::span<std::pair<Primitive *, unsigned>> primitives);
+                std::span<std::pair<PrimitiveBase *, unsigned>> primitives);
 
   DescriptorSet(const DescriptorSet &) = delete;
   DescriptorSet(DescriptorSet &&) noexcept = default;
@@ -127,12 +129,18 @@ public:
   DescriptorSet &operator=(const DescriptorSet &) = delete;
   DescriptorSet &operator=(DescriptorSet &&) noexcept = default;
 
-  const std::shared_ptr<DescriptorSetHandle> &get(const Frame &frame) const;
+  /// @brief Gets a reference to descriptor set for specified frame.
+  /// @param frame
+  /// @param checkBoundDescriptors if true, before returning a reference, checks
+  /// that written descriptors are up to date. True by default.
+  /// @return shared reference to DescriptorSetHandle.
+  const std::shared_ptr<DescriptorSetHandle> &
+  get(const Frame &frame, bool checkBoundDescriptors = true) const;
 
   ~DescriptorSet();
 
 private:
-  boost::container::small_vector<std::pair<Primitive *, unsigned>, 3>
+  boost::container::small_vector<std::pair<PrimitiveBase *, unsigned>, 3>
       m_primitives;
   boost::container::small_vector<std::shared_ptr<DescriptorSetHandle>, 3>
       m_sets;

@@ -23,9 +23,10 @@ public:
   struct Description {
     boost::container::small_vector<std::shared_ptr<vkw::SPIRVModule>, 2>
         shaders;
+    std::optional<VkShaderStageFlagBits> stage;
     struct Set {
       unsigned num;
-      VkPipelineStageFlags usedByStages;
+      VkShaderStageFlags usedByStages;
       unsigned setsPerPool;
     };
     boost::container::small_vector<Set, 2> sets;
@@ -51,9 +52,9 @@ public:
 
   FramedEngine &engine() const { return m_engine; }
 
-  bool hasPushConstants() const { return m_pushConstants.has_value(); }
-  const VkPushConstantRange &getPushConstants() const {
-    return *m_pushConstants;
+  VkShaderStageFlags stage() const { return m_stage; }
+  auto getPushConstants() const {
+    return std::span<const VkPushConstantRange>{m_pushConstants};
   }
 
   bool hasShader() const { return m_module.has_value(); }
@@ -87,10 +88,11 @@ public:
 private:
   FramedEngine &m_engine;
   std::optional<vkw::SPIRVModule> m_module;
-  std::optional<VkPushConstantRange> m_pushConstants;
+  boost::container::small_vector<VkPushConstantRange, 3> m_pushConstants;
   boost::container::small_flat_map<
       unsigned, std::variant<vkw::DescriptorSetLayout, DescriptorPool>, 2>
       m_sets;
+  VkShaderStageFlags m_stage = 0;
 };
 
 using PipelineStageHandle = std::shared_ptr<PipelineStage>;
@@ -147,9 +149,10 @@ public:
             std::ranges::transform(
                 stage->layouts(), std::back_inserter(descriptorLayouts),
                 [](auto &&layout) { return std::ref(std::get<1>(layout)); });
-            if (stage->hasPushConstants())
-              pushConstants.emplace_back(stage->getPushConstants());
+            std::ranges::copy(stage->getPushConstants(),
+                              std::back_inserter(pushConstants));
           }
+          /// TODO: add merging push constants.
           return vkw::PipelineLayout(engine.context().device(),
                                      descriptorLayouts, pushConstants, flags);
         }()),
