@@ -80,8 +80,9 @@ void BasicRenderPass::m_recreateFramebuffers() {
                                 views};
       });
 }
-void BasicRenderPass::run(const SwapFrame &frame,
-                          std::function<void(void)> callback) {
+void BasicRenderPass::run(
+    const SwapFrame &frame,
+    const std::function<void(const imvk::SwapFrame &)> &callback) {
   auto &swapchain = frame.swapchain();
 
   auto &fb = m_framebuffers.at(swapchain.currentImage());
@@ -107,25 +108,31 @@ void BasicRenderPass::run(const SwapFrame &frame,
   commands.setViewports({&viewport, 1});
   commands.setScissors({&scissor, 1});
 
-  std::invoke(callback);
+  std::invoke(callback, frame);
   commands.endRenderPass();
 }
 
-BasicVertexStage::BasicVertexStage(GraphicsEngine &engine,
-                                   std::string_view shaderName)
+BasicVertexStage::BasicVertexStage(
+    GraphicsEngine &engine, std::string_view shaderName,
+    std::unique_ptr<vkw::VertexInputStateCreateInfoBase> vertexState)
     : GraphicsPipelineStage(
           engine,
           [&]() {
             PipelineStage::Description desc{};
+            desc.stage = VK_SHADER_STAGE_VERTEX_BIT;
             desc.shaders.emplace_back(
                 engine.context().shaderFactory().getModule(shaderName));
+            desc.sets.emplace_back(/* set*/ 0, VK_SHADER_STAGE_VERTEX_BIT,
+                                   /* sets per pool*/ 1u);
             return desc;
-          }(),
-          VK_SHADER_STAGE_VERTEX_BIT) {}
+          }()),
+      m_vertexState(std::move(vertexState)) {}
 
 void BasicVertexStage::amendCreateInfo(
     vkw::GraphicsPipelineCreateInfo &info) const {
   info.addInputAssemblyState(vkw::InputAssemblyStateCreateInfo{});
+  if (m_vertexState)
+    info.addVertexInputState(*m_vertexState);
 }
 
 BasicFragmentStage::BasicFragmentStage(GraphicsEngine &engine,
@@ -135,11 +142,11 @@ BasicFragmentStage::BasicFragmentStage(GraphicsEngine &engine,
           engine,
           [&]() {
             PipelineStage::Description desc{};
+            desc.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
             desc.shaders.emplace_back(
                 engine.context().shaderFactory().getModule(shaderName));
             return desc;
-          }(),
-          VK_SHADER_STAGE_FRAGMENT_BIT),
+          }()),
       m_pass(pass), m_subPass(subPass) {}
 
 void BasicFragmentStage::amendCreateInfo(

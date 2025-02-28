@@ -13,7 +13,8 @@ class BasicRenderPass {
 public:
   BasicRenderPass(imvk::GraphicsEngine &engine);
 
-  void run(const SwapFrame &frame, std::function<void(void)> callback);
+  void run(const SwapFrame &frame,
+           const std::function<void(const imvk::SwapFrame &)> &callback);
 
   auto &pass() { return m_pass; }
 
@@ -29,9 +30,14 @@ private:
 
 class BasicVertexStage : public imvk::GraphicsPipelineStage {
 public:
-  BasicVertexStage(GraphicsEngine &engine, std::string_view shaderName);
+  BasicVertexStage(GraphicsEngine &engine, std::string_view shaderName,
+                   std::unique_ptr<vkw::VertexInputStateCreateInfoBase>
+                       vertexState = nullptr);
 
   void amendCreateInfo(vkw::GraphicsPipelineCreateInfo &info) const override;
+
+private:
+  std::unique_ptr<vkw::VertexInputStateCreateInfoBase> m_vertexState;
 };
 
 class BasicFragmentStage : public imvk::GraphicsPipelineStage {

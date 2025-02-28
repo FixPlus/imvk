@@ -2,6 +2,7 @@
 #include "IMVKWindow.hpp"
 #include "vkw/Layers.hpp"
 #include "vkw/Validation.hpp"
+#include <stdlib.h>
 
 #include <iostream>
 
@@ -10,6 +11,39 @@ namespace imvk::examples {
 void Device::ExitPrinter::operator()(Device *device) {
   std::cout << "App exited successfully" << std::endl;
 }
+
+/// TODO: fix, this does not work.
+class HostAllocator : public vkw::HostAllocator {
+public:
+  HostAllocator() : vkw::HostAllocator(/* enabled */ true) {}
+  virtual void *allocate(size_t size, size_t alignment,
+                         VkSystemAllocationScope scope) noexcept {
+    char *zero = nullptr;
+    char *buf = new char[size + alignment + sizeof(uintptr_t)];
+    uintptr_t ibuf = buf - zero;
+    auto start = ibuf + sizeof(uintptr_t);
+    start += (start % alignment) == 0 ? 0 : alignment - (start % alignment);
+    auto origLoc = start - sizeof(uintptr_t);
+    char *origLocPtr;
+    memcpy(&origLocPtr, &origLoc, sizeof(uintptr_t));
+    memcpy(origLocPtr, &buf, sizeof(uintptr_t));
+    char *ret;
+    memcpy(&ret, &start, sizeof(uintptr_t));
+    return ret;
+  }
+
+  virtual void *reallocate(void *original, size_t size, size_t alignment,
+                           VkSystemAllocationScope scope) noexcept {
+    free(original);
+    return allocate(size, alignment, scope);
+  }
+
+  virtual void free(void *memory) noexcept {
+    char *origAddrLoc = reinterpret_cast<char *>(memory) - sizeof(uintptr_t);
+    char *origAddr = *reinterpret_cast<char **>(origAddrLoc);
+    delete[] origAddr;
+  }
+};
 
 class Validation : vkw::debug::Validation {
 public:
@@ -43,7 +77,8 @@ public:
 };
 
 Device::Device(const DeviceCreateInfo &CI)
-    : m_exitPrinter(this),
+    : m_exitPrinter(this), m_hostAlloc(std::make_unique<HostAllocator>()),
+      m_vkLib(nullptr),
       m_instance(m_vkLib,
                  [&]() {
                    if (m_vkLib.instanceAPIVersion() < vkw::ApiVersion{1, 2, 0})

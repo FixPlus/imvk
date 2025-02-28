@@ -1,13 +1,15 @@
 #version 450
 
+layout(location = 0) in vec2 inPos;
+layout(location = 1) in vec3 inColor;
+
 layout(location = 0) out vec3 outColor;
 
-const vec3 colors[3] = {vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0),
-                        vec3(0.0, 0.0, 1.0)};
+layout(set = 0, binding = 0) uniform Data { vec4 values; }
+data;
 
 void main() {
-  gl_Position = vec4(-0.5f + (gl_VertexIndex / 2.0),
-                     0.5f - (gl_VertexIndex % 2), 0.0f, 1.0f);
+  gl_Position = vec4(inPos, 0.0f, 1.0f);
 
-  outColor = colors[gl_VertexIndex];
+  outColor = inColor * data.values.xyz;
 }

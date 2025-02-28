@@ -8,6 +8,7 @@ struct DeviceCreateInfo {
 };
 
 class Validation;
+class HostAllocator;
 
 // Loads vulkan library, creates vulkan instance and
 // picks suitable device.
@@ -26,6 +27,7 @@ private:
     void operator()(Device *device);
   };
   std::unique_ptr<Device, ExitPrinter> m_exitPrinter;
+  std::unique_ptr<HostAllocator> m_hostAlloc;
   vkw::Library m_vkLib;
   vkw::Instance m_instance;
   vkw::Device m_device;
