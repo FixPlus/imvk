@@ -1,4 +1,5 @@
 #pragma once
+#include <vkw/Allocation.hpp>
 #include <vkw/Device.hpp>
 
 namespace imvk::examples {
@@ -18,8 +19,8 @@ class Device final {
 public:
   Device(const DeviceCreateInfo &CI);
 
-  auto &get() { return m_device; }
-
+  vkw::Device &get() { return m_device; }
+  vkw::DeviceAllocator &getAllocator() { return *m_allocator; }
   ~Device();
 
 private:
@@ -31,6 +32,7 @@ private:
   vkw::Library m_vkLib;
   vkw::Instance m_instance;
   vkw::Device m_device;
+  std::unique_ptr<vkw::DeviceAllocator> m_allocator;
   std::unique_ptr<Validation> m_validation;
 };
 

@@ -1,6 +1,8 @@
 #pragma once
 
+#include "imvk/base/EngineBase.hpp"
 #include "imvk/base/Frame.hpp"
+
 
 #include "boost/container/small_vector.hpp"
 
@@ -45,7 +47,7 @@ private:
 class PrimitiveBase {
 public:
   /// @brief Types of primitive implementations
-  enum class Type { cow, swap };
+  enum class Type { cow, swap, swap_imm };
 
   PrimitiveBase(Type type) : m_type(type) {}
 
@@ -90,7 +92,8 @@ concept IsPrimitiveTrait =
 
 template <typename T>
 concept AnyPrimitiveTrait = IsPrimitiveTrait<T, PrimitiveBase::Type::cow> ||
-                            IsPrimitiveTrait<T, PrimitiveBase::Type::swap>;
+                            IsPrimitiveTrait<T, PrimitiveBase::Type::swap> ||
+                            IsPrimitiveTrait<T, PrimitiveBase::Type::swap_imm>;
 
 template <typename T, PrimitiveBase::Type PrimType>
 concept WritablePrimitive =
@@ -237,17 +240,16 @@ public:
                                                   std::move(args)]() mutable {
       auto &engine = stateCopy->engine;
       // Allocate object and get initialization future.
-      auto &&[newPrimitiveObject, initFuture] = stateCopy->allocator.allocate(
+      auto initFuture = stateCopy->allocator.allocate(
           engine, std::forward<decltype(args)>(args)...);
-      auto newPrimitive =
-          std::make_shared<HandleType>(engine, std::move(newPrimitiveObject));
       return std::async(
           std::launch::deferred,
           [stateCopy = std::move(stateCopy),
-           newPrimitive = std::move(newPrimitive),
            initFuture = std::move(initFuture)]() mutable {
-            // Wait for initialization process to complete.
-            initFuture.get();
+            // Wait for initialization process to complete and fetch the
+            // handle to allocated object.
+            auto newPrimitive = std::make_shared<HandleType>(stateCopy->engine,
+                                                             initFuture.get());
             return std::async(
                 std::launch::deferred,
                 [stateCopy = std::move(stateCopy),
@@ -260,6 +262,16 @@ public:
                 });
           });
     });
+  }
+
+  void resetSync(auto &&...args) const {
+    auto initFuture = m_state->allocator.allocate(
+        m_state->engine, std::forward<decltype(args)>(args)...);
+    auto stale = m_state->primitive.exchange(
+        std::make_shared<HandleType>(m_state->engine, initFuture.get()),
+        std::memory_order_relaxed);
+    if (stale)
+      disown(*stale);
   }
 
   /// @brief Invalidate primitive.
@@ -292,12 +304,9 @@ private:
 ///        however any changes made to this primitive are certain to be visible
 ///        within this frame. All accesses to this primitive must be externally
 ///        synchronized with frame operation.
-/// @tparam T - Type of primitive.
-/// @tparam Traits - traits of primitive
-/// @tparam Allocator - SwapAllocator-like type that must implement
-///         'allocate' and 'write' methods.
+/// @tparam PrimitiveTraits - traits of primitive
 template <AnyPrimitiveTrait PrimitiveTraits>
-  requires IsPrimitiveTrait<PrimitiveTraits, PrimitiveBase::Type::cow>
+  requires IsPrimitiveTrait<PrimitiveTraits, PrimitiveBase::Type::swap>
 class Primitive<PrimitiveTraits, PrimitiveBase::Type::swap>
     : public PrimitiveImpl<PrimitiveTraits, PrimitiveBase::Type::swap> {
 private:
@@ -393,6 +402,136 @@ private:
   std::reference_wrapper<FramedEngine> m_engine;
   std::unique_ptr<Allocator> m_allocator;
   bool m_moved_out = false;
+};
+
+/// @brief Swap immutable strategy primitive implementation.
+///        It has one copy of object per frame. Difference from swap strategy is
+///        that updates for underlying primitives are done similar to cow
+///        primitive.
+/// @tparam PrimitiveTraits - traits of primitive
+template <AnyPrimitiveTrait PrimitiveTraits>
+  requires IsPrimitiveTrait<PrimitiveTraits, PrimitiveBase::Type::swap_imm>
+class Primitive<PrimitiveTraits, PrimitiveBase::Type::swap_imm>
+    : public PrimitiveImpl<PrimitiveTraits, PrimitiveBase::Type::swap_imm> {
+private:
+  using BaseTy = PrimitiveImpl<PrimitiveTraits, PrimitiveBase::Type::swap_imm>;
+  using PrimitiveBase::disown;
+  using typename BaseTy::Allocator;
+  using typename BaseTy::HandleType;
+
+  struct State {
+    State(FramedEngine &engine, auto &&...args)
+        : engine(engine), allocator(std::forward<decltype(args)>(args)...),
+          primitives(engine.getFIFCount(), nullptr) {}
+    FramedEngine &engine;
+    Allocator allocator;
+    std::vector<std::atomic<std::shared_ptr<HandleType>>> primitives;
+    ~State() {
+      for (auto &&primAtom : primitives) {
+        auto prim = primAtom.load();
+        if (prim)
+          disown(*prim);
+      }
+    }
+  };
+
+public:
+  /// @brief Constructs swap_imm primitive. All primitive object are in invalid
+  /// state after construction.
+  /// @param engine Frame engine this primitive object shall be used for.
+  /// @param args parameters for constructor of Allocator object.
+  Primitive(FramedEngine &engine, auto &&...args)
+      : m_state(std::make_shared<State>(
+            engine, std::forward<decltype(args)>(args)...)) {}
+
+  std::shared_ptr<PrimitiveHandle> get(const Frame &frame) const override {
+    return m_state->primitives.at(frame.id()).load();
+    ;
+  }
+
+  /// @brief Write new data in all primitives.
+  /// This is done via three steps:
+  /// The process is same as for cow primitives except it is done on multiple
+  /// objects.
+  ///
+  /// @param argspan range of tuple of arguments passes to allocate method.
+  /// @return a future to a future to a future of void. Each future is
+  /// responsible for one step of a process, described above.
+  [[nodiscard("remember the futures")]] auto reset(auto &&argspan) const {
+    auto stateCopy = m_state;
+    return std::async(std::launch::deferred, [stateCopy = std::move(stateCopy),
+                                              argspan = std::move(
+                                                  argspan)]() mutable {
+      auto &engine = stateCopy->engine;
+      std::vector<std::future<typename Allocator::HandleType>> futures;
+      assert(argspan.size() == engine.getFIFCount());
+      futures.reserve(argspan.size());
+      // Allocate objects and get initialization futures.
+      std::ranges::transform(
+          argspan, std::back_inserter(futures), [&](auto &&argtpl) {
+            return std::apply(
+                [](auto &&...args) {
+                  return stateCopy->allocator.allocate(
+                      engine, std::forward<decltype(args)>(args)...);
+                },
+                argtpl);
+          });
+      return std::async(
+          std::launch::deferred, [stateCopy = std::move(stateCopy),
+                                  futures = std::move(futures)]() mutable {
+            // Wait for initialization process to complete and fetch the
+            // handle to allocated object.
+            std::vector<std::shared_ptr<HandleType>> newPrimitives;
+            newPrimitives.reserve(futures.size());
+            std::ranges::transform(futures, std::back_inserter(newPrimitives),
+                                   [&](auto &&future) {
+                                     return std::make_shared<HandleType>(
+                                         stateCopy->engine, future.get());
+                                   });
+            return std::async(
+                std::launch::deferred,
+                [stateCopy = std::move(stateCopy),
+                 newPrimitives = std::move(newPrimitives)]() mutable {
+                  // safely insert new primitives.
+                  for (auto &&i :
+                       std::ranges::iota_view{0u, newPrimitives.size()}) {
+                    auto stale = stateCopy->primitives.at(i).exchange(
+                        std::move(newPrimitives.at(i)),
+                        std::memory_order_relaxed);
+                    if (stale)
+                      disown(*stale);
+                  }
+                });
+          });
+    });
+  }
+
+  /// @brief Invalidate primitive.
+  /// Unlike the reset method above it executes only 3rd step (still deferred)
+  /// This step atomically replaces primitive handle with nullptr.
+  /// @return future of void
+  auto reset() const {
+    auto stateCopy = m_state;
+    return std::async(
+        std::launch::deferred, [stateCopy = std::move(stateCopy)]() {
+          for (auto &&prim : stateCopy->primitives) {
+            auto stale = prim.exchange(nullptr, std::memory_order_relaxed);
+            if (stale)
+              disown(*stale);
+          }
+        });
+  }
+
+  /// @return range of all primitives
+  auto all() const {
+    return m_state->primitives |
+           std::views::transform([](auto &&prim) { return prim.load(); });
+  }
+
+  bool hasOnePrimitive() const override { return false; }
+
+private:
+  std::shared_ptr<State> m_state;
 };
 
 } // namespace imvk

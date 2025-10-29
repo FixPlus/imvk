@@ -1,14 +1,18 @@
 #include "imvk/base/Frame.hpp"
 #include "imvk/base/DescriptorSet.hpp"
+#include "imvk/base/EngineBase.hpp"
 #include "imvk/base/Primitive.hpp"
 
-namespace imvk {
 
+namespace imvk {
+FrameObject::FrameObject(FramedEngine &engine) {
+  m_frameIds.resize(engine.getFIFCount(), 0u);
+}
 Frame::Frame(FramedEngine &engine, unsigned id)
     : m_engine(engine), m_id(id), m_commandBuffer(engine.commandPool()),
       m_registeredObjects(100) {}
 
-void Frame::begin() {
+vkw::BufferRecorder Frame::begin() {
   // garbage collect objects
   m_toBeDeleted.clear();
   for (auto &&[i, pair] : m_registeredObjects.items()) {
@@ -25,7 +29,8 @@ void Frame::begin() {
     m_registeredObjects.erase(i);
 
   m_commandBuffer.reset(0);
-  m_commandBuffer.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+  return vkw::BufferRecorder{m_commandBuffer,
+                             VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
 }
 
 void Frame::use(const std::shared_ptr<FrameObject> &pObject) const {
@@ -43,8 +48,6 @@ void Frame::use(const std::shared_ptr<FrameObject> &pObject) const {
   assert(pObj == pObject);
   used = true;
 }
-
-void Frame::end() { m_commandBuffer.end(); }
 
 void Frame::terminate() {
   m_registeredObjects.clear();

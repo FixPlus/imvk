@@ -1,30 +1,117 @@
 #pragma once
 
-#include "imvk/base/Context.hpp"
 #include "imvk/base/EngineBase.hpp"
-#include "imvk/graphics/Frame.hpp"
+#include "imvk/base/Frame.hpp"
 
-#include "vkw/CommandPool.hpp"
-#include "vkw/Fence.hpp"
-#include "vkw/Semaphore.hpp"
+#include <vkw/CommandPool.hpp>
+#include <vkw/Fence.hpp>
+#include <vkw/Semaphore.hpp>
+#include <vkw/Surface.hpp>
+#include <vkw/SwapChain.hpp>
 
 #include <functional>
 
 namespace imvk {
 
 class Swapchain;
-class FrameWithSync;
-class SwapFrame;
 
-/// @brief Implements FramedEngine for swapchain image presenting sequence.
+/// @brief abstracts away external surface and swapchain creation.
+class SwapchainFactory {
+public:
+  using RecreateCallbackType = void (*)(void);
+  /// @brief returns reference to VkSwapchainCreateInfoKHR object which is
+  /// prefilled with information needed to construct a swapchain object.
+  ///
+  /// Returned reference must remain valid until subsequent getCreateInfo()
+  /// call. pNext, imageUsage, imageSharingMode, queueFamilyIndexCount,
+  /// pQueueFamilyIndices fields are not used.
+  /// This may throw if given device cannot present to selected surface.
+  virtual const VkSwapchainCreateInfoKHR &
+  getCreateInfo(vkw::Device &device) = 0;
+
+  /// @brief returns a reference to surface the swapchain is being created on.
+  virtual vkw::Surface &getSurface() noexcept = 0;
+
+  /// @brief sets a callback for manual swapchain recreation.
+  /// This callback should be called if factory decides forcibly
+  /// recreate swapchain.
+  /// IMPORTANT: caller of callback must be externally synchronized with
+  /// swapchain producer entity (which in most cases is GraphicsEngine).
+  virtual void setRecreateCallback(RecreateCallbackType callback) noexcept = 0;
+
+  virtual ~SwapchainFactory() = default;
+};
+
+struct GraphicsEngineCreateInfo {
+  /// @brief Swapchain factory is used to create and maintain internal
+  /// swapchain. User must provide their implementation of this interface. Pass
+  /// null for no swapchain. Without swapchain engine won't be able to perform
+  /// present operations.
+  SwapchainFactory *swapchainFactory;
+
+  /// @brief Number of frames in flight to allocate resources to. Pass 0 for
+  /// auto.
+  unsigned maxFramesInFlight;
+};
+
+/// @brief Graphics engine is used to render and present images using
+/// swapchain. It supports all types of operation including compute and
+/// transfer. Implements FramedEngine for swapchain image presenting sequence.
 class GraphicsEngine : public FramedEngine {
 private:
   struct Terminator {
-    void operator()(GraphicsEngine *engine) { engine->m_terminate(); }
+    void operator()(GraphicsEngine *engine) { engine->terminate(); }
+  };
+  struct FrameSyncObjects final {
+    FrameSyncObjects(GraphicsEngine &engine);
+    vkw::Semaphore renderComplete, presentComplete;
   };
 
 public:
-  GraphicsEngine(ContextImpl &context, const GraphicsEngineCreateInfo &CI);
+  class SwapFrame {
+  public:
+    SwapFrame(GraphicsEngine &engine, FramedEngine::FrameRecorder &&frame,
+              std::unique_ptr<FrameSyncObjects> &&semas)
+        : m_engine(&engine, FrameEnder{engine.swapchain(), std::move(semas),
+                                       std::move(frame)}){};
+
+    /// @brief wrappers over frame methods.
+    GraphicsEngine &engine() const { return *m_engine; }
+    const auto &id() const { return frame().id(); }
+    const Frame &frame() const { return m_recorder().frame.get(); }
+    void use(const std::shared_ptr<FrameObject> &object) const {
+      frame().use(object);
+    }
+    vkw::BufferRecorder &commands() { return m_recorder().recorder; }
+
+    const auto &swapchain() const {
+      return m_engine.get_deleter().swapchain.get();
+    }
+
+  private:
+    friend class GraphicsEngine;
+    FramedEngine::FrameRecorder &m_recorder() const {
+      return m_engine.get_deleter().recorder;
+    }
+    struct FrameEnder {
+      FrameEnder(const Swapchain &swapchain,
+                 std::unique_ptr<FrameSyncObjects> &&semas,
+                 FramedEngine::FrameRecorder &&frame)
+          : swapchain(swapchain), semas(std::move(semas)),
+            recorder(std::move(frame)) {}
+      void operator()(GraphicsEngine *engine) const;
+
+      std::reference_wrapper<const Swapchain> swapchain;
+      mutable std::unique_ptr<FrameSyncObjects> semas;
+      mutable FramedEngine::FrameRecorder recorder;
+    };
+    std::unique_ptr<GraphicsEngine, FrameEnder> m_engine;
+    ;
+  };
+
+  using FrameT = SwapFrame;
+
+  GraphicsEngine(Context &context, const GraphicsEngineCreateInfo &CI);
 
   /// @brief Adds callbacks that are called in event of swapchain recreation.
   /// @param beforeDestroyCallback is called right before current swapchain is
@@ -70,7 +157,6 @@ public:
       if (!frame)
         continue;
       std::invoke(frameJob, *frame);
-      m_endFrame();
     }
   }
 
@@ -79,25 +165,18 @@ public:
   ~GraphicsEngine() override;
 
 private:
-  struct FrameSyncObjects final {
-    FrameSyncObjects(GraphicsEngine &engine);
-    vkw::Semaphore renderComplete, presentComplete;
-    bool needFenceWait = false;
-    vkw::Fence fence;
-    void waitIfNeeded();
-  };
+  friend class SwapFrame::FrameEnder;
+  std::unique_ptr<FrameSyncObjects> m_getSemaphores();
+  void m_returnSemaphores(std::unique_ptr<FrameSyncObjects> &&semas);
 
   void m_recreate_swapchain();
   bool m_surface_minimized();
-  void m_terminate();
 
   std::optional<SwapFrame> m_beginFrame();
-  void m_endFrame();
 
   SwapchainFactory &m_swapchainFactory;
   std::unique_ptr<Swapchain> m_swapchain;
-  std::vector<FrameSyncObjects> m_frameSyncs;
-  std::optional<SwapFrame> m_currentFrame;
+  std::vector<std::unique_ptr<FrameSyncObjects>> m_frameSyncs;
   std::vector<std::pair<std::function<void(void)>,
                         std::function<void(const Swapchain &)>>>
       m_swapChainCallbacks;

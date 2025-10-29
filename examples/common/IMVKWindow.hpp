@@ -1,6 +1,5 @@
 #pragma once
-#include "imvk/base/Swapchain.hpp"
-#include "vkw/Surface.hpp"
+#include "imvk/graphics/Engine.hpp"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>

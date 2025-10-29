@@ -1,5 +1,6 @@
 #pragma once
-#include "imvk/base/Shader.hpp"
+
+#include <vkw/SPIRVModule.hpp>
 
 #include <filesystem>
 
@@ -11,11 +12,11 @@ struct ShaderLoaderCreateInfo {
 
 // Just loads a shader from file in specified directory. Does not
 // cache them currently.
-class ShaderLoader final : public imvk::ShaderFactory {
+class ShaderLoader final {
 public:
   ShaderLoader(const ShaderLoaderCreateInfo &CI);
 
-  std::shared_ptr<vkw::SPIRVModule> getModule(std::string_view name) override;
+  std::shared_ptr<vkw::SPIRVModule> getModule(std::string_view name);
 
 private:
   std::filesystem::path m_shaderDir;

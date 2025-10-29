@@ -1,14 +1,14 @@
 #pragma once
-#include "imvk/base/EngineBase.hpp"
 #include "imvk/base/Utils.hpp"
 
 #include "vkw/CommandBuffer.hpp"
 #include "vkw/CommandPool.hpp"
+#include "vkw/CommandRecorder.hpp"
 
 namespace imvk {
 
-class ContextImpl;
 class FrameObject;
+class FramedEngine;
 
 /// @brief Controls capture of commands to be submitted for frame render and
 /// manages lifetimes of resources used in those commands.
@@ -18,13 +18,7 @@ public:
   /// scope. Frame objects that were registered for previous scope as used are
   /// unmarked but may remain registered. Registered objects that were not
   /// marked as used may be disposed here.
-  void begin();
-
-  /// @brief Finishes frame capture and flushes pending synchronous write
-  /// operations for used objects. After this point, captured work is ready for
-  /// submission. The engine is expected to submit recorded command buffer and
-  /// wait for it to finish execution before calling begin() again.
-  void end();
+  vkw::BufferRecorder begin();
 
   /// @brief Frees up all registered objects.
   void terminate();
@@ -78,9 +72,7 @@ public:
   /// @brief Create a frame object. This frame object must only be used within
   /// engine it was created from.
   /// @param engine
-  FrameObject(FramedEngine &engine) {
-    m_frameIds.resize(engine.getFIFCount(), 0u);
-  }
+  FrameObject(FramedEngine &engine);
 
   virtual ~FrameObject() = default;
 
@@ -98,7 +90,7 @@ private:
     return m_frameIds[frameID];
   }
 
-  boost::container::small_vector<unsigned, 3> m_frameIds;
+  boost::container::small_vector<unsigned, 2> m_frameIds;
 };
 
 } // namespace imvk

@@ -1,12 +1,6 @@
 file(GLOB_RECURSE IMVK_ALL_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include/imvk/*.h ${CMAKE_CURRENT_SOURCE_DIR}/../include/imvk/*.hpp)
 
-set(VK_LIB VkWrapper::VkWrapper)
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  if(MSVC)
-    set(VK_LIB VkWrapper::VkWrapperd)
-  endif()
-endif()
+set(VK_LIB vkw::vkwrt)
 
 function(imvk_add_component NAME)
   file(GLOB_RECURSE ${NAME}_SOURCES ${NAME}/*.cpp ${NAME}/*.h ${NAME}/*.hpp)
@@ -15,7 +9,7 @@ function(imvk_add_component NAME)
   target_link_libraries(imvk_${NAME} PUBLIC ${VK_LIB})
 endfunction()
 
-set(IMVK_COMPONENTS base graphics copy)
+set(IMVK_COMPONENTS base graphics copy graph)
 
 foreach(COMPONENT ${IMVK_COMPONENTS})
   imvk_add_component(${COMPONENT})

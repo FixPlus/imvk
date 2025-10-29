@@ -1,56 +1,23 @@
 #pragma once
-#include "imvk/base/Shader.hpp"
-#include "imvk/base/Swapchain.hpp"
-#include "vkw/Device.hpp"
+#include <imvk/base/Queue.hpp>
+#include <imvk/base/Utils.hpp>
+
+#include <vkw/Allocation.hpp>
+#include <vkw/Device.hpp>
+#include <vkw/SPIRVModule.hpp>
 
 namespace imvk {
 
 struct ContextCreateInfo {
-  /// @brief The device that this context will be using to do all jobs.
-  /// There are some required extensions expected to be present:
-  ///    VK_KHR_Swapchain
-  /// Additional extensions may be passed that may improve capabilities
-  /// of this context but are not required to run:
-  ///    #TBD
-  ///
-  /// There is expected to be at least one universal queue that could be used
-  /// for graphics, transfer and compute commands. Additional queues may be
-  /// provided which could improve capabilities of context but usually not
-  /// required.
-  std::reference_wrapper<vkw::Device> device;
-
-  /// @brief Shader factory is used to fetch shader modules using string as a
-  /// key. User must provide their implementation of this interface.
-  std::reference_wrapper<ShaderFactory> shaderFactory;
+  /// TODO: fill this one.
 };
 
-struct GraphicsEngineCreateInfo {
-  /// @brief Swapchain factory is used to create and maintain internal
-  /// swapchain. User must provide their implementation of this interface. Pass
-  /// null for no swapchain. Without swapchain engine won't be able to perform
-  /// present operations.
-  SwapchainFactory *swapchainFactory;
-
-  /// @brief Number of frames in flight to allocate resources to. Pass 0 for
-  /// auto.
-  unsigned maxFramesInFlight;
+struct QueueCapsInfo {
+  bool present = false;
+  bool graphics = false;
+  bool compute = false;
+  bool transfer = false;
 };
-
-struct ComputeEngineCreateInfo {
-  // TODO
-};
-
-struct CopyEngineCreateInfo {
-  // TODO
-};
-
-class ContextImpl;
-
-class GraphicsEngine;
-class ComputeEngine;
-class CopyEngine;
-
-template <typename T> using EngineHandle = std::unique_ptr<T>;
 
 /// @brief Basic context that controls operation of all engines.
 ///
@@ -69,29 +36,48 @@ template <typename T> using EngineHandle = std::unique_ptr<T>;
 /// synchronously.
 class Context {
 public:
-  Context(const ContextCreateInfo &CI);
+  Context(vkw::Device &device, vkw::DeviceAllocator &devAlloc,
+          const ContextCreateInfo &CI);
 
-  /// @brief Graphics engine is used to render and present images using
-  /// swapchain. It supports all types of operation including compute and
-  /// transfer.
-  EngineHandle<GraphicsEngine>
-  createGraphicsEngine(const GraphicsEngineCreateInfo &CI);
+  vkw::Device &device() { return m_device; }
 
-  /// @brief Compute engine is used to perform compute operations. It also
-  /// supports transfer. It is suitable for compute tasks that are not directly
-  /// used by graphics pipeline.
-  EngineHandle<ComputeEngine>
-  createComputeEngine(const ComputeEngineCreateInfo &CI);
+  /// @brief handle to thread-local SPIRVLinkContext.
+  vkw::SPIRVLinkContext &linkContext() {
+    /// TODO: create with some message consumer.
+    return m_linkCtx.get();
+  }
+  /// @brief Hands over one queue that satisfy all required capabilities.
+  /// This queue may be already acquired by another engine in which case
+  /// lock mechanism is introduces. Context tries to minimize amount of
+  /// shared queues by picking queue family that is just enough to satisfy
+  /// required capabilities.
+  /// IMPORTANT: calls to this procedure must be externally synchronized.
+  Queue &allocateQueue(const QueueCapsInfo &queueInfo);
 
-  /// @brief Copy engine is used for data transfer. It is suitable for
-  /// background data streaming operations asynchronous to graphics pipeline
-  /// operations.
-  EngineHandle<CopyEngine> createCopyEngine(const CopyEngineCreateInfo &CI);
+  /// @brief Upon destruction engine must 'free' it's queue which reduces number
+  /// of references to it. If it reaches 1 - lock is abolished, if it reaches 0
+  /// - queue is freed and is ready to be reallocated again for new engines.
+  /// IMPORTANT: calls to this procedure must be externally synchronized.
+  void freeQueue(Queue &queue);
 
-  virtual ~Context();
+  vkw::DeviceAllocator &getDeviceAllocator() const {
+    return m_deviceAllocator.get();
+  }
+
+  virtual ~Context() = default;
 
 private:
-  std::unique_ptr<ContextImpl> m_pimpl;
+  vkw::StrongReference<vkw::Device> m_device;
+  std::reference_wrapper<vkw::DeviceAllocator> m_deviceAllocator;
+
+  Queue &m_allocateQueue(unsigned queueFamilyIndex, unsigned queueIndex);
+
+  std::unordered_map<Queue *, std::unique_ptr<Queue>> m_queueStorage;
+  std::unordered_map<unsigned,
+                     std::unordered_map<unsigned, std::pair<Queue *, unsigned>>>
+      m_queueMap;
+
+  PerThreadStorage<vkw::SPIRVLinkContext> m_linkCtx;
 };
 
 } // namespace imvk

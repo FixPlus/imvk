@@ -51,7 +51,8 @@ Window::Window(const WindowSettings &settings, const vkw::Instance &instance)
       }()),
       m_surface(instance, [&]() {
         VkSurfaceKHR ret;
-        glfwCreateWindowSurface(instance, m_handle.get(), NULL, &ret);
+        glfwCreateWindowSurface(instance, m_handle.get(),
+                                vkw::HostAllocator::get(), &ret);
         return ret;
       }()) {
   glfwSetKeyCallback(m_handle.get(), m_key_callback);

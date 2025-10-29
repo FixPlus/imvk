@@ -15,7 +15,7 @@ void Device::ExitPrinter::operator()(Device *device) {
 /// TODO: fix, this does not work.
 class HostAllocator : public vkw::HostAllocator {
 public:
-  HostAllocator() : vkw::HostAllocator(/* enabled */ true) {}
+  HostAllocator() : vkw::HostAllocator() {}
   virtual void *allocate(size_t size, size_t alignment,
                          VkSystemAllocationScope scope) noexcept {
     char *zero = nullptr;
@@ -48,10 +48,11 @@ public:
 class Validation : vkw::debug::Validation {
 public:
   explicit Validation(vkw::Instance &instance)
-      : vkw::debug::Validation{instance} {};
+      : vkw::debug::Validation{instance, onValidationMessage} {};
 
-  void onValidationMessage(vkw::debug::MsgSeverity severity,
-                           Message const &message) override {
+  static void onValidationMessage(vkw::debug::MsgSeverity severity,
+                                  vkw::debug::MsgType type,
+                                  vkw::debug::Message const &message) {
     std::string severityStr;
     switch (severity) {
     case vkw::debug::MsgSeverity::Error:
@@ -96,32 +97,35 @@ Device::Device(const DeviceCreateInfo &CI)
                    }
                    return ICI;
                  }()),
-      m_device(m_instance, [&]() {
-        auto available = m_instance.enumerateAvailableDevices();
-        if (available.empty())
-          throw std::runtime_error("No available GPUs found");
-        for (auto &&dev : available) {
-          if (dev->supportedApiVersion() < vkw::ApiVersion{1, 2, 0})
-            continue;
-          if (!dev->extensionSupported(vkw::ext::KHR_swapchain))
-            continue;
-          dev->enableExtension(vkw::ext::KHR_swapchain);
-          auto neededQueue =
-              std::ranges::find_if(dev->queueFamilies(), [&](auto &fam) {
-                return fam.graphics() && fam.transfer() && fam.compute();
-              });
-          if (neededQueue == dev->queueFamilies().end())
-            continue;
-          neededQueue->requestQueue();
-          return std::move(*dev);
-        }
-        throw std::runtime_error("No suitable physical devices");
-      }()) {
+      m_device(
+          m_instance,
+          [&]() {
+            auto available = vkw::PhysicalDevice::enumerate(m_instance);
+            if (available.empty())
+              throw std::runtime_error("No available GPUs found");
+            for (auto &&dev : available) {
+              if (dev.supportedApiVersion() < vkw::ApiVersion{1, 2, 0})
+                continue;
+              if (!dev.extensionSupported(vkw::ext::KHR_swapchain))
+                continue;
+              dev.enableExtension(vkw::ext::KHR_swapchain);
+              auto neededQueue =
+                  std::ranges::find_if(dev.queueFamilies(), [&](auto &fam) {
+                    return fam.graphics() && fam.transfer() && fam.compute();
+                  });
+              if (neededQueue == dev.queueFamilies().end())
+                continue;
+              neededQueue->requestQueue();
+              return std::move(dev);
+            }
+            throw std::runtime_error("No suitable physical devices");
+          }()),
+      m_allocator(vkw::DeviceAllocator::createDefault(m_device)) {
   if (m_instance.isLayerEnabled(vkw::layer::KHRONOS_validation)) {
     std::cout << "Validation enabled" << std::endl;
     m_validation = std::make_unique<Validation>(m_instance);
   }
-  vkw::addIrrecoverableErrorCallback([](vkw::Error &e) {
+  vkw::addIrrecoverableErrorCallback([](const vkw::Error &e) {
     std::cerr << "[FATAL ERROR]: " << e.what() << std::endl;
   });
 }

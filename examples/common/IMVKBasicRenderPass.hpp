@@ -1,20 +1,23 @@
 #pragma once
 #include "imvk/graphics/Engine.hpp"
-#include "imvk/graphics/Frame.hpp"
 #include "imvk/graphics/Pipeline.hpp"
 #include "imvk/graphics/Swapchain.hpp"
 
 #include "vkw/Framebuffer.hpp"
 #include "vkw/Image.hpp"
 #include "vkw/RenderPass.hpp"
+
+#include "IMVKShaderLoader.hpp"
+
 namespace imvk::examples {
 
 class BasicRenderPass {
 public:
   BasicRenderPass(imvk::GraphicsEngine &engine);
 
-  void run(const SwapFrame &frame,
-           const std::function<void(const imvk::SwapFrame &)> &callback);
+  void run(GraphicsEngine::SwapFrame &frame,
+           const std::function<void(vkw::RenderPassRecorder &,
+                                    const imvk::Frame &)> &callback);
 
   auto &pass() { return m_pass; }
 
@@ -30,7 +33,8 @@ private:
 
 class BasicVertexStage : public imvk::GraphicsPipelineStage {
 public:
-  BasicVertexStage(GraphicsEngine &engine, std::string_view shaderName,
+  BasicVertexStage(GraphicsEngine &engine, ShaderLoader &shaderFactory,
+                   std::string_view shaderName,
                    std::unique_ptr<vkw::VertexInputStateCreateInfoBase>
                        vertexState = nullptr);
 
@@ -42,21 +46,20 @@ private:
 
 class BasicFragmentStage : public imvk::GraphicsPipelineStage {
 public:
-  BasicFragmentStage(GraphicsEngine &engine, std::string_view shaderName,
-                     vkw::RenderPass &pass, unsigned subPass);
+  BasicFragmentStage(GraphicsEngine &engine, ShaderLoader &shaderFactory,
+                     std::string_view shaderName, vkw::RenderPass &pass);
 
   bool isProvoking() const override { return true; }
 
   vkw::GraphicsPipelineCreateInfo
   initCreateInfo(const vkw::PipelineLayout &layout) const override {
-    return vkw::GraphicsPipelineCreateInfo{m_pass, m_subPass, layout};
+    return vkw::GraphicsPipelineCreateInfo{m_pass, layout};
   }
 
   void amendCreateInfo(vkw::GraphicsPipelineCreateInfo &info) const override;
 
 private:
   vkw::RenderPass &m_pass;
-  unsigned m_subPass;
 };
 
 } // namespace imvk::examples

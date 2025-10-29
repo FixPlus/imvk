@@ -3,38 +3,31 @@
 
 namespace imvk {
 
-FramedEngine::FramedEngine(ContextImpl &ctx, const QueueCapsInfo &queueInfo,
+FramedEngine::FramedEngine(Context &ctx, const QueueCapsInfo &queueInfo,
                            unsigned frameInFlightCount)
-    : EngineBase(ctx, queueInfo), m_frameInFlightCount(frameInFlightCount),
-      m_dynamicFIFCount(frameInFlightCount) {
+    : EngineBase(ctx, queueInfo) {
   m_frames.reserve(frameInFlightCount);
-  std::ranges::transform(std::ranges::iota_view{0u, frameInFlightCount},
-                         std::back_inserter(m_frames), [this](auto &&i) {
-                           return std::unique_ptr<Frame>(
-                               FrameCreator::create(*this, i));
-                         });
-}
-
-void FramedEngine::setDynamicFIFCount(unsigned count) {
-  assert(count <= m_frameInFlightCount);
-  m_dynamicFIFCount = m_frameInFlightCount;
-  if (m_currentFrame >= m_dynamicFIFCount)
-    m_currentFrame = 0u;
-}
-
-void FramedEngine::endAndAdvanceFrame() {
-  m_frames.at(m_currentFrame)->end();
-  m_currentFrame = (m_currentFrame + 1u) % m_dynamicFIFCount;
-}
-
-const Frame &FramedEngine::beginAndGetCurrentFrame() const {
-  Frame &frame = *m_frames.at(m_currentFrame);
-  frame.begin();
-  return frame;
+  std::ranges::transform(
+      std::ranges::iota_view{0u, frameInFlightCount},
+      std::back_inserter(m_frames), [this, &ctx](auto &&i) {
+        return FrameInfo{std::unique_ptr<Frame>(FrameCreator::create(*this, i)),
+                         vkw::Fence{ctx.device()},
+                         std::async(std::launch::deferred, []() {})};
+      });
+  for (auto i : std::ranges::iota_view{0u, frameInFlightCount})
+    m_frameQueue.push(i);
 }
 void FramedEngine::terminate() {
-  for (auto &&frame : m_frames)
-    frame->terminate();
+  queue().acquire().get().waitIdle();
+  for (auto &&frame : m_frames) {
+    if (frame.waitFence.valid())
+      frame.waitFence.get();
+    frame.frame->terminate();
+  }
+}
+
+FramedEngine::FrameRecorder FramedEngine::m_beginFrameImpl(Frame &frame) {
+  return FrameRecorder{frame.begin(), frame};
 }
 
 } // namespace imvk

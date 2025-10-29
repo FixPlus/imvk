@@ -4,7 +4,10 @@
 #include <concepts>
 #include <optional>
 #include <ranges>
+#include <thread>
+#include <unordered_map>
 #include <vector>
+
 
 namespace imvk {
 
@@ -167,6 +170,21 @@ private:
 
   std::list<std::pair<Key, T>> m_elementList;
   std::unordered_map<Key, typename ListType::iterator, KeyHash> m_elementTable;
+};
+
+template <typename T> class PerThreadStorage {
+public:
+  T &get(auto &&firstArg, auto &&...args) {
+    return m_storage
+        .try_emplace(std::piecewise_construct,
+                     std::make_tuple(std::this_thread::get_id()),
+                     std::forward_as_tuple(firstArg, args...))
+        .first->second;
+  }
+  T &get() { return m_storage[std::this_thread::get_id()]; }
+
+private:
+  std::unordered_map<std::thread::id, T> m_storage;
 };
 
 } // namespace imvk

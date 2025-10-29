@@ -18,27 +18,27 @@ findStageSet(vkw::SPIRVModuleInfo const &moduleInfo, uint32_t stageSet) {
 
 PipelineStage::PipelineStage(FramedEngine &engine,
                              const Description &description)
-    : m_engine(engine), m_stage(description.stage ? *description.stage : 0) {
+    : m_engine(engine), m_stage(description.stage ? *description.stage
+                                                  : VkShaderStageFlagBits{}) {
   if (description.shaders.empty())
     return;
   assert(description.stage);
   m_module.emplace(
-      description.shaders |
-          std::views::transform(
-              [](auto &&pModule) -> decltype(auto) { return *pModule; }),
-      /*link library */ true);
-  auto &reflectInfo = m_module->info();
+      description.shaders.size() == 1
+          ? description.shaders.front()
+          : engine.context().linkContext().link(description.shaders,
+                                                /*link library */ true));
+  auto reflectInfo = vkw::SPIRVModuleInfo{*m_module};
   for (auto &&[num, flags, setsPerPool] : description.sets) {
     auto setInfo = findStageSet(reflectInfo, num);
+    if (!setInfo)
+      throw std::runtime_error(
+          "Stage declared set that is not defined by shader module");
     boost::container::small_vector<vkw::DescriptorSetLayoutBinding, 4> bindings;
 
-    if (!setInfo) {
-      m_sets.emplace(
-          num, vkw::DescriptorSetLayout{engine.context().device(), bindings});
-    }
-    for (auto &&binding : setInfo->bindings()) {
+    for (auto &&binding : setInfo->bindings())
       bindings.emplace_back(binding.index(), binding.descriptorType(), flags);
-    }
+
     m_sets.emplace(num, DescriptorPool{engine.context().device(),
                                        vkw::DescriptorSetLayout{
                                            engine.context().device(), bindings},
@@ -51,18 +51,6 @@ PipelineStage::PipelineStage(FramedEngine &engine,
         .offset = pushC.offset(),
         .size = pushC.size()});
   }
-}
-
-PipelineStage::PipelineStage(FramedEngine &engine,
-                             const Description::Set &setInfo,
-                             vkw::DescriptorSetLayout &&layout)
-    : m_engine(engine) {
-  if (layout.info().bindingCount)
-    m_sets.emplace(setInfo.num,
-                   DescriptorPool(engine.context().device(), std::move(layout),
-                                  setInfo.setsPerPool));
-  else
-    m_sets.emplace(setInfo.num, std::move(layout));
 }
 
 } // namespace imvk

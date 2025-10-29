@@ -13,9 +13,9 @@ DescriptorPool::DescriptorPool(vkw::Device &device,
         PoolSettings ret{};
         ret.setsPerPool = setsPerPool;
         boost::container::small_flat_map<VkDescriptorType, size_t, 4> counts;
-        for (auto &&binding : layout) {
-          counts.try_emplace(binding.type(), 0u).first->second +=
-              setsPerPool * binding.descriptorCount();
+        for (auto &&binding : layout.bindings()) {
+          counts.try_emplace(binding.descriptorType, 0u).first->second +=
+              setsPerPool * binding.descriptorCount;
         }
         std::ranges::transform(counts, std::back_inserter(ret.sizes),
                                [&setsPerPool](auto &&pair) {

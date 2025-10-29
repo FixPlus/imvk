@@ -21,8 +21,9 @@ namespace imvk {
 class PipelineStage {
 public:
   struct Description {
-    boost::container::small_vector<std::shared_ptr<vkw::SPIRVModule>, 2>
-        shaders;
+    /// TODO: think what can be done to eliminate need to copy shader code to
+    /// create stage.
+    boost::container::small_vector<vkw::SPIRVModule, 2> shaders;
     std::optional<VkShaderStageFlagBits> stage;
     struct Set {
       unsigned num;
@@ -39,20 +40,13 @@ public:
   /// @param description
   PipelineStage(FramedEngine &engine, const Description &description);
 
-  /// @brief Create a shader-less pipeline stage, but with set layout.
-  /// @param engine
-  /// @param setInfo
-  /// @param layout
-  PipelineStage(FramedEngine &engine, const Description::Set &setInfo,
-                vkw::DescriptorSetLayout &&layout);
-
   /// @brief Create empty stage
   /// @param engine
   PipelineStage(FramedEngine &engine) : m_engine(engine) {}
 
   FramedEngine &engine() const { return m_engine; }
 
-  VkShaderStageFlags stage() const { return m_stage; }
+  VkShaderStageFlagBits stage() const { return m_stage; }
   auto getPushConstants() const {
     return std::span<const VkPushConstantRange>{m_pushConstants};
   }
@@ -60,28 +54,11 @@ public:
   bool hasShader() const { return m_module.has_value(); }
   auto &getShader() const { return *m_module; }
 
-  auto layouts() const {
-    return m_sets | std::views::transform([](auto &&item) {
-             auto &var = item.second;
-             auto &layout =
-                 std::holds_alternative<vkw::DescriptorSetLayout>(var)
-                     ? std::get<vkw::DescriptorSetLayout>(var)
-                     : std::get<DescriptorPool>(var).descriptorLayout();
-             return std::tuple<unsigned, const vkw::DescriptorSetLayout &>(
-                 item.first, layout);
-           });
+  auto sets() const {
+    return std::ranges::subrange(m_sets.begin(), m_sets.end());
   }
 
-  auto pools() const {
-    return m_sets | std::views::filter([](auto &&item) {
-             return std::holds_alternative<DescriptorPool>(item.second);
-           }) |
-           std::views::transform([](auto &&item) {
-             return std::tuple<unsigned, DescriptorPool &>(
-                 item.first, const_cast<DescriptorPool &>(
-                                 std::get<DescriptorPool>(item.second)));
-           });
-  }
+  auto sets() { return std::ranges::subrange(m_sets.begin(), m_sets.end()); }
 
   virtual ~PipelineStage() = default;
 
@@ -89,10 +66,8 @@ private:
   FramedEngine &m_engine;
   std::optional<vkw::SPIRVModule> m_module;
   boost::container::small_vector<VkPushConstantRange, 3> m_pushConstants;
-  boost::container::small_flat_map<
-      unsigned, std::variant<vkw::DescriptorSetLayout, DescriptorPool>, 2>
-      m_sets;
-  VkShaderStageFlags m_stage = 0;
+  boost::container::small_flat_map<unsigned, DescriptorPool, 2> m_sets;
+  VkShaderStageFlagBits m_stage{};
 };
 
 using PipelineStageHandle = std::shared_ptr<PipelineStage>;
@@ -102,7 +77,7 @@ public:
   PipelineStageSet(std::shared_ptr<StageT> stage, auto &&primitveInfos)
       : m_stage(std::move(stage)) {
     auto primitveInfoIt = primitveInfos.begin();
-    for (auto &&[setNum, pool] : m_stage->pools()) {
+    for (auto &&[setNum, pool] : m_stage->sets()) {
       assert(primitveInfoIt != primitveInfos.end());
       m_sets.emplace(
           std::piecewise_construct, std::make_tuple(setNum),
@@ -142,19 +117,42 @@ public:
         }()),
         m_layout([&]() {
           boost::container::small_vector<
-              std::reference_wrapper<const vkw::DescriptorSetLayout>, 4>
+              std::pair<unsigned,
+                        std::reference_wrapper<const vkw::DescriptorSetLayout>>,
+              4>
               descriptorLayouts;
           boost::container::small_vector<VkPushConstantRange, 4> pushConstants;
           for (auto &&stage : m_stages) {
             std::ranges::transform(
-                stage->layouts(), std::back_inserter(descriptorLayouts),
-                [](auto &&layout) { return std::ref(std::get<1>(layout)); });
+                stage->sets(), std::back_inserter(descriptorLayouts),
+                [](auto &&set) {
+                  return std::make_pair(
+                      std::get<0>(set),
+                      std::ref(std::get<1>(set).descriptorLayout()));
+                });
             std::ranges::copy(stage->getPushConstants(),
                               std::back_inserter(pushConstants));
           }
+          std::ranges::sort(descriptorLayouts, [](auto &&a, auto &&b) {
+            return std::get<0>(a) < std::get<0>(b);
+          });
+          boost::container::small_vector<
+              std::reference_wrapper<const vkw::DescriptorSetLayout>, 4>
+              descriptorLayoutsRaw;
+          unsigned expectedSetNum = 0;
+
+          /// TODO: add support for descriptor 'gaps'
+          for (auto &&[setNum, set] : descriptorLayouts) {
+            if (setNum != expectedSetNum)
+              throw std::runtime_error(
+                  "Pipeline declared non-contigous set number range");
+            descriptorLayoutsRaw.emplace_back(set.get());
+          }
+
           /// TODO: add merging push constants.
           return vkw::PipelineLayout(engine.context().device(),
-                                     descriptorLayouts, pushConstants, flags);
+                                     descriptorLayoutsRaw, pushConstants,
+                                     flags);
         }()),
         m_pipeline(
             std::invoke(StageT::createPipeline, engine, m_layout, m_stages)) {}

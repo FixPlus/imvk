@@ -1,5 +1,6 @@
 #include "imvk/graphics/Swapchain.hpp"
 
+#include "vkw/CommandRecorder.hpp"
 #include "vkw/Fence.hpp"
 
 namespace imvk {
@@ -42,18 +43,19 @@ Swapchain::Swapchain(vkw::Device &device, Queue &q,
   auto queue = q.acquire();
   auto commandPool = vkw::CommandPool{device, 0, queue.get().family().index()};
   auto commandBuffer = vkw::PrimaryCommandBuffer{commandPool};
-
-  commandBuffer.begin(0);
-
-  commandBuffer.imageMemoryBarrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                   VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                   transitLayouts);
-
-  commandBuffer.end();
+  {
+    vkw::BufferRecorder rcd{commandBuffer,
+                            VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    auto transferPass = rcd.beginTransferPass();
+    transferPass.imageMemoryBarrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                    transitLayouts);
+  }
 
   auto fence = vkw::Fence{device};
 
-  auto submitInfo = vkw::SubmitInfo(commandBuffer);
+  vkw::SubmitInfo submitInfo;
+  submitInfo.addCommands(commandBuffer);
 
   queue.get().submit(submitInfo, fence);
   fence.wait();

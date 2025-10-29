@@ -3,9 +3,16 @@
 
 namespace imvk {
 
+struct ComputeEngineCreateInfo {
+  // TODO
+};
+
+/// @brief Compute engine is used to perform compute operations. It also
+/// supports transfer. It is suitable for compute tasks that are not directly
+/// used by graphics pipeline.
 class ComputeEngine {
 public:
-  ComputeEngine(ContextImpl &context, const ComputeEngineCreateInfo &CI);
+  ComputeEngine(Context &context, const ComputeEngineCreateInfo &CI);
 
 private:
 };
