@@ -16,8 +16,8 @@ findStageSet(vkw::SPIRVModuleInfo const &moduleInfo, uint32_t stageSet) {
 
 } // namespace
 
-PipelineStage::PipelineStage(FramedEngine &engine,
-                             const Description &description)
+StageLayoutImpl::StageLayoutImpl(FramedEngine &engine,
+                                 const Description &description)
     : m_engine(engine), m_stage(description.stage ? *description.stage
                                                   : VkShaderStageFlagBits{}) {
   if (description.shaders.empty())

@@ -1,11 +1,13 @@
 #include "imvk/graphics/Pipeline.hpp"
 
 namespace imvk {
-
-vkw::GraphicsPipeline GraphicsPipelineStage::createPipeline(
-    FramedEngine &engine, const vkw::PipelineLayout &layout,
-    std::span<const std::shared_ptr<GraphicsPipelineStage>> stages) {
-  auto checkIfProvoking = [](auto &&pStage) { return pStage->isProvoking(); };
+FObject::Ptr
+GraphicsPipelineTraits::create(FramedEngine &engine,
+                               PipelineLayout<GraphicsPipelineTraits> &layout) {
+  auto stages = layout.stages();
+  auto checkIfProvoking = [](const GraphicsPipelineStage &pStage) {
+    return pStage.isProvoking();
+  };
   auto numberOfProvoking = std::ranges::count_if(stages, checkIfProvoking);
   assert(numberOfProvoking == 1u);
   auto foundProvoking = std::ranges::find_if(stages, checkIfProvoking);
@@ -14,11 +16,12 @@ vkw::GraphicsPipeline GraphicsPipelineStage::createPipeline(
   boost::container::small_vector<const vkw::SPIRVModule *, 4>
       fragmentShaderParts;
 
-  for (auto &&pStage : stages) {
-    if (!pStage->hasShader())
+  for (const GraphicsPipelineStage &stage : stages) {
+    auto &stageInfo = stage.get();
+    if (!stageInfo.hasShader())
       continue;
-    auto *pShader = &pStage->getShader();
-    switch (pStage->stage()) {
+    auto *pShader = &stageInfo.getShader();
+    switch (stageInfo.stage()) {
     case VK_SHADER_STAGE_VERTEX_BIT:
       vertexShaderParts.emplace_back(pShader);
       break;
@@ -45,14 +48,14 @@ vkw::GraphicsPipeline GraphicsPipelineStage::createPipeline(
                        std::views::transform(
                            [](auto &&ptr) -> decltype(auto) { return *ptr; }))};
 
-  auto createInfo = (*foundProvoking)->initCreateInfo(layout);
+  auto createInfo = (*foundProvoking).initCreateInfo(layout.get());
 
-  for (auto &&pStage : stages) {
-    pStage->amendCreateInfo(createInfo);
+  for (const GraphicsPipelineStage &stage : stages) {
+    stage.amendCreateInfo(createInfo);
   }
 
   createInfo.addShader(vShader).addShader(fShader);
-  return vkw::GraphicsPipeline{device, createInfo};
+  return engine.createObject<vkw::GraphicsPipeline>(device, createInfo);
 }
 
 vkw::GraphicsPipelineCreateInfo

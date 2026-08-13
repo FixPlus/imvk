@@ -1,26 +1,29 @@
 #include "imvk/graphics/Swapchain.hpp"
+#include "imvk/graphics/Engine.hpp"
 
 #include "vkw/CommandRecorder.hpp"
 #include "vkw/Fence.hpp"
 
-namespace imvk {
+#include <array>
 
-Swapchain::Swapchain(vkw::Device &device, Queue &q,
-                     const VkSwapchainCreateInfoKHR &CI)
-    : vkw::SwapChain(device, [&]() {
-        auto CICopy = CI;
-        CICopy.pNext = nullptr;
-        CICopy.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CICopy.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-        CICopy.oldSwapchain = nullptr;
-        CICopy.pQueueFamilyIndices = nullptr;
-        // TODO: amend info based on needs.
-        CICopy.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        return CICopy;
-      }()) {
+namespace imvk {
+FObject::Ptr GraphicsEngine::m_createSwapchain() {
+  auto &device = context().device();
+  auto ret = createObject<vkw::SwapChain>(device, [&]() {
+    auto CICopy = m_swapchainFactory.getCreateInfo(device);
+    CICopy.pNext = nullptr;
+    CICopy.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    CICopy.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    CICopy.oldSwapchain = nullptr;
+    CICopy.pQueueFamilyIndices = nullptr;
+    // TODO: amend info based on needs.
+    CICopy.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    return CICopy;
+  }());
+  auto &swapchain = ret->as<vkw::SwapChain>();
   std::vector<VkImageMemoryBarrier> transitLayouts;
 
-  for (auto &image : images()) {
+  for (auto &image : swapchain.images()) {
     VkImageMemoryBarrier transitLayout{};
     transitLayout.image = image.vkw::NonOwingImage::operator VkImage_T *();
     transitLayout.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -40,8 +43,8 @@ Swapchain::Swapchain(vkw::Device &device, Queue &q,
     transitLayouts.push_back(transitLayout);
   }
 
-  auto queue = q.acquire();
-  auto commandPool = vkw::CommandPool{device, 0, queue.get().family().index()};
+  auto q = queue().acquire();
+  auto commandPool = vkw::CommandPool{device, 0, q.get().family().index()};
   auto commandBuffer = vkw::PrimaryCommandBuffer{commandPool};
   {
     vkw::BufferRecorder rcd{commandBuffer,
@@ -57,18 +60,48 @@ Swapchain::Swapchain(vkw::Device &device, Queue &q,
   vkw::SubmitInfo submitInfo;
   submitInfo.addCommands(commandBuffer);
 
-  queue.get().submit(submitInfo, fence);
+  q.get().submit(submitInfo, fence);
   fence.wait();
+  return ret;
+}
+Swapchain::Swapchain(GraphicsEngine &engine)
+    : FOENode<vkw::SwapChain, fon_type::cow>(doConstructNew(engine)) {}
 
+SwapchainView::SwapchainView(GraphicsEngine &engine, Swapchain &swapchain)
+    : FOENode<vkw::ImageView<vkw::COLOR, vkw::V2DA>, fon_type::ext>([&]() {
+        std::array<FONodeBase *, 1> child{&swapchain};
+        return child;
+      }()) {
+  onConstruct(engine);
+}
+FObject::Ptr Swapchain::constructNew(FramedEngine &engine) {
+  return doConstructNew(static_cast<GraphicsEngine &>(engine));
+}
+
+FObject::Ptr Swapchain::doConstructNew(GraphicsEngine &engine) {
+  return engine.m_createSwapchain();
+}
+
+unsigned SwapchainView::getExtIndex(const Frame &frame) const {
+  return swapchain().currentImage();
+}
+
+void SwapchainView::doConstructNew(
+    FramedEngine &engine,
+    boost::container::small_vector_base<FObject::Ptr> &res,
+    const vkw::SwapChain &swapchain) {
   VkComponentMapping mapping;
   mapping.r = VK_COMPONENT_SWIZZLE_IDENTITY;
   mapping.g = VK_COMPONENT_SWIZZLE_IDENTITY;
   mapping.b = VK_COMPONENT_SWIZZLE_IDENTITY;
   mapping.a = VK_COMPONENT_SWIZZLE_IDENTITY;
 
-  for (auto &image : images()) {
-    m_image_views.emplace_back(device, image, image.format(), 0u, 1u, 0u, 1u,
-                               mapping);
-  }
+  std::ranges::transform(
+      swapchain.images(), std::back_inserter(res), [&](auto &&image) {
+        return engine.createObject<vkw::ImageView<vkw::COLOR, vkw::V2DA>>(
+            engine.context().device(), image, image.format(), 0u, 1u, 0u, 1u,
+            mapping);
+      });
 }
+
 } // namespace imvk

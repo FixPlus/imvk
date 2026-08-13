@@ -17,17 +17,21 @@ FramedEngine::FramedEngine(Context &ctx, const QueueCapsInfo &queueInfo,
   for (auto i : std::ranges::iota_view{0u, frameInFlightCount})
     m_frameQueue.push(i);
 }
-void FramedEngine::terminate() {
+FramedEngine::~FramedEngine() {
   queue().acquire().get().waitIdle();
   for (auto &&frame : m_frames) {
     if (frame.waitFence.valid())
       frame.waitFence.get();
-    frame.frame->terminate();
   }
+  for (auto &&obj : m_freeList)
+    delete obj;
 }
 
-FramedEngine::FrameRecorder FramedEngine::m_beginFrameImpl(Frame &frame) {
-  return FrameRecorder{frame.begin(), frame};
+FramedEngine::FrameRecorder FramedEngine::m_beginFrameImpl(Frame &frame,
+                                                           unsigned ordinal) {
+  return FrameRecorder{frame.begin(ordinal), frame};
 }
-
+void FramedEngine::destroyObject(FObject *object) {
+  m_freeList.push_back(object);
+}
 } // namespace imvk

@@ -18,7 +18,7 @@
 
 namespace imvk {
 
-class PipelineStage {
+class StageLayoutImpl {
 public:
   struct Description {
     /// TODO: think what can be done to eliminate need to copy shader code to
@@ -38,11 +38,11 @@ public:
   /// DescriptorPool will be allocated, that could be used by PipelineStageSet.
   /// @param engine
   /// @param description
-  PipelineStage(FramedEngine &engine, const Description &description);
+  StageLayoutImpl(FramedEngine &engine, const Description &description);
 
   /// @brief Create empty stage
   /// @param engine
-  PipelineStage(FramedEngine &engine) : m_engine(engine) {}
+  StageLayoutImpl(FramedEngine &engine) : m_engine(engine) {}
 
   FramedEngine &engine() const { return m_engine; }
 
@@ -60,7 +60,11 @@ public:
 
   auto sets() { return std::ranges::subrange(m_sets.begin(), m_sets.end()); }
 
-  virtual ~PipelineStage() = default;
+  bool hasSet(unsigned binding) const { return m_sets.contains(binding); }
+  DescriptorPool &getSet(unsigned binding) { return m_sets.at(binding); }
+  const DescriptorPool &getSet(unsigned binding) const {
+    return m_sets.at(binding);
+  }
 
 private:
   FramedEngine &m_engine;
@@ -70,139 +74,253 @@ private:
   VkShaderStageFlagBits m_stage{};
 };
 
-using PipelineStageHandle = std::shared_ptr<PipelineStage>;
-
-template <typename StageT> class PipelineStageSet {
+class StageLayout : public FONode<StageLayoutImpl, fon_type::cow> {
 public:
-  PipelineStageSet(std::shared_ptr<StageT> stage, auto &&primitveInfos)
-      : m_stage(std::move(stage)) {
-    auto primitveInfoIt = primitveInfos.begin();
-    for (auto &&[setNum, pool] : m_stage->sets()) {
-      assert(primitveInfoIt != primitveInfos.end());
-      m_sets.emplace(
-          std::piecewise_construct, std::make_tuple(setNum),
-          std::forward_as_tuple(m_stage->engine(), pool, *primitveInfoIt));
-      ++primitveInfoIt;
+  StageLayout(FramedEngine &engine, auto &&...args)
+      : FONode<StageLayoutImpl, fon_type::cow>{
+            engine.createObject<StageLayoutImpl>(
+                engine, std::forward<decltype(args)>(args)...)} {}
+
+private:
+  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
+    // this is leaf object. can return null.
+    return nullptr;
+  }
+};
+
+struct StageSetView {
+  boost::container::small_flat_map<unsigned, const vkw::DescriptorSet *, 2u>
+      sets;
+  const StageLayoutImpl *layout;
+};
+
+class StageSet final : public FONode<StageSetView, fon_type::swap> {
+public:
+  StageSet(FramedEngine &engine, StageLayout &stage, auto &&sets)
+      : FONode<StageSetView, fon_type::swap>(
+            engine,
+            [&](FrameID frame) {
+              auto &layout = stage.get();
+              StageSetView view;
+              view.layout = &layout;
+              for (auto &&[set, binding] : sets) {
+                view.sets.insert({binding, &*set->get(frame)});
+              }
+              return engine.createObject<StageSetView>(std::move(view));
+            },
+            [&]() {
+              boost::container::small_vector<FONodeRef, 2> children;
+              children.emplace_back(&stage);
+              for (auto &&[set, binding] : sets) {
+                children.emplace_back(&*set);
+              }
+              return children;
+            }()) {
+    unsigned index = 1;
+    for (auto &&[_, binding] : sets) {
+      m_setMap.insert({binding, index++});
     }
   }
 
-  PipelineStageSet(std::shared_ptr<StageT> stage) : m_stage(std::move(stage)) {}
+  StageLayout &stage() const {
+    return static_cast<StageLayout &>(*m_children.front());
+  }
 
-  const auto &stage() const { return m_stage; }
-
-  bool hasSet(unsigned num) const { return m_sets.contains(num); }
+  bool hasSet(unsigned num) const { return m_setMap.contains(num); }
 
   const DescriptorSet &getSet(unsigned num) const {
-    assert(m_sets.contains(num));
-    return m_sets.at(num);
+    assert(m_setMap.contains(num));
+    return static_cast<const DescriptorSet &>(*m_children.at(m_setMap.at(num)));
+  }
+  DescriptorSet &getSet(unsigned num) {
+    assert(m_setMap.contains(num));
+    return static_cast<DescriptorSet &>(*m_children.at(m_setMap.at(num)));
   }
 
 private:
-  boost::container::small_flat_map<unsigned, DescriptorSet, 2> m_sets;
-  std::shared_ptr<StageT> m_stage;
+  void onCowExpire(const Frame &frame) final {
+    // TODO: implement.
+    std::terminate();
+  }
+
+  void onUseAction(const Frame &frame, FObject &obj) override {
+    // no action required.
+  }
+
+  boost::container::small_flat_map<unsigned, unsigned, 2u> m_setMap;
 };
 
-template <typename StageT> class Pipeline : public FrameObject {
+class StageSetBuilder final {
 public:
-  using PipeT = typename StageT::PipeT;
-  Pipeline(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
-           auto &&stages)
-      : FrameObject(engine), m_stages([&]() {
-          std::vector<std::shared_ptr<StageT>> ret;
-          ret.reserve(stages.size());
-          for (auto &&stage : stages) {
-            ret.emplace_back(std::forward<decltype(stage)>(stage));
-          }
-          return ret;
-        }()),
-        m_layout([&]() {
-          boost::container::small_vector<
-              std::pair<unsigned,
-                        std::reference_wrapper<const vkw::DescriptorSetLayout>>,
-              4>
-              descriptorLayouts;
-          boost::container::small_vector<VkPushConstantRange, 4> pushConstants;
-          for (auto &&stage : m_stages) {
-            std::ranges::transform(
-                stage->sets(), std::back_inserter(descriptorLayouts),
-                [](auto &&set) {
-                  return std::make_pair(
-                      std::get<0>(set),
-                      std::ref(std::get<1>(set).descriptorLayout()));
-                });
-            std::ranges::copy(stage->getPushConstants(),
-                              std::back_inserter(pushConstants));
-          }
-          std::ranges::sort(descriptorLayouts, [](auto &&a, auto &&b) {
-            return std::get<0>(a) < std::get<0>(b);
-          });
-          boost::container::small_vector<
-              std::reference_wrapper<const vkw::DescriptorSetLayout>, 4>
-              descriptorLayoutsRaw;
-          unsigned expectedSetNum = 0;
-
-          /// TODO: add support for descriptor 'gaps'
-          for (auto &&[setNum, set] : descriptorLayouts) {
-            if (setNum != expectedSetNum)
-              throw std::runtime_error(
-                  "Pipeline declared non-contigous set number range");
-            descriptorLayoutsRaw.emplace_back(set.get());
-          }
-
-          /// TODO: add merging push constants.
-          return vkw::PipelineLayout(engine.context().device(),
-                                     descriptorLayoutsRaw, pushConstants,
-                                     flags);
-        }()),
-        m_pipeline(
-            std::invoke(StageT::createPipeline, engine, m_layout, m_stages)) {}
-
-  auto &layout() const { return m_layout; }
-  auto &pipeline() const { return m_pipeline; }
+  StageSetBuilder(StageLayout &stage) : m_stage(&stage) {
+    for (auto &&[setn, _] : stage.get().sets()) {
+      m_setBuilders.insert({setn, nullptr});
+    }
+  };
+  DescriptorSetBuilder &addDescriptorSet(unsigned binding) {
+    assert(m_setBuilders.contains(binding));
+    auto &optSet = m_setBuilders.at(binding);
+    // this is super fishy, but according to cow object semantics underlying
+    // object is immutable, however it is 100% safe to modify stage layout on go
+    // (trust me bro)
+    auto &stage = const_cast<StageLayoutImpl &>(m_stage->get());
+    if (!optSet) {
+      optSet = std::make_unique<DescriptorSetBuilder>(stage.engine(),
+                                                      stage.getSet(binding));
+    }
+    return *optSet;
+  }
+  operator Ref<StageSet>() && {
+    boost::container::small_vector<std::pair<Ref<DescriptorSet>, unsigned>, 2u>
+        sets;
+    for (auto &&[binding, setBuilder] : m_setBuilders) {
+      assert(setBuilder);
+      sets.emplace_back(Ref<DescriptorSet>{std::move(*setBuilder)}, binding);
+    }
+    return m_stage->get().engine().createNode<StageSet>(*m_stage, sets);
+  }
 
 private:
-  std::vector<std::shared_ptr<StageT>> m_stages;
-  vkw::PipelineLayout m_layout;
-  PipeT m_pipeline;
+  Ref<StageLayout> m_stage;
+  boost::container::small_flat_map<unsigned,
+                                   std::unique_ptr<DescriptorSetBuilder>, 2u>
+      m_setBuilders;
 };
 
-template <typename StageT, unsigned StageCount> class PipelinePool {
+template <typename PipelineTraits>
+class PipelineLayout final : public FONode<vkw::PipelineLayout, fon_type::cow> {
 private:
-  using PipelineKey = std::array<StageT *, StageCount>;
+  using StageTy = PipelineTraits::StageTy;
+
+  FObject::Ptr init(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
+                    auto &&stages) {
+    boost::container::small_vector<
+        std::pair<unsigned,
+                  std::reference_wrapper<const vkw::DescriptorSetLayout>>,
+        4>
+        descriptorLayouts;
+    boost::container::small_vector<VkPushConstantRange, 4> pushConstants;
+    for (auto &&stageRef : stages) {
+      const StageLayoutImpl &stage = stageRef.get();
+      std::ranges::transform(
+          stage.sets(), std::back_inserter(descriptorLayouts), [](auto &&set) {
+            return std::make_pair(
+                std::get<0>(set),
+                std::ref(std::get<1>(set).descriptorLayout()));
+          });
+      std::ranges::copy(stage.getPushConstants(),
+                        std::back_inserter(pushConstants));
+    }
+    std::ranges::sort(descriptorLayouts, [](auto &&a, auto &&b) {
+      return std::get<0>(a) < std::get<0>(b);
+    });
+    boost::container::small_vector<
+        std::reference_wrapper<const vkw::DescriptorSetLayout>, 4>
+        descriptorLayoutsRaw;
+    unsigned expectedSetNum = 0;
+
+    /// TODO: add support for descriptor 'gaps'
+    for (auto &&[setNum, set] : descriptorLayouts) {
+      if (setNum != expectedSetNum)
+        throw std::runtime_error(
+            "Pipeline declared non-contigous set number range");
+      descriptorLayoutsRaw.emplace_back(set.get());
+    }
+
+    /// TODO: add merging push constants.
+    return engine.createObject<vkw::PipelineLayout>(
+        engine.context().device(), descriptorLayoutsRaw, pushConstants, flags);
+  }
+
+public:
+  PipelineLayout(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
+                 auto &&stages)
+      : FONode<vkw::PipelineLayout,
+               fon_type::cow>{init(engine, flags,
+                                   stages |
+                                       std::views::transform(
+                                           [](auto &&stage) -> decltype(auto) {
+                                             return *stage;
+                                           })),
+                              stages},
+        m_flags(flags) {}
+  auto stages() const {
+    return m_children |
+           std::views::transform([](auto &&stage) -> decltype(auto) {
+             return static_cast<const StageTy &>(*stage);
+           });
+  }
+
+private:
+  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
+    return init(engine, m_flags, stages());
+  }
+  VkPipelineLayoutCreateFlags m_flags;
+};
+
+template <typename PipelineTraits>
+class Pipeline final
+    : public FONode<typename PipelineTraits::HandleTy, fon_type::cow> {
+private:
+  FObject::Ptr init(FramedEngine &engine,
+                    PipelineLayout<PipelineTraits> &layout) {
+    return PipelineTraits::create(engine, layout);
+  }
+
+public:
+  Pipeline(FramedEngine &engine, PipelineLayout<PipelineTraits> &layout)
+      : FONode<typename PipelineTraits::HandleTy, fon_type::cow>(
+            init(engine, layout),
+            std::array<PipelineLayout<PipelineTraits> *, 1>{&layout}){};
+
+  PipelineLayout<PipelineTraits> &layout() {
+    return static_cast<PipelineLayout<PipelineTraits> &>(
+        *this->m_children.front());
+  }
+
+private:
+  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
+    return init(engine, layout());
+  }
+};
+
+template <typename PipelineTraits, size_t StageCount> class PipelinePool {
+private:
+  using StageTy = PipelineTraits::StageTy;
+  using PipelineKey = std::array<StageTy *, StageCount>;
+  using PipelineTy = Pipeline<PipelineTraits>;
+  using PipelineLayoutTy = PipelineLayout<PipelineTraits>;
 
 public:
   PipelinePool(FramedEngine &engine, size_t cacheSize,
                VkPipelineLayoutCreateFlags flags = 0)
       : m_engine(engine), m_pipelineCache(cacheSize), m_flags(flags) {}
 
-  template <std::convertible_to<std::shared_ptr<StageT>>... Args>
-  const std::shared_ptr<Pipeline<StageT>> &get(Args &&...stages) {
+  template <std::convertible_to<StageTy &>... Args>
+  PipelineTy &get(Args &&...stages) {
     static_assert(sizeof...(stages) == StageCount);
 
-    std::array<std::shared_ptr<StageT>, StageCount> stageArray{
-        std::forward<Args>(stages)...};
-    PipelineKey key;
-    std::ranges::transform(stageArray, key.begin(),
-                           [](auto &&stage) { return stage.get(); });
+    PipelineKey key{&stages...};
     auto &ret = m_pipelineCache.get(key, nullptr);
     if (!ret) {
-      ret = std::make_shared<Pipeline<StageT>>(m_engine, m_flags,
-                                               std::move(stageArray));
+      Ref<PipelineLayoutTy> layout =
+          m_engine.createNode<PipelineLayoutTy>(m_flags, key);
+      ret = m_engine.createNode<PipelineTy>(*layout);
     }
-    return ret;
+    return *ret;
   }
 
 private:
   struct PipelineKeyHash {
     size_t operator()(const PipelineKey &key) const {
-      auto ptrHash = std::hash<StageT *>{};
+      auto ptrHash = std::hash<StageTy *>{};
       return std::accumulate(
           key.begin(), key.end(), 0ull,
           [&](auto acc, auto &ptr) { return acc ^ ptrHash(ptr); });
     }
   };
   FramedEngine &m_engine;
-  Cache<PipelineKey, std::shared_ptr<Pipeline<StageT>>, CachePolicy::LRU,
+  Cache<PipelineKey, Ref<Pipeline<PipelineTraits>>, CachePolicy::LRU,
         PipelineKeyHash>
       m_pipelineCache;
   VkPipelineLayoutCreateFlags m_flags;

@@ -4,7 +4,7 @@
 #include "IMVKWindow.hpp"
 
 #include "imvk/base/Context.hpp"
-#include "imvk/base/Primitive.hpp"
+#include "imvk/base/Frame.hpp"
 #include "imvk/copy/Engine.hpp"
 #include "imvk/graphics/Engine.hpp"
 #if 0
@@ -51,98 +51,132 @@ void operator delete[](void *p) {
   totalFrees.fetch_add(1u, std::memory_order_relaxed);
 }
 
-template <typename T, imvk::PrimitiveBase::Type PType> struct VBOAllocator {};
+template <typename Buf, imvk::fon_type type> class MyBuffer {};
 
-template <typename T> struct VBOAllocator<T, imvk::PrimitiveBase::Type::swap> {
-  using HandleType = std::unique_ptr<vkw::VertexBuffer<T>>;
-  std::unique_ptr<vkw::VertexBuffer<T>> allocate(imvk::FramedEngine &engine,
-                                                 size_t size) {
-    return std::make_unique<vkw::VertexBuffer<T>>(
-        engine.context().getDeviceAllocator(), size,
-        VmaAllocationCreateInfo{.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                                .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
-                                .requiredFlags =
-                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT});
-  }
-
-  void write(vkw::VertexBuffer<T> &buffer, const imvk::Frame &frame,
-             std::span<const T> data) {
-    std::ranges::copy(data, buffer.mapped().begin());
-    buffer.flush();
-  }
-};
-
-template <typename T> struct VBOAllocator<T, imvk::PrimitiveBase::Type::cow> {
-  using HandleType = std::unique_ptr<vkw::VertexBuffer<T>>;
-
+template <typename Buf>
+class MyBuffer<Buf, imvk::fon_type::cow>
+    : public imvk::FONode<Buf, imvk::fon_type::cow> {
+public:
+  template <typename U>
   struct CopyWorkload : public imvk::CopyEngine::Workload {
-    CopyWorkload(vkw::StagingBuffer<T> &&src, vkw::VertexBuffer<T> &dst)
+    CopyWorkload(vkw::StagingBuffer<U> &&src, Buf &dst)
         : src(std::move(src)), dst(dst){};
 
     void record(vkw::TransferPassRecorder &commands) const override {
-      VkBufferCopy region{0, 0, src.size() * sizeof(T)};
+      VkBufferCopy region{0, 0, src.size() * sizeof(U)};
       commands.copyBufferToBuffer(src, dst, {&region, 1u});
     }
-    vkw::StagingBuffer<T> src;
-    vkw::VertexBuffer<T> &dst;
+    vkw::StagingBuffer<U> src;
+    Buf &dst;
   };
 
-  std::future<HandleType> allocate(imvk::FramedEngine &engine,
-                                   std::span<const T> data) {
-    auto buffer = std::make_unique<vkw::VertexBuffer<T>>(
+  template <std::ranges::range U>
+  static imvk::FObject::Ptr create(imvk::FramedEngine &engine,
+                                   imvk::CopyEngine &copyEngine, U data) {
+    auto ret = engine.createObject<Buf>(
         engine.context().getDeviceAllocator(), data.size(),
         VmaAllocationCreateInfo{.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
                                 .usage = VMA_MEMORY_USAGE_GPU_ONLY,
                                 .requiredFlags =
                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT},
         VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    vkw::StagingBuffer<T> staging{engine.context().getDeviceAllocator(), data};
-    auto &bufRef = *buffer;
+    vkw::StagingBuffer<std::ranges::range_value_t<U>> staging{
+        engine.context().getDeviceAllocator(), data};
+    Buf &bufRef = ret->as<Buf>();
     auto copyFuture = copyEngine.copy(
-        std::make_unique<CopyWorkload>(std::move(staging), bufRef));
-
-    return std::async(std::launch::deferred,
-                      [copyFuture = std::move(copyFuture),
-                       buffer = std::move(buffer)]() mutable {
-                        copyFuture.get();
-                        return std::move(buffer);
-                      });
+        std::make_unique<CopyWorkload<std::ranges::range_value_t<U>>>(
+            std::move(staging), bufRef));
+    copyFuture.wait();
+    return ret;
   }
 
-  imvk::CopyEngine &copyEngine;
-};
-
-template <typename T> struct VBOTraits {
-  template <imvk::PrimitiveBase::Type PType>
-  using Allocator = VBOAllocator<T, PType>;
-};
-
-template <typename T, imvk::PrimitiveBase::Type PType> struct UBOAllocator {};
-
-template <typename T> struct UBOAllocator<T, imvk::PrimitiveBase::Type::swap> {
-  using HandleType = std::unique_ptr<vkw::UniformBuffer<T>>;
-  HandleType allocate(imvk::FramedEngine &engine) {
-    return std::make_unique<vkw::UniformBuffer<T>>(
+  template <typename U>
+    requires not
+             std::ranges::range<U> static imvk::FObject::Ptr create(
+                 imvk::FramedEngine & engine, imvk::CopyEngine &copyEngine,
+                 U data) {
+    auto ret = engine.createObject<Buf>(
         engine.context().getDeviceAllocator(),
         VmaAllocationCreateInfo{.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                                .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+                                .usage = VMA_MEMORY_USAGE_GPU_ONLY,
                                 .requiredFlags =
-                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT});
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT},
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    vkw::StagingBuffer<U> staging{engine.context().getDeviceAllocator(), data};
+    Buf &bufRef = ret->as<Buf>();
+    auto copyFuture = copyEngine.copy(
+        std::make_unique<CopyWorkload>(std::move(staging), bufRef));
+    copyFuture.wait();
+    return ret;
   }
 
-  void write(vkw::UniformBuffer<T> &buffer, const imvk::Frame &frame,
-             const T &data) {
-    buffer.mapped().front() = data;
-    buffer.flush();
+  template <typename U>
+  MyBuffer(imvk::FramedEngine &engine, imvk::CopyEngine &copyEngine, U &&data)
+      : imvk::FONode<Buf, imvk::fon_type::cow>(
+            create(engine, copyEngine, std::forward<U>(data))) {}
+
+private:
+  imvk::FObject::Ptr
+  constructNew(imvk::FramedEngine &engine) noexcept override {
+    return nullptr;
   }
 };
 
-template <typename T> struct UBOTraits {
-  template <imvk::PrimitiveBase::Type PType>
-  using Allocator = UBOAllocator<T, PType>;
-  static void write(vkw::UniformBuffer<T> &buffer, vkw::DescriptorSet &set,
-                    unsigned binding, unsigned writeOp) {
-    set.write(binding, buffer);
+template <typename Buf>
+class MyBuffer<Buf, imvk::fon_type::swap>
+    : public imvk::FONode<Buf, imvk::fon_type::swap> {
+public:
+  MyBuffer(imvk::FramedEngine &engine, size_t size, auto &&action)
+      : imvk::FONode<Buf, imvk::fon_type::swap>(
+            engine,
+            [&](imvk::FrameID id) {
+              return engine.createObject<Buf>(
+                  engine.context().getDeviceAllocator(), size,
+                  VmaAllocationCreateInfo{
+                      .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                      .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+                      .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT});
+            }),
+        m_action(std::forward<decltype(action)>(action)) {}
+
+  MyBuffer(imvk::FramedEngine &engine, auto &&action)
+      : imvk::FONode<Buf, imvk::fon_type::swap>(
+            engine,
+            [&](imvk::FrameID id) {
+              return engine.createObject<Buf>(
+                  engine.context().getDeviceAllocator(),
+                  VmaAllocationCreateInfo{
+                      .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                      .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+                      .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT});
+            }),
+        m_action(std::forward<decltype(action)>(action)) {}
+
+private:
+  void onCowExpire(const imvk::Frame &frame) override {
+    // do nothing
+  }
+
+  void onUseAction(const imvk::Frame &frame, imvk::FObject &obj) override {
+    std::invoke(m_action, frame, obj.as<Buf>());
+  }
+  std::function<void(const imvk::Frame &, Buf &)> m_action;
+};
+
+template <typename T, imvk::fon_type type>
+class UniBuffer : public MyBuffer<vkw::UniformBuffer<T>, type>,
+                  public imvk::Descriptable {
+public:
+  UniBuffer(auto &&...args)
+      : MyBuffer<vkw::UniformBuffer<T>, type>(
+            std::forward<decltype(args)>(args)...) {}
+  void descriptorWrite(imvk::FrameID frame, vkw::DescriptorSet &set,
+                       unsigned binding) const final {
+    if constexpr (type == imvk::fon_type::swap) {
+      set.write(binding, this->get(frame));
+    } else {
+      set.write(binding, this->get());
+    }
   }
 };
 
@@ -160,11 +194,10 @@ struct MyUniform {
   float vals[4];
 };
 
-template <imvk::PrimitiveBase::Type PType>
-using MyVertexBuffer = imvk::Primitive<VBOTraits<VertexInfo>, PType>;
+template <imvk::fon_type PType>
+using MyVertexBuffer = MyBuffer<vkw::VertexBuffer<VertexInfo>, PType>;
 
-using MyUniformBuffer =
-    imvk::Primitive<UBOTraits<MyUniform>, imvk::PrimitiveBase::Type::swap>;
+using MyUniformBuffer = UniBuffer<MyUniform, imvk::fon_type::swap>;
 
 std::array<VertexInfo, 3> getVerticesForFrame(float time, Pos2D pos,
                                               float scale) {
@@ -188,7 +221,7 @@ std::array<VertexInfo, 3> getVerticesForFrame(float time, Pos2D pos,
 }
 
 static std::atomic<bool> doQuit = false;
-
+#if 0
 void secondThread(
     MyVertexBuffer<imvk::PrimitiveBase::Type::cow> &someVertices) {
   unsigned counter = 0;
@@ -200,15 +233,15 @@ void secondThread(
     std::this_thread::sleep_for(200ms);
   }
 }
-
+#endif
 int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
       imvk::examples::DeviceCreateInfo{.enableValidation = true}};
 
-  // Create presentable window and it's surface. This will be used as swapchain
-  // factory.
+  // Create presentable window and it's surface. This will be used as
+  // swapchain factory.
   imvk::examples::WindowSettings windowSettings{
       .title = "Hello world", .width = 800, .height = 600};
   imvk::examples::Window window{windowSettings, imvkDevice.get().parent()};
@@ -233,78 +266,99 @@ int app() try {
   // Create basic render pass.
   auto renderPass = imvk::examples::BasicRenderPass{graphicsEngine};
 
-  auto vertexStage = std::make_shared<imvk::examples::BasicVertexStage>(
-      graphicsEngine, shaderLoader, "hello.vert",
-      std::make_unique<
-          vkw::VertexInputStateCreateInfo<vkw::per_vertex<VertexInfo, 0>>>());
+  auto vertexStage =
+      graphicsEngine.createNode<imvk::examples::BasicVertexStage>(
+          shaderLoader, "hello.vert",
+          std::make_unique<vkw::VertexInputStateCreateInfo<
+              vkw::per_vertex<VertexInfo, 0>>>());
 
-  auto fragmentStage = std::make_shared<imvk::examples::BasicFragmentStage>(
-      graphicsEngine, shaderLoader, "hello.frag", renderPass.pass());
+  auto fragmentStage =
+      graphicsEngine.createNode<imvk::examples::BasicFragmentStage>(
+          shaderLoader, "hello.frag", renderPass.pass()->get());
   auto pipelinePool =
       imvk::GraphicsPipelinePool<imvk::examples::BasicVertexStage,
                                  imvk::examples::BasicFragmentStage>{
           graphicsEngine, /* cache size*/ 10u};
-  MyVertexBuffer<imvk::PrimitiveBase::Type::swap> vertices{graphicsEngine};
-  MyVertexBuffer<imvk::PrimitiveBase::Type::cow> anotherVertices{graphicsEngine,
-                                                                 copyEngine};
-  MyUniformBuffer myUniform{graphicsEngine};
+  auto vertices =
+      graphicsEngine.createNode<MyVertexBuffer<imvk::fon_type::swap>>(
+          3, [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
+            std::ranges::copy(
+                getVerticesForFrame(window.clock().totalTime().count() / 1000.0,
+                                    Pos2D{}, /* scale */ 0.5f),
+                vbuf.mapped().begin());
+            vbuf.flush();
+          });
+  auto anotherVertices =
+      graphicsEngine.createNode<MyVertexBuffer<imvk::fon_type::cow>>(
+          copyEngine,
+          getVerticesForFrame(0.5, Pos2D{0.3, 0.3}, /* scale */ 0.2f));
+  auto myUniform = graphicsEngine.createNode<MyUniformBuffer>(
+      [&](const imvk::Frame &f, vkw::UniformBuffer<MyUniform> &u) {
+        MyUniform uniValue;
+        uniValue.vals[0] =
+            std::sin(window.clock().totalTime().count() / 593.0) * 0.5 + 0.5;
+        uniValue.vals[1] =
+            std::cos(window.clock().totalTime().count() / 769.0 + 1.0) * 0.5 +
+            0.5;
+        uniValue.vals[2] =
+            std::sin(window.clock().totalTime().count() / 947.0 + 2.0) * 0.5 +
+            0.5;
+        u.mapped().front() = uniValue;
+        u.flush();
+      });
 
-  std::array<std::pair<imvk::PrimitiveBase *, unsigned>, 1> unifromInfos{
-      std::pair<imvk::PrimitiveBase *, unsigned>{&myUniform, 0}};
-  auto vertexStageSet =
-      imvk::PipelineStageSet<imvk::examples::BasicVertexStage>{
-          vertexStage, std::span{&unifromInfos, 1u}};
+  auto vertexStageSet = [&]() -> imvk::Ref<imvk::StageSet> {
+    auto vsbuilder = imvk::StageSetBuilder{*vertexStage};
+    vsbuilder.addDescriptorSet(0).addDescriptor(*myUniform, 0);
+    return std::move(vsbuilder);
+  }();
 
-  myUniform.resetAll();
   MyUniform uniValue{};
   uniValue.vals[0] = 0.5;
-
-  vertices.resetAll(/* size */ 3);
-  anotherVertices.resetSync(
-      getVerticesForFrame(0.5, Pos2D{0.3, 0.3}, /* scale */ 0.2f));
 
   size_t allocAcc = 0;
   size_t freeAcc = 0;
   size_t sizeAllocAcc = 0;
+  size_t auxCount = 0;
+  bool auxEven = false;
+  auto updateCowVertices = [&]() {
+    auxCount++;
+    if (auxCount < 2000)
+      return;
+    auxEven = !auxEven;
+    auxCount = 0;
+    anotherVertices->replace(
+        graphicsEngine,
+        anotherVertices->create(
+            graphicsEngine, copyEngine,
+            getVerticesForFrame(0.5, Pos2D{0.3, 0.3},
+                                /* scale */ auxEven ? 0.5f : 0.2f)));
+  };
   std::function<void(vkw::RenderPassRecorder &, const imvk::Frame &)> passJob =
       [&](vkw::RenderPassRecorder &commands, const imvk::Frame &frame) {
-        uniValue.vals[0] =
-            std::sin(window.clock().totalTime().count() / 1000.0) * 0.5 + 0.5;
-        uniValue.vals[1] =
-            std::cos(window.clock().totalTime().count() / 500.0 + 1.0) * 0.5 +
-            0.5;
-        uniValue.vals[2] =
-            std::sin(window.clock().totalTime().count() / 1000.0 + 2.0) * 0.5 +
-            0.5;
+        imvk::Pipeline<imvk::GraphicsPipelineTraits> &pipeline =
+            pipelinePool.get(*vertexStage, *fragmentStage);
+        commands.bindPipeline(pipeline.use(frame));
+        commands.bindDescriptorSet(pipeline.layout().use(frame),
+                                   VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                   vertexStageSet->getSet(0u).use(frame), 0u);
 
-        myUniform.write(frame, uniValue);
-        auto &pipeline = pipelinePool.get(vertexStage, fragmentStage);
-        frame.use(pipeline);
-        commands.bindPipeline(pipeline->pipeline());
-        commands.bindDescriptorSet(
-            pipeline->layout(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-            vertexStageSet.getSet(0u).get(frame)->set(), 0u);
+        auto &vertexBuffer = vertices->use(frame);
+        commands.bindVertexBuffer(vertexBuffer, 0, 0);
+        commands.draw(vertexBuffer.size(), 1u);
 
-        vertices.write(frame, getVerticesForFrame(
-                                  window.clock().totalTime().count() / 1000.0,
-                                  Pos2D{}, /* scale */ 0.5f));
-        auto vertexBuffer = vertices.getImpl(frame);
-        frame.use(vertexBuffer);
-        commands.bindVertexBuffer(vertexBuffer->get(), 0, 0);
-        commands.draw(vertexBuffer->get().size(), 1u);
-
-        auto anotherBuffer = anotherVertices.getImpl(frame);
-        frame.use(anotherBuffer);
-        commands.bindVertexBuffer(anotherBuffer->get(), 0, 0);
-        commands.draw(anotherBuffer->get().size(), 1u);
+        auto &anotherBuffer = anotherVertices->use(frame);
+        commands.bindVertexBuffer(anotherBuffer, 0, 0);
+        commands.draw(anotherBuffer.size(), 1u);
+        updateCowVertices();
       };
 #if 0
   imvk::RenderGraph rGraph;
   imvk::CompiledRenderGraph rCompiledGraph{*graphicsEngine};
   rCompiledGraph.recompile(rGraph);
 #endif
-  std::jthread thread2{secondThread, std::ref(anotherVertices)};
-  // Main application loop.
+  // std::jthread thread2{secondThread, std::ref(anotherVertices)};
+  //  Main application loop.
   graphicsEngine.run(
       [&](imvk::GraphicsEngine::SwapFrame &frame) {
         renderPass.run(frame, passJob);

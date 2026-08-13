@@ -1,7 +1,6 @@
 #pragma once
 
-#include "imvk/base/Frame.hpp"
-
+#include "imvk/base/EngineBase.hpp"
 #include "vkw/DescriptorSet.hpp"
 
 #include "boost/container/small_vector.hpp"
@@ -83,68 +82,54 @@ public:
   SetHandle get();
 };
 
-class PrimitiveHandle;
-class PrimitiveBase;
-class FramedEngine;
-
-/// @brief Wrapper over vkw::DescriptorSet that saves references to
-/// bound resources that prolongs their life. That way frame object can keep
-/// bound resources by just storing a reference to this set.
-class DescriptorSetHandle final : public FrameObject {
+class Descriptable {
 public:
-  DescriptorSetHandle(FramedEngine &engine, DescriptorPool &pool);
-
-  /// @brief Writes new primitive to descriptor.
-  /// @param Primitive to be written over current one.
-  /// @param binding number of binding point
-  void write(std::shared_ptr<PrimitiveHandle> Primitive, unsigned binding,
-             unsigned writeOpID);
-
-  auto &primitive(unsigned binding) const {
-    return m_boundPrimitives.at(binding);
-  }
-
-  auto &set() const { return *m_set; }
-
-  ~DescriptorSetHandle();
-
-private:
-  boost::container::small_vector<std::shared_ptr<PrimitiveHandle>, 3>
-      m_boundPrimitives;
-  DescriptorPool::SetHandle m_set;
+  virtual void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
+                               unsigned binding) const = 0;
+  virtual ~Descriptable() = default;
 };
+
+class FramedEngine;
 
 class Frame;
 
-/// @brief Frame-aware descriptor set wrapper. Behaves in similar fashion as
-/// Primitive class.
-class DescriptorSet final {
+/// @brief Frame-aware descriptor set wrapper.
+class DescriptorSet final
+    : public FONode<DescriptorPool::SetHandle, fon_type::swap> {
 public:
   DescriptorSet(FramedEngine &engine, DescriptorPool &pool,
-                std::span<std::pair<PrimitiveBase *, unsigned>> primitives);
+                std::span<std::pair<Descriptable *, unsigned>> descriptors);
 
-  DescriptorSet(const DescriptorSet &) = delete;
-  DescriptorSet(DescriptorSet &&) noexcept = default;
-
-  DescriptorSet &operator=(const DescriptorSet &) = delete;
-  DescriptorSet &operator=(DescriptorSet &&) noexcept = default;
-
-  /// @brief Gets a reference to descriptor set for specified frame.
-  /// @param frame
-  /// @param checkBoundDescriptors if true, before returning a reference, checks
-  /// that written descriptors are up to date. True by default.
-  /// @return shared reference to DescriptorSetHandle.
-  const std::shared_ptr<DescriptorSetHandle> &
-  get(const Frame &frame, bool checkBoundDescriptors = true) const;
-
-  ~DescriptorSet();
+  vkw::DescriptorSet &use(const Frame &frame) {
+    return *FONode<DescriptorPool::SetHandle, fon_type::swap>::use(frame);
+  }
 
 private:
-  boost::container::small_vector<std::pair<PrimitiveBase *, unsigned>, 3>
-      m_primitives;
-  boost::container::small_vector<std::shared_ptr<DescriptorSetHandle>, 3>
-      m_sets;
-  bool m_fullCow = true;
+  void onCowExpire(const Frame &frame) override;
+  void onUseAction(const Frame &frame, FObject &obj) override {
+    // nothing to do for now
+  }
+  void writeDescriptors(FrameID frame);
+  boost::container::small_vector<std::pair<Descriptable *, unsigned>, 2u>
+      m_bindings;
+};
+
+class DescriptorSetBuilder {
+public:
+  DescriptorSetBuilder(FramedEngine &engine, DescriptorPool &pool)
+      : m_engine(engine), m_pool(pool){};
+  void addDescriptor(Descriptable &desc, unsigned binding) {
+    descriptors.emplace_back(&desc, binding);
+  }
+  operator Ref<DescriptorSet>() && {
+    return m_engine.createNode<DescriptorSet>(m_pool, descriptors);
+  }
+
+private:
+  FramedEngine &m_engine;
+  DescriptorPool &m_pool;
+  boost::container::small_vector<std::pair<Descriptable *, unsigned>, 2u>
+      descriptors;
 };
 
 } // namespace imvk

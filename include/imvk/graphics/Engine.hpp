@@ -1,46 +1,15 @@
 #pragma once
 
 #include "imvk/base/EngineBase.hpp"
-#include "imvk/base/Frame.hpp"
+#include "imvk/graphics/Swapchain.hpp"
 
 #include <vkw/CommandPool.hpp>
 #include <vkw/Fence.hpp>
 #include <vkw/Semaphore.hpp>
-#include <vkw/Surface.hpp>
-#include <vkw/SwapChain.hpp>
 
 #include <functional>
 
 namespace imvk {
-
-class Swapchain;
-
-/// @brief abstracts away external surface and swapchain creation.
-class SwapchainFactory {
-public:
-  using RecreateCallbackType = void (*)(void);
-  /// @brief returns reference to VkSwapchainCreateInfoKHR object which is
-  /// prefilled with information needed to construct a swapchain object.
-  ///
-  /// Returned reference must remain valid until subsequent getCreateInfo()
-  /// call. pNext, imageUsage, imageSharingMode, queueFamilyIndexCount,
-  /// pQueueFamilyIndices fields are not used.
-  /// This may throw if given device cannot present to selected surface.
-  virtual const VkSwapchainCreateInfoKHR &
-  getCreateInfo(vkw::Device &device) = 0;
-
-  /// @brief returns a reference to surface the swapchain is being created on.
-  virtual vkw::Surface &getSurface() noexcept = 0;
-
-  /// @brief sets a callback for manual swapchain recreation.
-  /// This callback should be called if factory decides forcibly
-  /// recreate swapchain.
-  /// IMPORTANT: caller of callback must be externally synchronized with
-  /// swapchain producer entity (which in most cases is GraphicsEngine).
-  virtual void setRecreateCallback(RecreateCallbackType callback) noexcept = 0;
-
-  virtual ~SwapchainFactory() = default;
-};
 
 struct GraphicsEngineCreateInfo {
   /// @brief Swapchain factory is used to create and maintain internal
@@ -54,38 +23,69 @@ struct GraphicsEngineCreateInfo {
   unsigned maxFramesInFlight;
 };
 
+class Semaphore final : public FONode<vkw::Semaphore, fon_type::swap> {
+public:
+  Semaphore(FramedEngine &engine)
+      : FONode<vkw::Semaphore, fon_type::swap>(engine, [&](auto id) {
+          return engine.createObject<vkw::Semaphore>(engine.context().device());
+        }) {}
+
+private:
+  void onCowExpire(const Frame &frame) override {
+    // do nothing
+  }
+  void onUseAction(const Frame &frame, FObject &obj) override {
+    // do nothing
+  }
+};
+
+class SSemaphore final : public FOENode<vkw::Semaphore, fon_type::ext> {
+public:
+  SSemaphore(FramedEngine &engine, Swapchain &swapchain);
+
+  const Swapchain &swapchain() const {
+    return static_cast<const Swapchain &>(*m_children.front());
+  }
+
+private:
+  unsigned getExtIndex(const Frame &frame) const override {
+    return swapchain().get().currentImage();
+  }
+
+  void constructNew(
+      FramedEngine &engine,
+      boost::container::small_vector_base<FObject::Ptr> &res) override {
+    doConstructNew(engine, std::ranges::size(swapchain().get().images()), res);
+  }
+  void onUseAction(const Frame &, FObject &obj) final {
+    // nothing to do.
+  }
+  static void
+  doConstructNew(FramedEngine &engine, unsigned count,
+                 boost::container::small_vector_base<FObject::Ptr> &res);
+};
+
 /// @brief Graphics engine is used to render and present images using
 /// swapchain. It supports all types of operation including compute and
 /// transfer. Implements FramedEngine for swapchain image presenting sequence.
 class GraphicsEngine : public FramedEngine {
-private:
-  struct Terminator {
-    void operator()(GraphicsEngine *engine) { engine->terminate(); }
-  };
-  struct FrameSyncObjects final {
-    FrameSyncObjects(GraphicsEngine &engine);
-    vkw::Semaphore renderComplete, presentComplete;
-  };
-
 public:
   class SwapFrame {
   public:
     SwapFrame(GraphicsEngine &engine, FramedEngine::FrameRecorder &&frame,
-              std::unique_ptr<FrameSyncObjects> &&semas)
-        : m_engine(&engine, FrameEnder{engine.swapchain(), std::move(semas),
-                                       std::move(frame)}){};
+              SSemaphore &rc, Semaphore &pc)
+        : m_engine(&engine,
+                   FrameEnder{engine.swapchain(), rc, pc, std::move(frame)}){};
 
     /// @brief wrappers over frame methods.
     GraphicsEngine &engine() const { return *m_engine; }
     const auto &id() const { return frame().id(); }
     const Frame &frame() const { return m_recorder().frame.get(); }
-    void use(const std::shared_ptr<FrameObject> &object) const {
-      frame().use(object);
-    }
+
     vkw::BufferRecorder &commands() { return m_recorder().recorder; }
 
     const auto &swapchain() const {
-      return m_engine.get_deleter().swapchain.get();
+      return m_engine.get_deleter().swapchain->get();
     }
 
   private:
@@ -94,15 +94,15 @@ public:
       return m_engine.get_deleter().recorder;
     }
     struct FrameEnder {
-      FrameEnder(const Swapchain &swapchain,
-                 std::unique_ptr<FrameSyncObjects> &&semas,
+      FrameEnder(Swapchain &swapchain, SSemaphore &rc, Semaphore &pc,
                  FramedEngine::FrameRecorder &&frame)
-          : swapchain(swapchain), semas(std::move(semas)),
+          : swapchain(&swapchain), renderComplete(&rc), presentComplete(&pc),
             recorder(std::move(frame)) {}
       void operator()(GraphicsEngine *engine) const;
 
-      std::reference_wrapper<const Swapchain> swapchain;
-      mutable std::unique_ptr<FrameSyncObjects> semas;
+      Ref<Swapchain> swapchain;
+      Ref<SSemaphore> renderComplete;
+      Ref<Semaphore> presentComplete;
       mutable FramedEngine::FrameRecorder recorder;
     };
     std::unique_ptr<GraphicsEngine, FrameEnder> m_engine;
@@ -112,21 +112,6 @@ public:
   using FrameT = SwapFrame;
 
   GraphicsEngine(Context &context, const GraphicsEngineCreateInfo &CI);
-
-  /// @brief Adds callbacks that are called in event of swapchain recreation.
-  /// @param beforeDestroyCallback is called right before current swapchain is
-  /// destroyed. May be used for destruction of swapchain-derived resources.
-  /// Callback must be void(void) compatible.
-  /// @param afterCreateCallback is called right after new swapchain is created.
-  /// Reference to new swapchain is passed as the first parameter. May be used
-  /// for initialization of swapchain derived resources. Callback must be
-  /// void(Swapchain&) compatible.
-  void addSwapchainCallback(auto &&beforeDestroyCallback,
-                            auto &&afterCreateCallback) {
-    m_swapChainCallbacks.emplace_back(
-        std::forward<decltype(beforeDestroyCallback)>(beforeDestroyCallback),
-        std::forward<decltype(afterCreateCallback)>(afterCreateCallback));
-  }
 
   /// @brief Initiates a swapchain cycle. This cycle involves:
   /// 1. Inter-frame scope - this scope is outside of visible frame scope and
@@ -151,7 +136,6 @@ public:
   /// callback issues cycle termination if returns false. Must be bool(void)
   /// compatible.
   void run(auto &&frameJob, auto &&interFrameJob) {
-    std::unique_ptr<GraphicsEngine, Terminator> terminatorGuard{this};
     while (std::invoke(interFrameJob)) {
       auto frame = m_beginFrame();
       if (!frame)
@@ -160,26 +144,31 @@ public:
     }
   }
 
+  /// @brief override of similar template in FramedEngine.
+  template <std::derived_from<FONodeBase> T, typename... Args>
+  Ref<T> createNode(Args &&...args) {
+    return new T(*this, std::forward<Args>(args)...);
+  }
   const Swapchain &swapchain() const { return *m_swapchain; }
+  Swapchain &swapchain() { return *m_swapchain; }
 
   ~GraphicsEngine() override;
 
 private:
   friend class SwapFrame::FrameEnder;
-  std::unique_ptr<FrameSyncObjects> m_getSemaphores();
-  void m_returnSemaphores(std::unique_ptr<FrameSyncObjects> &&semas);
 
   void m_recreate_swapchain();
   bool m_surface_minimized();
+  FObject::Ptr m_createSwapchain();
+  friend class Swapchain;
 
   std::optional<SwapFrame> m_beginFrame();
 
   SwapchainFactory &m_swapchainFactory;
-  std::unique_ptr<Swapchain> m_swapchain;
-  std::vector<std::unique_ptr<FrameSyncObjects>> m_frameSyncs;
-  std::vector<std::pair<std::function<void(void)>,
-                        std::function<void(const Swapchain &)>>>
-      m_swapChainCallbacks;
+  Ref<Swapchain> m_swapchain;
+  Ref<SSemaphore> m_renderComplete;
+  Ref<Semaphore> m_presentComplete;
+  std::optional<FrameRecorder> m_pending;
 };
 
 } // namespace imvk

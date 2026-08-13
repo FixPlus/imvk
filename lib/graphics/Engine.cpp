@@ -1,8 +1,23 @@
 #include "imvk/graphics/Engine.hpp"
 #include "imvk/graphics/Swapchain.hpp"
 
+#include <array>
+
 namespace imvk {
 
+SSemaphore::SSemaphore(FramedEngine &engine, Swapchain &swapchain)
+    : FOENode<vkw::Semaphore, fon_type::ext>(
+          [&]() { return std::array<FONodeBase *, 1>{&swapchain}; }()) {
+  onConstruct(engine);
+}
+void SSemaphore::doConstructNew(
+    FramedEngine &engine, unsigned count,
+    boost::container::small_vector_base<FObject::Ptr> &res) {
+  std::ranges::transform(
+      engine.frameIds(), std::back_inserter(res), [&](FrameID) {
+        return engine.createObject<vkw::Semaphore>(engine.context().device());
+      });
+}
 GraphicsEngine::GraphicsEngine(Context &context,
                                const GraphicsEngineCreateInfo &CI)
     : FramedEngine(context,
@@ -12,72 +27,37 @@ GraphicsEngine::GraphicsEngine(Context &context,
                                  .transfer = true},
                    CI.maxFramesInFlight),
       m_swapchainFactory(*CI.swapchainFactory),
-      m_swapchain(std::make_unique<Swapchain>(
-          context.device(), queue(),
-          m_swapchainFactory.getCreateInfo(context.device()))) {
+      m_swapchain(createNode<Swapchain>()),
+      m_renderComplete(createNode<SSemaphore>(*m_swapchain)),
+      m_presentComplete(createNode<Semaphore>()) {
   assert(CI.maxFramesInFlight);
-  m_frameSyncs.reserve(getFIFCount());
-
-  std::ranges::transform(std::ranges::iota_view{0u, getFIFCount()},
-                         std::back_inserter(m_frameSyncs), [&](auto &&i) {
-                           return std::make_unique<FrameSyncObjects>(*this);
-                         });
 }
 
 std::optional<GraphicsEngine::SwapFrame> GraphicsEngine::m_beginFrame() {
-  auto semas = m_getSemaphores();
+  if (!m_pending) {
+    m_pending.emplace(nextFrame()->get());
+  }
 
-  auto status = m_swapchain->acquireNextImage(
-      semas->presentComplete, /* timeout in milliseconds*/ 1000);
+  auto status = m_swapchain->get().acquireNextImage(
+      m_presentComplete->use(m_pending->frame),
+      /* timeout in milliseconds*/ 1000);
   if (status == vkw::SwapChain::AcquireStatus::TIMEOUT) {
-    m_returnSemaphores(std::move(semas));
     return std::nullopt;
   }
   if (status == vkw::SwapChain::AcquireStatus::OUT_OF_DATE ||
       status == vkw::SwapChain::AcquireStatus::SUBOPTIMAL) {
-    m_returnSemaphores(std::move(semas));
     if (!m_surface_minimized())
       m_recreate_swapchain();
     return std::nullopt;
   }
 
-  auto frameFutureOpt = nextFrame();
-  assert(frameFutureOpt);
-  auto frame = frameFutureOpt->get();
-
-  return SwapFrame{*this, std::move(frame), std::move(semas)};
-}
-
-std::unique_ptr<GraphicsEngine::FrameSyncObjects>
-GraphicsEngine::m_getSemaphores() {
-  if (m_frameSyncs.empty())
-    m_frameSyncs.emplace_back(std::make_unique<FrameSyncObjects>(*this));
-  auto ret = std::move(m_frameSyncs.back());
-  m_frameSyncs.pop_back();
-  return ret;
-}
-
-void GraphicsEngine::m_returnSemaphores(
-    std::unique_ptr<FrameSyncObjects> &&semas) {
-  m_frameSyncs.push_back(std::move(semas));
+  return SwapFrame{*this, *std::exchange(m_pending, std::nullopt),
+                   *m_renderComplete, *m_presentComplete};
 }
 
 void GraphicsEngine::m_recreate_swapchain() {
   queue().acquire().get().waitIdle();
-  for (auto &&callback :
-       m_swapChainCallbacks |
-           std::views::transform(
-               [](auto &&pair) -> decltype(auto) { return pair.first; }))
-    std::invoke(callback);
-  m_swapchain.reset();
-  m_swapchain = std::make_unique<Swapchain>(
-      context().device(), queue(),
-      m_swapchainFactory.getCreateInfo(context().device()));
-  for (auto &&callback :
-       m_swapChainCallbacks |
-           std::views::transform(
-               [](auto &&pair) -> decltype(auto) { return pair.second; }))
-    std::invoke(callback, *m_swapchain);
+  m_swapchain->reconstruct(*this);
 }
 
 bool GraphicsEngine::m_surface_minimized() {
@@ -90,29 +70,20 @@ bool GraphicsEngine::m_surface_minimized() {
 
 GraphicsEngine::~GraphicsEngine() = default;
 
-GraphicsEngine::FrameSyncObjects::FrameSyncObjects(GraphicsEngine &engine)
-    : renderComplete(engine.context().device()),
-      presentComplete(engine.context().device()) {}
-
 void GraphicsEngine::SwapFrame::FrameEnder::operator()(
     GraphicsEngine *engine) const {
   if (!engine)
     return;
   auto id = recorder.frame.get().id();
-  auto &presentComplete = semas->presentComplete;
-  auto &renderComplete = semas->renderComplete;
+  auto &pc = presentComplete->use(recorder.frame);
+  auto &rc = renderComplete->use(recorder.frame);
 
-  engine->submitFrame(
-      std::move(recorder),
-      [&](vkw::SubmitInfo &submitInfo) {
-        submitInfo.addWaitCondition(
-            presentComplete, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-        submitInfo.addSignalTo(renderComplete);
-      },
-      [semas = std::move(semas), engine]() mutable {
-        engine->m_returnSemaphores(std::move(semas));
-      });
-  auto presentInfo = vkw::PresentInfo{swapchain.get(), renderComplete};
+  engine->submitFrame(std::move(recorder), [&](vkw::SubmitInfo &submitInfo) {
+    submitInfo.addWaitCondition(pc,
+                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    submitInfo.addSignalTo(rc);
+  });
+  auto presentInfo = vkw::PresentInfo{swapchain->get(), rc};
   auto q = engine->queue().acquire();
   q.get().present(presentInfo);
 }

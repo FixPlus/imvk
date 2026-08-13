@@ -1,7 +1,6 @@
 
 #include "imvk/base/DescriptorSet.hpp"
 #include "imvk/base/EngineBase.hpp"
-#include "imvk/base/Primitive.hpp"
 
 #include <boost/container/flat_map.hpp>
 
@@ -86,66 +85,35 @@ DescriptorPool::SetHandle DescriptorPool::get() {
           SetDeleter(m_state, poolIt)};
 }
 
-DescriptorSetHandle::DescriptorSetHandle(FramedEngine &engine,
-                                         DescriptorPool &pool)
-    : FrameObject(engine), m_set(pool.get()),
-      m_boundPrimitives(pool.descriptorLayout().info().bindingCount) {}
-
-void DescriptorSetHandle::write(std::shared_ptr<PrimitiveHandle> Primitive,
-                                unsigned binding, unsigned writeOpID) {
-  Primitive->write(*m_set, binding, writeOpID);
-  m_boundPrimitives[binding] = Primitive;
+void DescriptorSet::onCowExpire(const Frame &frame) {
+  // need to rewrite all bindings.
+  writeDescriptors(frame.id());
+}
+void DescriptorSet::writeDescriptors(FrameID frame) {
+  auto &set = get(frame);
+  for (auto &&[child, binding] : m_bindings) {
+    child->descriptorWrite(frame, *set, binding);
+  }
 }
 
 DescriptorSet::DescriptorSet(
     FramedEngine &engine, DescriptorPool &pool,
-    std::span<std::pair<PrimitiveBase *, unsigned>> primitives) {
-  auto primIt = primitives.begin();
-  for (auto &&[binding, info] : pool.bindingMap()) {
-    if (info.descriptorCount == 0) {
-      m_primitives.emplace_back(nullptr, 0);
-
-      continue;
-    }
-    if (primIt == primitives.end())
-      throw std::runtime_error("DescriptorSet: passed more primitives that "
-                               "binding points available");
-    auto &prim = *primIt;
-    m_primitives.emplace_back(prim);
-    if (!prim.first->hasOnePrimitive())
-      m_fullCow = false;
-    ++primIt;
-  }
-
-  for (auto &&_ :
-       std::ranges::iota_view{0u, m_fullCow ? 1u : engine.getFIFCount()}) {
-    m_sets.emplace_back(std::make_shared<DescriptorSetHandle>(engine, pool));
-  }
+    std::span<std::pair<Descriptable *, unsigned>> bindings)
+    : FONode<DescriptorPool::SetHandle, fon_type::swap>(
+          engine,
+          [&](FrameID id) {
+            return engine.createObject<DescriptorPool::SetHandle>(pool.get());
+          },
+          [&]() {
+            boost::container::small_vector<FONodeBase *, 2u> binds;
+            std::ranges::transform(
+                bindings, std::back_inserter(binds),
+                [](auto &&p) { return dynamic_cast<FONodeBase *>(p.first); });
+            return binds;
+          }()) {
+  std::ranges::copy(bindings, std::back_inserter(m_bindings));
+  std::ranges::for_each(engine.frameIds(),
+                        [this](FrameID frame) { writeDescriptors(frame); });
 }
 
-const std::shared_ptr<DescriptorSetHandle> &
-DescriptorSet::get(const Frame &frame, bool checkBoundDescriptors) const {
-  auto &set = m_fullCow ? m_sets.front() : m_sets[frame.id()];
-  if (!checkBoundDescriptors)
-    return set;
-  // keep primitives up to date.
-  for (auto &&i : std::ranges::iota_view{0u, m_primitives.size()} |
-                      std::views::filter(
-                          [&](auto &&i) { return m_primitives[i].first; })) {
-    auto &setPrim = set->primitive(i);
-    if (setPrim && !setPrim->isDisowned())
-      continue;
-    auto &&[prim, writeOp] = m_primitives[i];
-    auto primHandle = prim->get(frame);
-    assert(primHandle &&
-           "trying to get set with uninitialized primitive handles");
-    set->write(prim->get(frame), i, writeOp);
-  }
-
-  return set;
-}
-
-DescriptorSet::~DescriptorSet() = default;
-
-DescriptorSetHandle::~DescriptorSetHandle() = default;
 } // namespace imvk

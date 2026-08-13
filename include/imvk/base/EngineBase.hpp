@@ -74,8 +74,6 @@ private:
   vkw::CommandPool m_commandPool;
 };
 
-class Frame;
-
 /// @brief Implements a common interface for frame-based engines.
 /// It allows to allocate resources on a per-frame basis and manage
 /// switching of frames.
@@ -91,9 +89,39 @@ public:
 
   auto getFIFCount() const { return m_frames.size(); }
 
-protected:
-  void terminate();
+  auto frameIds() const { return std::ranges::iota_view{0ul, getFIFCount()}; }
 
+  /// @brief Creates new object node of specified type T. Operations with nodes
+  /// are not internally synchronized, therefore this function is not
+  /// thread-safe.
+  /// @tparam T is a type of node to create. Must be derived from FONodeBase.
+  /// @param args to pass to T's constructor.
+  /// @return a shared reference to instance of T.
+  template <std::derived_from<FONodeBase> T, typename... Args>
+  Ref<T> createNode(Args &&...args) {
+    return new T(*this, std::forward<Args>(args)...);
+  }
+
+  /// @brief allocates new object of specified type. This function is safe to
+  /// call from any thread. T's constructor therefore must also be internally
+  /// thread-safe.
+  /// @tparam T is a type of object implementation to create.
+  /// @param args passed to constructor of object T.
+  /// @return uniquely owned pointer to an instance of FObject.
+  template <typename T, typename... Args>
+  FObject::Ptr createObject(Args &&...args) {
+    return FObject::Ptr{new FObjectImpl<T>(std::forward<Args>(args)...), *this};
+  }
+
+  /// @brief enqueues object in free list. Objects are freed strictly in order
+  /// they were enqueued and only after last frame they were used in is retired.
+  /// This function is called by deleter of FObject::Ptr.
+  /// @param object pointer to FObject instance to destroy.
+  void destroyObject(FObject *object);
+
+  ~FramedEngine() override;
+
+protected:
   struct FrameRecorder {
     vkw::BufferRecorder recorder;
     std::reference_wrapper<Frame> frame;
@@ -105,9 +133,9 @@ protected:
     auto nextId = m_frameQueue.front();
     auto &next = m_frames.at(nextId);
     m_frameQueue.pop();
-    return std::async(std::launch::deferred, [&next]() {
+    return std::async(std::launch::deferred, [&next, ord = m_ordinal++]() {
       next.waitFence.get();
-      return m_beginFrameImpl(*next.frame);
+      return m_beginFrameImpl(*next.frame, ord);
     });
   }
 
@@ -137,7 +165,7 @@ protected:
   }
 
 private:
-  static FrameRecorder m_beginFrameImpl(Frame &frame);
+  static FrameRecorder m_beginFrameImpl(Frame &frame, unsigned ordinal);
   struct FrameInfo {
     std::unique_ptr<Frame> frame;
     vkw::Fence fence;
@@ -145,6 +173,8 @@ private:
   };
   std::vector<FrameInfo> m_frames;
   std::queue<unsigned> m_frameQueue;
+  std::vector<FObject *> m_freeList;
+  unsigned m_ordinal = 0;
 };
 
 } // namespace imvk
