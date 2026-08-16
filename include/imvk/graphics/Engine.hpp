@@ -44,7 +44,7 @@ public:
   SSemaphore(FramedEngine &engine, Swapchain &swapchain);
 
   const Swapchain &swapchain() const {
-    return static_cast<const Swapchain &>(*m_children.front());
+    return static_cast<const Swapchain &>(*m_uses.front());
   }
 
 private:

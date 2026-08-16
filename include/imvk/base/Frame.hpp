@@ -10,6 +10,7 @@
 #include <boost/intrusive_ptr.hpp>
 
 #include <algorithm>
+#include <ranges>
 #include <vector>
 
 namespace imvk {
@@ -140,17 +141,42 @@ enum class fon_type { cow, swap, ext };
 
 template <fon_type type> class FONodeImpl {};
 
+class FOUses {
+public:
+  FOUses() = default;
+  template <typename... Args> FOUses(Args &...args) {
+    (m_uses.push_back(&args), ...);
+  }
+  template <std::ranges::range R> FOUses(const R &rng) {
+    std::ranges::transform(rng, std::back_inserter(m_uses),
+                           [](auto &&use) { return &use; });
+  }
+
+  std::span<FONodeBase *const> get() { return m_uses; }
+  FOUses &addUse(FONodeBase &use) {
+    m_uses.push_back(&use);
+    return *this;
+  }
+  template <std::ranges::range R> FOUses &addUses(const R &uses) {
+    std::ranges::transform(uses, std::back_inserter(m_uses),
+                           [](auto &&use) { return &use; });
+    return *this;
+  }
+
+private:
+  boost::container::small_vector<FONodeBase *, 2> m_uses;
+};
+
 class FONodeBase {
 public:
-  FONodeBase() = default;
-  FONodeBase(auto &&children)
-      : m_children([&]() {
+  FONodeBase(FOUses &&uses = FOUses{})
+      : m_uses([&]() {
           boost::container::small_vector<FONodeRef, 2> ret;
-          std::ranges::copy(children, std::back_inserter(ret));
+          std::ranges::copy(uses.get(), std::back_inserter(ret));
           return ret;
         }()) {
-    for (auto &&child : m_children) {
-      child->addParent(*this);
+    for (auto &&use : m_uses) {
+      use->addUser(*this);
     }
   }
   // This object is intrusively reference counter. Therefore no copy/moves.
@@ -160,8 +186,8 @@ public:
   FONodeBase &operator=(const FONodeBase &) = delete;
 
   virtual ~FONodeBase() {
-    for (auto &&child : m_children) {
-      child->removeParent(*this);
+    for (auto &&use : m_uses) {
+      use->removeUser(*this);
     }
   }
 
@@ -172,21 +198,21 @@ public:
       return;
     markUsed(frame);
     onUse(frame);
-    for (auto &&child : m_children)
-      child->use(frame);
+    for (auto &&use : m_uses)
+      use->use(frame);
   }
 
-  virtual void onCowChildReplace(FramedEngine &engine,
-                                 FONodeImpl<fon_type::cow> &cowp) noexcept = 0;
+  virtual void onCowUseReplace(FramedEngine &engine,
+                               FONodeImpl<fon_type::cow> &cowp) noexcept = 0;
 
 protected:
-  virtual bool addParent(FONodeBase &handle) = 0;
-  virtual void removeParent(FONodeBase &handle) = 0;
+  virtual bool addUser(FONodeBase &handle) = 0;
+  virtual void removeUser(FONodeBase &handle) = 0;
   virtual void onUse(const Frame &frame) = 0;
   virtual bool isUsed(const Frame &frame) const = 0;
   virtual void markUsed(const Frame &frame) = 0;
 
-  const boost::container::small_vector<FONodeRef, 2> m_children;
+  const boost::container::small_vector<FONodeRef, 2> m_uses;
 
 private:
   friend void intrusive_ptr_add_ref(FONodeBase *p);
@@ -199,16 +225,9 @@ private:
 
 template <> class FONodeImpl<fon_type::swap> : public FONodeBase {
 public:
-  FONodeImpl(FramedEngine &engine, auto &&objectFactory, auto &&children)
-      : FONodeBase(std::forward<decltype(children)>(children)),
-        m_objects([&]() {
-          boost::container::small_vector<FObject::Ptr, 2> ret;
-          m_objectsInit(engine, objectFactory, ret);
-          return ret;
-        }()),
-        m_cowFlags(m_objects.size()) {}
-  FONodeImpl(FramedEngine &engine, auto &&objectFactory)
-      : m_objects([&]() {
+  FONodeImpl(FramedEngine &engine, auto &&objectFactory,
+             FOUses &&uses = FOUses{})
+      : FONodeBase(std::move(uses)), m_objects([&]() {
           boost::container::small_vector<FObject::Ptr, 2> ret;
           m_objectsInit(engine, objectFactory, ret);
           return ret;
@@ -223,7 +242,7 @@ public:
 
 protected:
   /// @brief an action that should handle object restructure in case some cow
-  /// child was replaced.
+  /// use was replaced.
   virtual void onCowExpire(const Frame &frame) = 0;
 
   /// @brief an action to do if object is used in frame. The purpose of those
@@ -233,17 +252,17 @@ protected:
   /// @param obj reference to current object to prepare.
   virtual void onUseAction(const Frame &frame, FObject &obj) = 0;
 
-  void onCowChildReplace(FramedEngine &engine,
-                         FONodeImpl<fon_type::cow> &cowp) noexcept final {
+  void onCowUseReplace(FramedEngine &engine,
+                       FONodeImpl<fon_type::cow> &cowp) noexcept final {
     setCowExpired();
   }
 
-  bool addParent(FONodeBase &handle) final {
-    // do nothing. swap objects have no use for parent tracking.
+  bool addUser(FONodeBase &handle) final {
+    // do nothing. swap objects have no use for user tracking.
     return false;
   }
-  void removeParent(FONodeBase &handle) final {
-    // do nothing. swap objects have no use for parent tracking.
+  void removeUser(FONodeBase &handle) final {
+    // do nothing. swap objects have no use for user tracking.
   }
 
   void onUse(const Frame &frame) final {
@@ -291,23 +310,21 @@ private:
 template <> class FONodeImpl<fon_type::cow> : public FONodeBase {
 public:
   template <size_t n>
-  using ParentVec = boost::container::small_vector<FONodeBase *, n>;
+  using UserVec = boost::container::small_vector<FONodeBase *, n>;
 
-  using ParentVecBase = boost::container::small_vector_base<FONodeBase *>;
-  FONodeImpl(FObject::Ptr obj, auto &&children)
-      : FONodeBase(std::forward<decltype(children)>(children)),
-        m_current(std::move(obj)) {}
+  using UserVecBase = boost::container::small_vector_base<FONodeBase *>;
+  FONodeImpl(FObject::Ptr obj, FOUses &&uses = FOUses{})
+      : FONodeBase(std::move(uses)), m_current(std::move(obj)) {}
 
-  FONodeImpl(FObject::Ptr obj) : m_current(std::move(obj)) {}
   void replace(FramedEngine &engine, FObject::Ptr obj) noexcept {
     // FIXME: this is not exception safe at all. need to rethink.
-    ParentVec<20> traverseQueue;
-    m_parent_topology_sort(traverseQueue, /* reverse */ false);
+    UserVec<20> traverseQueue;
+    m_user_topology_sort(traverseQueue, /* reverse */ false);
 
     m_current = std::move(obj);
 
-    for (auto &&parent : traverseQueue | std::views::drop(1)) {
-      parent->onCowChildReplace(engine, *this);
+    for (auto &&user : traverseQueue | std::views::drop(1)) {
+      user->onCowUseReplace(engine, *this);
     }
   }
 
@@ -318,28 +335,28 @@ public:
   const FObject &get() const { return *m_current; }
 
 protected:
-  /// @brief constructs new object using current children as inputs. May be
+  /// @brief constructs new object using current uses as inputs. May be
   /// unimplemented(return null) for some objects but in this case those objects
-  /// cannot have children.
+  /// cannot have uses.
   /// FIXME: this is noexcept due to replace() being noexcept for now. See upper
   /// fixme.
-  /// @note may return null if object does not contain any children. UB if null
-  /// may be returned with children.
+  /// @note may return null if object does not contain any uses. UB if null
+  /// may be returned with uses.
   virtual FObject::Ptr constructNew(FramedEngine &engine) noexcept = 0;
 
-  void onCowChildReplace(FramedEngine &engine,
-                         FONodeImpl<fon_type::cow> &cowp) noexcept final {
+  void onCowUseReplace(FramedEngine &engine,
+                       FONodeImpl<fon_type::cow> &cowp) noexcept final {
     m_current = constructNew(engine);
   }
 
-  bool addParent(FONodeBase &handle) final {
-    m_parents.emplace_back(&handle);
+  bool addUser(FONodeBase &handle) final {
+    m_users.emplace_back(&handle);
     return true;
   }
-  void removeParent(FONodeBase &handle) final {
-    auto nend = std::remove_if(m_parents.begin(), m_parents.end(),
+  void removeUser(FONodeBase &handle) final {
+    auto nend = std::remove_if(m_users.begin(), m_users.end(),
                                [&](auto &ref) { return ref == &handle; });
-    m_parents.erase(nend, m_parents.end());
+    m_users.erase(nend, m_users.end());
   }
 
   void onUse(const Frame &frame) final {
@@ -356,7 +373,7 @@ protected:
   }
 
 private:
-  void m_parent_topology_sort(ParentVecBase &res, bool reverse) {
+  void m_user_topology_sort(UserVecBase &res, bool reverse) {
     // dfs algo.
     boost::container::small_flat_set<FONodeBase *, 20> visited;
     boost::container::small_vector<std::pair<FONodeBase *, bool>, 20> stack;
@@ -371,7 +388,7 @@ private:
       processed_nei = true;
       visited.insert(next);
       if (auto *next_cow = dynamic_cast<FONodeImpl<fon_type::cow> *>(next)) {
-        for (auto *p : next_cow->m_parents) {
+        for (auto *p : next_cow->m_users) {
           if (visited.contains(p))
             continue;
           stack.emplace_back(p, false);
@@ -381,7 +398,7 @@ private:
     if (!reverse)
       std::reverse(res.begin(), res.end());
   }
-  boost::container::small_vector<FONodeBase *, 2> m_parents;
+  boost::container::small_vector<FONodeBase *, 2> m_users;
   // cow's object references are mutable. The inner state of object is
   // immutable.
   FObject::Ptr m_current;
@@ -389,13 +406,11 @@ private:
 
 template <> class FONodeImpl<fon_type::ext> : public FONodeBase {
 public:
-  FONodeImpl(auto &&children)
-      : FONodeBase(std::forward<decltype(children)>(children)) {}
-  FONodeImpl() = default;
+  FONodeImpl(FOUses &&uses = FOUses{}) : FONodeBase(std::move(uses)) {}
 
   ~FONodeImpl() override = default;
 
-  // reconstructs object and its parents. destroyed objects are not placed in
+  // reconstructs object and its users. destroyed objects are not placed in
   // free queue and are destroyed in-place.
   void reconstruct(FramedEngine &engine) {
     destruct(engine);
@@ -404,36 +419,36 @@ public:
 
 protected:
   template <size_t n>
-  using ParentVec =
+  using UserVec =
       boost::container::small_vector<FONodeImpl<fon_type::ext> *, n>;
 
-  using ParentVecBase =
+  using UserVecBase =
       boost::container::small_vector_base<FONodeImpl<fon_type::ext> *>;
 
-  void onCowChildReplace(FramedEngine &engine,
-                         FONodeImpl<fon_type::cow> &cowp) noexcept final {
+  void onCowUseReplace(FramedEngine &engine,
+                       FONodeImpl<fon_type::cow> &cowp) noexcept final {
     reconstruct(engine);
   }
 
-  bool addParent(FONodeBase &handle) final {
-    m_parents.emplace_back(static_cast<FONodeImpl<fon_type::ext> *>(&handle));
+  bool addUser(FONodeBase &handle) final {
+    m_users.emplace_back(static_cast<FONodeImpl<fon_type::ext> *>(&handle));
     return true;
   }
-  void removeParent(FONodeBase &handle) final {
-    auto nend = std::remove_if(m_parents.begin(), m_parents.end(),
+  void removeUser(FONodeBase &handle) final {
+    auto nend = std::remove_if(m_users.begin(), m_users.end(),
                                [&](auto &ref) { return ref == &handle; });
-    m_parents.erase(nend, m_parents.end());
+    m_users.erase(nend, m_users.end());
   }
   void destruct(FramedEngine &engine) {
-    ParentVec<20> destructQueue;
-    m_parent_topology_sort(destructQueue, /* reverse */ true);
+    UserVec<20> destructQueue;
+    m_user_topology_sort(destructQueue, /* reverse */ true);
     for (auto &obj : destructQueue)
       obj->onDestruct(engine);
   }
 
   void construct(FramedEngine &engine) {
-    ParentVec<20> constructQueue;
-    m_parent_topology_sort(constructQueue, /* reverse */ false);
+    UserVec<20> constructQueue;
+    m_user_topology_sort(constructQueue, /* reverse */ false);
     for (auto &obj : constructQueue)
       obj->onConstruct(engine);
   }
@@ -442,7 +457,7 @@ protected:
   virtual void onConstruct(FramedEngine &engine) = 0;
 
 private:
-  void m_parent_topology_sort(ParentVecBase &res, bool reverse) {
+  void m_user_topology_sort(UserVecBase &res, bool reverse) {
     // dfs algo.
     boost::container::small_flat_set<FONodeImpl<fon_type::ext> *, 20> visited;
     boost::container::small_vector<std::pair<FONodeImpl<fon_type::ext> *, bool>,
@@ -458,7 +473,7 @@ private:
       }
       processed_nei = true;
       visited.insert(next);
-      for (auto *p : next->m_parents) {
+      for (auto *p : next->m_users) {
         if (visited.contains(p))
           continue;
         stack.emplace_back(p, false);
@@ -467,19 +482,17 @@ private:
     if (!reverse)
       std::reverse(res.begin(), res.end());
   }
-  // only ext objects can be a parent of another ext object.
-  boost::container::small_vector<FONodeImpl<fon_type::ext> *, 2> m_parents;
+  // only ext objects can be a user of another ext object.
+  boost::container::small_vector<FONodeImpl<fon_type::ext> *, 2> m_users;
 };
 
 template <fon_type type> class FOExtImpl {};
 
 template <> class FOExtImpl<fon_type::swap> : public FONodeImpl<fon_type::ext> {
 public:
-  FOExtImpl(FramedEngine &engine, auto &&objectFactory, auto &&children)
-      : FONodeImpl<fon_type::ext>(std::forward<decltype(children)>(children)) {
-    m_objectsInit(engine, objectFactory);
-  }
-  FOExtImpl(FramedEngine &engine, auto &&objectFactory) {
+  FOExtImpl(FramedEngine &engine, auto &&objectFactory,
+            FOUses &&uses = FOUses{})
+      : FONodeImpl<fon_type::ext>(std::move(uses)) {
     m_objectsInit(engine, objectFactory);
   }
 
@@ -533,10 +546,8 @@ private:
 
 template <> class FOExtImpl<fon_type::cow> : public FONodeImpl<fon_type::ext> {
 public:
-  FOExtImpl(FObject::Ptr obj, auto &&children)
-      : FONodeImpl<fon_type::ext>(std::forward<decltype(children)>(children)),
-        m_current(std::move(obj)) {}
-  FOExtImpl(FObject::Ptr obj) : m_current(std::move(obj)) {}
+  FOExtImpl(FObject::Ptr obj, FOUses &&uses = FOUses{})
+      : FONodeImpl<fon_type::ext>(std::move(uses)), m_current(std::move(obj)) {}
 
   const FObject &use(const Frame &frame) {
     FONodeBase::use(frame);
@@ -571,8 +582,8 @@ private:
 
 template <> class FOExtImpl<fon_type::ext> : public FONodeImpl<fon_type::ext> {
 public:
-  FOExtImpl(auto &&children)
-      : FONodeImpl<fon_type::ext>(std::forward<decltype(children)>(children)) {}
+  FOExtImpl(FOUses &&uses = FOUses{})
+      : FONodeImpl<fon_type::ext>(std::move(uses)) {}
   FOExtImpl() = default;
 
   FObject &use(const Frame &frame) {

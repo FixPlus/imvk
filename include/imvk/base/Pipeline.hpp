@@ -109,12 +109,12 @@ public:
               return engine.createObject<StageSetView>(std::move(view));
             },
             [&]() {
-              boost::container::small_vector<FONodeRef, 2> children;
-              children.emplace_back(&stage);
-              for (auto &&[set, binding] : sets) {
-                children.emplace_back(&*set);
-              }
-              return children;
+              FOUses uses(stage);
+              uses.addUses(
+                  sets | std::views::transform([](auto &&p) -> decltype(auto) {
+                    return *p.first;
+                  }));
+              return uses;
             }()) {
     unsigned index = 1;
     for (auto &&[_, binding] : sets) {
@@ -123,18 +123,18 @@ public:
   }
 
   StageLayout &stage() const {
-    return static_cast<StageLayout &>(*m_children.front());
+    return static_cast<StageLayout &>(*m_uses.front());
   }
 
   bool hasSet(unsigned num) const { return m_setMap.contains(num); }
 
   const DescriptorSet &getSet(unsigned num) const {
     assert(m_setMap.contains(num));
-    return static_cast<const DescriptorSet &>(*m_children.at(m_setMap.at(num)));
+    return static_cast<const DescriptorSet &>(*m_uses.at(m_setMap.at(num)));
   }
   DescriptorSet &getSet(unsigned num) {
     assert(m_setMap.contains(num));
-    return static_cast<DescriptorSet &>(*m_children.at(m_setMap.at(num)));
+    return static_cast<DescriptorSet &>(*m_uses.at(m_setMap.at(num)));
   }
 
 private:
@@ -200,7 +200,7 @@ private:
         4>
         descriptorLayouts;
     boost::container::small_vector<VkPushConstantRange, 4> pushConstants;
-    for (auto &&stageRef : stages) {
+    for (const StageLayout &stageRef : stages) {
       const StageLayoutImpl &stage = stageRef.get();
       std::ranges::transform(
           stage.sets(), std::back_inserter(descriptorLayouts), [](auto &&set) {
@@ -234,7 +234,7 @@ private:
 
 public:
   PipelineLayout(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
-                 auto &&stages)
+                 std::ranges::range auto &&stages)
       : FONode<vkw::PipelineLayout,
                fon_type::cow>{init(engine, flags,
                                    stages |
@@ -242,11 +242,20 @@ public:
                                            [](auto &&stage) -> decltype(auto) {
                                              return *stage;
                                            })),
-                              stages},
+                              FOUses{stages}},
         m_flags(flags) {}
+  PipelineLayout(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
+                 auto &&...stages)
+      : FONode<
+            vkw::PipelineLayout,
+            fon_type::cow>{init(engine, flags,
+                                std::array<std::reference_wrapper<StageLayout>,
+                                           sizeof...(stages)>{stages...}),
+                           FOUses{std::forward<decltype(stages)>(stages)...}},
+        m_flags(flags) {}
+
   auto stages() const {
-    return m_children |
-           std::views::transform([](auto &&stage) -> decltype(auto) {
+    return m_uses | std::views::transform([](auto &&stage) -> decltype(auto) {
              return static_cast<const StageTy &>(*stage);
            });
   }
@@ -270,12 +279,10 @@ private:
 public:
   Pipeline(FramedEngine &engine, PipelineLayout<PipelineTraits> &layout)
       : FONode<typename PipelineTraits::HandleTy, fon_type::cow>(
-            init(engine, layout),
-            std::array<PipelineLayout<PipelineTraits> *, 1>{&layout}){};
+            init(engine, layout), FOUses{layout}){};
 
   PipelineLayout<PipelineTraits> &layout() {
-    return static_cast<PipelineLayout<PipelineTraits> &>(
-        *this->m_children.front());
+    return static_cast<PipelineLayout<PipelineTraits> &>(*this->m_uses.front());
   }
 
 private:
@@ -304,7 +311,7 @@ public:
     auto &ret = m_pipelineCache.get(key, nullptr);
     if (!ret) {
       Ref<PipelineLayoutTy> layout =
-          m_engine.createNode<PipelineLayoutTy>(m_flags, key);
+          m_engine.createNode<PipelineLayoutTy>(m_flags, stages...);
       ret = m_engine.createNode<PipelineTy>(*layout);
     }
     return *ret;

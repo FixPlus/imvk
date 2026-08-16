@@ -104,13 +104,10 @@ DescriptorSet::DescriptorSet(
           [&](FrameID id) {
             return engine.createObject<DescriptorPool::SetHandle>(pool.get());
           },
-          [&]() {
-            boost::container::small_vector<FONodeBase *, 2u> binds;
-            std::ranges::transform(
-                bindings, std::back_inserter(binds),
-                [](auto &&p) { return dynamic_cast<FONodeBase *>(p.first); });
-            return binds;
-          }()) {
+          FOUses(bindings |
+                 std::views::transform([](auto &&p) -> decltype(auto) {
+                   return dynamic_cast<FONodeBase &>(*p.first);
+                 }))) {
   std::ranges::copy(bindings, std::back_inserter(m_bindings));
   std::ranges::for_each(engine.frameIds(),
                         [this](FrameID frame) { writeDescriptors(frame); });

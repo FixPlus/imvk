@@ -27,10 +27,10 @@ public:
   FrameBuffer(imvk::GraphicsEngine &engine, SwapchainView &sv, RenderPass &rp);
 
   const SwapchainView &view() const {
-    return static_cast<const SwapchainView &>(*m_children.front());
+    return static_cast<const SwapchainView &>(*m_uses.front());
   }
   const RenderPass &renderPass() const {
-    return static_cast<const RenderPass &>(*m_children.back());
+    return static_cast<const RenderPass &>(*m_uses.back());
   }
 
 private:

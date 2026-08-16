@@ -69,7 +69,7 @@ public:
   SwapchainView(GraphicsEngine &engine, Swapchain &swapchain);
 
   const vkw::SwapChain &swapchain() const {
-    return static_cast<const Swapchain &>(*m_children.front()).get();
+    return static_cast<const Swapchain &>(*m_uses.front()).get();
   }
 
 private:

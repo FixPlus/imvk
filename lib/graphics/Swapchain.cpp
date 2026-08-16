@@ -68,10 +68,8 @@ Swapchain::Swapchain(GraphicsEngine &engine)
     : FOENode<vkw::SwapChain, fon_type::cow>(doConstructNew(engine)) {}
 
 SwapchainView::SwapchainView(GraphicsEngine &engine, Swapchain &swapchain)
-    : FOENode<vkw::ImageView<vkw::COLOR, vkw::V2DA>, fon_type::ext>([&]() {
-        std::array<FONodeBase *, 1> child{&swapchain};
-        return child;
-      }()) {
+    : FOENode<vkw::ImageView<vkw::COLOR, vkw::V2DA>, fon_type::ext>(
+          FOUses{swapchain}) {
   onConstruct(engine);
 }
 FObject::Ptr Swapchain::constructNew(FramedEngine &engine) {
