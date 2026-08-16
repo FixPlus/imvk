@@ -22,51 +22,26 @@ using FrameID = unsigned;
 /// manages lifetimes of resources used in those commands.
 class Frame final {
 public:
-  /// @brief Ends the previous scope of this frame and immediately starts a new
-  /// scope. Frame objects that were registered for previous scope as used are
-  /// unmarked but may remain registered. Registered objects that were not
-  /// marked as used may be disposed here.
-  /// @param ordinal - index in total frame order of this submission.
-  vkw::BufferRecorder begin(unsigned ordinal);
-
-  /// @brief Frees up all registered objects.
-  void terminate() {}
+  /// @brief Constructs frame #id for specified engine.
+  /// @param engine
+  /// @param id
+  Frame(FramedEngine &engine, FrameID id) : m_engine(&engine), m_id(id) {}
 
   /// @return the engine this frame is registered in.
-  FramedEngine &engine() const { return m_engine; }
+  FramedEngine &engine() const { return *m_engine; }
 
   /// @return id of this frame. Is unique for each frame.
   const FrameID &id() const { return m_id; }
 
   /// @return id of this frame. Is unique for each frame.
   const auto &ordinal() const { return m_ordinal; }
-
-  /// @return Command buffer that is used to capture current frame work.
-  vkw::PrimaryCommandBuffer &commands() const { return m_commandBuffer; }
-  ~Frame();
+  /// @return id of this frame. Is unique for each frame.
+  auto &ordinal() { return m_ordinal; }
 
 private:
-  /// @brief Constructs frame #id for specified engine.
-  /// @param engine
-  /// @param id
-  Frame(FramedEngine &engine, FrameID id);
-  friend class FrameCreator;
-
-  FramedEngine &m_engine;
-  FrameID m_id;
-  unsigned m_ordinal;
-  mutable vkw::PrimaryCommandBuffer m_commandBuffer;
-};
-
-/// @brief Interface factory for Frame creation. Only friends of this class may
-/// create frames.
-class FrameCreator {
-private:
-  static Frame *create(FramedEngine &engine, FrameID id) {
-    return new Frame(engine, id);
-  }
-  /// Currently, only FramedEngine is allowed to create Frame objects.
-  friend class FramedEngine;
+  FramedEngine *m_engine;
+  const FrameID m_id;
+  FrameID m_ordinal = 0;
 };
 
 template <typename T> class FObjectImpl;

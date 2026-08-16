@@ -60,19 +60,18 @@ BasicRenderPass::BasicRenderPass(imvk::GraphicsEngine &engine)
       m_framebuffer(engine.createNode<FrameBuffer>(*m_sv, *m_pass)) {}
 
 void BasicRenderPass::run(
-    GraphicsEngine::SwapFrame &frame,
+    vkw::BufferRecorder &recorder, const imvk::Frame &frame,
     const std::function<void(vkw::RenderPassRecorder &, const imvk::Frame &)>
         &callback) {
-  auto &swapchain = frame.swapchain();
+  auto &ge = static_cast<imvk::GraphicsEngine &>(frame.engine());
+  auto &swapchain = ge.swapchain();
 
-  auto &fb = m_framebuffer->use(frame.frame());
-  auto &commands = frame.frame().commands();
-  auto &commandRcrd = frame.commands();
+  auto &fb = m_framebuffer->use(frame);
 
   VkClearValue clearValue{.color = {0.8, 0.5, 0.2, 0.0}};
   auto drawArea = fb.getFullRenderArea();
 
-  auto rpRcrd = commandRcrd.beginRenderPass(
+  auto rpRcrd = recorder.beginRenderPass(
       fb, drawArea,
       /*use secondary */ false, std::span<const VkClearValue>{&clearValue, 1u});
   auto &drawAreaExtent = drawArea.extent;
@@ -90,7 +89,7 @@ void BasicRenderPass::run(
   rpRcrd.setViewports({&viewport, 1});
   rpRcrd.setScissors({&scissor, 1});
 
-  std::invoke(callback, rpRcrd, frame.frame());
+  std::invoke(callback, rpRcrd, frame);
 }
 
 BasicVertexStage::BasicVertexStage(

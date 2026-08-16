@@ -119,62 +119,47 @@ public:
   /// @param object pointer to FObject instance to destroy.
   void destroyObject(FObject *object);
 
+  void run() {
+    FrameInfo *nextFrame = nullptr;
+    do {
+      nextFrame = &getNextFrame();
+      submit(onFrame(nextFrame->frame), *nextFrame);
+    } while (postSubmit(nextFrame->frame));
+  }
+
+  void flush();
+
   ~FramedEngine() override;
 
 protected:
-  struct FrameRecorder {
-    vkw::BufferRecorder recorder;
-    std::reference_wrapper<Frame> frame;
-  };
-
-  std::optional<std::future<FrameRecorder>> nextFrame() {
-    if (m_frameQueue.empty())
-      return std::nullopt;
-    auto nextId = m_frameQueue.front();
-    auto &next = m_frames.at(nextId);
-    m_frameQueue.pop();
-    return std::async(std::launch::deferred, [&next, ord = m_ordinal++]() {
-      next.waitFence.get();
-      return m_beginFrameImpl(*next.frame, ord);
-    });
-  }
-
-  template <typename Fn = void (*)(vkw::SubmitInfo &),
-            typename CallbackFn = void (*)(void)>
-  void submitFrame(
-      FrameRecorder &&recorder, Fn &&amendSubmitInfo = [](vkw::SubmitInfo &) {},
-      CallbackFn &&afterCompletionCallback = []() {}) {
-    auto &frame = recorder.frame.get();
-    { auto endFrame = std::move(recorder); }
-    auto id = frame.id();
-    assert(id < m_frames.size());
-    auto &frameInfo = m_frames.at(id);
-    vkw::SubmitInfo info;
-    info.addCommands(frame.commands());
-    std::invoke(amendSubmitInfo, info);
-    queue().acquire().get().submit(info, frameInfo.fence);
-    frameInfo.waitFence =
-        std::async(std::launch::deferred,
-                   [&frameInfo, afterCompletionCallback = std::move(
-                                    afterCompletionCallback)]() mutable {
-                     frameInfo.fence.wait();
-                     frameInfo.fence.reset();
-                     std::invoke(afterCompletionCallback);
-                   });
-    m_frameQueue.push(id);
-  }
+  virtual vkw::SubmitInfo onFrame(const Frame &frame) = 0;
+  virtual bool postSubmit(const Frame &frame) = 0;
 
 private:
-  static FrameRecorder m_beginFrameImpl(Frame &frame, unsigned ordinal);
   struct FrameInfo {
-    std::unique_ptr<Frame> frame;
+    Frame frame;
     vkw::Fence fence;
-    std::future<void> waitFence;
   };
+  FrameInfo &getNextFrame() {
+    auto fences =
+        m_frames | std::views::transform([](FrameInfo &info) -> vkw::Fence & {
+          return info.fence;
+        });
+    vkw::Fence::wait_any(std::begin(fences), std::end(fences));
+    auto findSignaled = std::ranges::find_if(
+        m_frames, [](auto &&info) { return info.fence.signaled(); });
+    assert(findSignaled != m_frames.end());
+    auto &ret = *findSignaled;
+    ret.fence.reset();
+    ret.frame.ordinal() = m_ordinal++;
+    return ret;
+  }
+  void submit(vkw::SubmitInfo &&info, FrameInfo &frame) {
+    queue().acquire().get().submit(info, frame.fence);
+  }
   std::vector<FrameInfo> m_frames;
-  std::queue<unsigned> m_frameQueue;
   std::vector<FObject *> m_freeList;
-  unsigned m_ordinal = 0;
+  FrameID m_ordinal = 0;
 };
 
 } // namespace imvk

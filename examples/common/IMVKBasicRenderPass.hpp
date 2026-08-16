@@ -55,7 +55,7 @@ class BasicRenderPass {
 public:
   BasicRenderPass(imvk::GraphicsEngine &engine);
 
-  void run(GraphicsEngine::SwapFrame &frame,
+  void run(vkw::BufferRecorder &recorder, const imvk::Frame &frame,
            const std::function<void(vkw::RenderPassRecorder &,
                                     const imvk::Frame &)> &callback);
 

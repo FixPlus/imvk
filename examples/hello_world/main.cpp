@@ -234,6 +234,91 @@ void secondThread(
   }
 }
 #endif
+class AllocLogger {
+public:
+  AllocLogger() = default;
+
+  void stamp(unsigned framesPassed) {
+    auto newAllocAcc = totalAllocations.load(std::memory_order_relaxed);
+    auto newFreeAcc = totalFrees.load(std::memory_order_relaxed);
+    auto newSizeAllocAcc = totalAllocated.load(std::memory_order_relaxed);
+
+    std::cout << "a: "
+              << static_cast<double>(newAllocAcc - allocAcc) /
+                     static_cast<double>(framesPassed)
+              << ", f: "
+              << static_cast<double>(newFreeAcc - freeAcc) /
+                     static_cast<double>(framesPassed)
+              << ", b: "
+              << static_cast<double>(newSizeAllocAcc - sizeAllocAcc) /
+                     static_cast<double>(framesPassed)
+              << std::endl;
+    allocAcc = newAllocAcc;
+    freeAcc = newFreeAcc;
+    sizeAllocAcc = newSizeAllocAcc;
+  }
+
+private:
+  size_t allocAcc = 0;
+  size_t freeAcc = 0;
+  size_t sizeAllocAcc = 0;
+};
+
+class MyCommandBuffer
+    : public imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap> {
+public:
+  MyCommandBuffer(imvk::FramedEngine &engine)
+      : imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap>(
+            engine, [&](imvk::FrameID id) {
+              return engine.createObject<vkw::PrimaryCommandBuffer>(
+                  engine.commandPool());
+            }) {}
+
+private:
+  void onCowExpire(const imvk::Frame &frame) override {
+    // do nothing
+  }
+
+  void onUseAction(const imvk::Frame &frame, imvk::FObject &obj) override {
+    // do nothing
+  }
+};
+
+class MyGraphicsEngine : public imvk::GraphicsEngine {
+public:
+  MyGraphicsEngine(imvk::Context &ctx, imvk::examples::Window &window)
+      : imvk::GraphicsEngine(
+            ctx, imvk::GraphicsEngineCreateInfo{.swapchainFactory = &window,
+                                                .maxFramesInFlight = 2}),
+        m_window(window), m_commands(createNode<MyCommandBuffer>()) {}
+
+  bool midFrameAction() override {
+    m_window.pollEvents();
+    if (m_window.clock().totalFrames() % 10000 == 0u) {
+      std::cout << "fps: " << m_window.clock().fps() << std::endl;
+      m_allocLogger.stamp(10000);
+    }
+    return !m_window.shouldClose();
+  }
+  vkw::SubmitInfo frameAction(const imvk::Frame &frame) override {
+    auto &cb = m_commands->use(frame);
+    vkw::BufferRecorder recorder{cb,
+                                 VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    m_frameAction(recorder, frame);
+    vkw::SubmitInfo ret{};
+    ret.addCommands(cb);
+    return ret;
+  }
+  void setFrameAction(auto &&action) {
+    m_frameAction = std::forward<decltype(action)>(action);
+  }
+
+private:
+  imvk::examples::Window &m_window;
+  AllocLogger m_allocLogger;
+  imvk::Ref<MyCommandBuffer> m_commands;
+  std::function<void(vkw::BufferRecorder &, const imvk::Frame &)> m_frameAction;
+};
 int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
@@ -258,9 +343,7 @@ int app() try {
                             imvkCCI};
 
   // Create graphics engine.
-  imvk::GraphicsEngineCreateInfo geCI{.swapchainFactory = &window,
-                                      .maxFramesInFlight = 2};
-  auto graphicsEngine = imvk::GraphicsEngine(imvkContext, geCI);
+  auto graphicsEngine = MyGraphicsEngine(imvkContext, window);
 
   auto copyEngine = imvk::CopyEngine(imvkContext, imvk::CopyEngineCreateInfo{});
   // Create basic render pass.
@@ -359,32 +442,11 @@ int app() try {
 #endif
   // std::jthread thread2{secondThread, std::ref(anotherVertices)};
   //  Main application loop.
-  graphicsEngine.run(
-      [&](imvk::GraphicsEngine::SwapFrame &frame) {
-        renderPass.run(frame, passJob);
-      },
-      [&]() {
-        window.pollEvents();
-        if (window.clock().totalFrames() % 10000 == 0u) {
-          auto newAllocAcc = totalAllocations.load(std::memory_order_relaxed);
-          auto newFreeAcc = totalFrees.load(std::memory_order_relaxed);
-          auto newSizeAllocAcc = totalAllocated.load(std::memory_order_relaxed);
-
-          std::cout << "fps: " << window.clock().fps() << std::endl;
-          std::cout << "a: "
-                    << static_cast<double>(newAllocAcc - allocAcc) / 10000.0
-                    << ", f: "
-                    << static_cast<double>(newFreeAcc - freeAcc) / 10000.0
-                    << ", b: "
-                    << static_cast<double>(newSizeAllocAcc - sizeAllocAcc) /
-                           10000.0
-                    << std::endl;
-          allocAcc = newAllocAcc;
-          freeAcc = newFreeAcc;
-          sizeAllocAcc = newSizeAllocAcc;
-        }
-        return !window.shouldClose();
+  graphicsEngine.setFrameAction(
+      [&](vkw::BufferRecorder &recorder, const imvk::Frame &frame) {
+        renderPass.run(recorder, frame, passJob);
       });
+  graphicsEngine.run();
 
   doQuit = true;
 

@@ -32,28 +32,21 @@ GraphicsEngine::GraphicsEngine(Context &context,
   assert(CI.maxFramesInFlight);
 }
 
-std::optional<GraphicsEngine::SwapFrame> GraphicsEngine::m_beginFrame() {
-  if (!m_pending) {
-    m_pending.emplace(nextFrame()->get());
-  }
-
-  auto status = m_swapchain->get().acquireNextImage(
-      m_presentComplete->use(m_pending->frame),
-      /* timeout in milliseconds*/ 1000);
+bool GraphicsEngine::m_aquireSwapchainImage(const Frame &frame) {
+  auto status =
+      m_swapchain->get().acquireNextImage(m_presentComplete->use(frame),
+                                          /* timeout in milliseconds*/ 1000);
   if (status == vkw::SwapChain::AcquireStatus::TIMEOUT) {
-    return std::nullopt;
+    return false;
   }
   if (status == vkw::SwapChain::AcquireStatus::OUT_OF_DATE ||
       status == vkw::SwapChain::AcquireStatus::SUBOPTIMAL) {
     if (!m_surface_minimized())
       m_recreate_swapchain();
-    return std::nullopt;
+    return false;
   }
-
-  return SwapFrame{*this, *std::exchange(m_pending, std::nullopt),
-                   *m_renderComplete, *m_presentComplete};
+  return true;
 }
-
 void GraphicsEngine::m_recreate_swapchain() {
   queue().acquire().get().waitIdle();
   m_swapchain->reconstruct(*this);
@@ -69,21 +62,20 @@ bool GraphicsEngine::m_surface_minimized() {
 
 GraphicsEngine::~GraphicsEngine() = default;
 
-void GraphicsEngine::SwapFrame::FrameEnder::operator()(
-    GraphicsEngine *engine) const {
-  if (!engine)
-    return;
-  auto id = recorder.frame.get().id();
-  auto &pc = presentComplete->use(recorder.frame);
-  auto &rc = renderComplete->use(recorder.frame);
+vkw::SubmitInfo GraphicsEngine::onFrame(const Frame &frame) {
+  while (!m_aquireSwapchainImage(frame))
+    midFrameAction();
+  auto submitInfo = frameAction(frame);
+  submitInfo.addWaitCondition(m_presentComplete->use(frame),
+                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+  submitInfo.addSignalTo(m_renderComplete->use(frame));
+  return submitInfo;
+}
 
-  engine->submitFrame(std::move(recorder), [&](vkw::SubmitInfo &submitInfo) {
-    submitInfo.addWaitCondition(pc,
-                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-    submitInfo.addSignalTo(rc);
-  });
-  auto presentInfo = vkw::PresentInfo{swapchain->get(), rc};
-  auto q = engine->queue().acquire();
-  q.get().present(presentInfo);
+bool GraphicsEngine::postSubmit(const Frame &frame) {
+  auto presentInfo =
+      vkw::PresentInfo{swapchain().use(frame), m_renderComplete->use(frame)};
+  queue().acquire().get().present(presentInfo);
+  return midFrameAction();
 }
 } // namespace imvk

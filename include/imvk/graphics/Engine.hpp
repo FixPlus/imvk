@@ -70,79 +70,10 @@ private:
 /// transfer. Implements FramedEngine for swapchain image presenting sequence.
 class GraphicsEngine : public FramedEngine {
 public:
-  class SwapFrame {
-  public:
-    SwapFrame(GraphicsEngine &engine, FramedEngine::FrameRecorder &&frame,
-              SSemaphore &rc, Semaphore &pc)
-        : m_engine(&engine,
-                   FrameEnder{engine.swapchain(), rc, pc, std::move(frame)}){};
-
-    /// @brief wrappers over frame methods.
-    GraphicsEngine &engine() const { return *m_engine; }
-    const auto &id() const { return frame().id(); }
-    const Frame &frame() const { return m_recorder().frame.get(); }
-
-    vkw::BufferRecorder &commands() { return m_recorder().recorder; }
-
-    const auto &swapchain() const {
-      return m_engine.get_deleter().swapchain->get();
-    }
-
-  private:
-    friend class GraphicsEngine;
-    FramedEngine::FrameRecorder &m_recorder() const {
-      return m_engine.get_deleter().recorder;
-    }
-    struct FrameEnder {
-      FrameEnder(Swapchain &swapchain, SSemaphore &rc, Semaphore &pc,
-                 FramedEngine::FrameRecorder &&frame)
-          : swapchain(&swapchain), renderComplete(&rc), presentComplete(&pc),
-            recorder(std::move(frame)) {}
-      void operator()(GraphicsEngine *engine) const;
-
-      Ref<Swapchain> swapchain;
-      Ref<SSemaphore> renderComplete;
-      Ref<Semaphore> presentComplete;
-      mutable FramedEngine::FrameRecorder recorder;
-    };
-    std::unique_ptr<GraphicsEngine, FrameEnder> m_engine;
-    ;
-  };
-
-  using FrameT = SwapFrame;
-
   GraphicsEngine(Context &context, const GraphicsEngineCreateInfo &CI);
 
-  /// @brief Initiates a swapchain cycle. This cycle involves:
-  /// 1. Inter-frame scope - this scope is outside of visible frame scope and
-  /// interFrameJob callback is called. If this callback returns false goto 6.
-  /// 2. Wait for current frame to finish previous job.
-  /// 3. Next swap image acquire. If fails - swapchain is recreated and goto
-  /// step 1. If swapchain cannot be recreated due to surface minimization, it
-  /// is kept alive and goto 1.
-  /// 4. Frame-scope - in this scope frameJob callback is called which may
-  /// record work for current frame.
-  /// 5. Submit and present - current frame's command buffer and swapchain
-  /// present are submitted to queue.
-  /// 6. Advance to next frame and goto 1.
-  /// 7. Termination - wait for queue idle, free all frame resources and
-  /// return.
-  ///
-  ///  If any uncaught exception reaches scope of run(), step 7 is executed
-  ///  before further unwind.
-  /// @param frameJob callback that fills frame's commands. Must be
-  /// void(imvk::SwapFrame&) compatible.
-  /// @param interFrameJob callback that is called outside of frame scope. This
-  /// callback issues cycle termination if returns false. Must be bool(void)
-  /// compatible.
-  void run(auto &&frameJob, auto &&interFrameJob) {
-    while (std::invoke(interFrameJob)) {
-      auto frame = m_beginFrame();
-      if (!frame)
-        continue;
-      std::invoke(frameJob, *frame);
-    }
-  }
+  virtual bool midFrameAction() = 0;
+  virtual vkw::SubmitInfo frameAction(const Frame &frame) = 0;
 
   /// @brief override of similar template in FramedEngine.
   template <std::derived_from<FONodeBase> T, typename... Args>
@@ -155,20 +86,19 @@ public:
   ~GraphicsEngine() override;
 
 private:
-  friend class SwapFrame::FrameEnder;
+  vkw::SubmitInfo onFrame(const Frame &frame) final;
+  bool postSubmit(const Frame &frame) final;
 
+  bool m_aquireSwapchainImage(const Frame &frame);
   void m_recreate_swapchain();
   bool m_surface_minimized();
   FObject::Ptr m_createSwapchain();
   friend class Swapchain;
 
-  std::optional<SwapFrame> m_beginFrame();
-
   SwapchainFactory &m_swapchainFactory;
   Ref<Swapchain> m_swapchain;
   Ref<SSemaphore> m_renderComplete;
   Ref<Semaphore> m_presentComplete;
-  std::optional<FrameRecorder> m_pending;
 };
 
 } // namespace imvk

@@ -3,18 +3,6 @@
 
 namespace imvk {
 
-Frame::Frame(FramedEngine &engine, unsigned id)
-    : m_engine(engine), m_id(id), m_commandBuffer(engine.commandPool()) {}
-
-vkw::BufferRecorder Frame::begin(unsigned ordinal) {
-  m_ordinal = ordinal;
-  m_commandBuffer.reset(0);
-  return vkw::BufferRecorder{m_commandBuffer,
-                             VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-}
-
-Frame::~Frame() = default;
-
 void intrusive_ptr_add_ref(FONodeBase *p) { p->m_refCount++; }
 void intrusive_ptr_release(FONodeBase *p) {
   if (--(p->m_refCount) == 0)
