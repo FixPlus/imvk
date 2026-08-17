@@ -43,9 +43,7 @@ class SSemaphore final : public FOENode<vkw::Semaphore, fon_type::ext> {
 public:
   SSemaphore(FramedEngine &engine, Swapchain &swapchain);
 
-  const Swapchain &swapchain() const {
-    return static_cast<const Swapchain &>(*m_uses.front());
-  }
+  const Swapchain &swapchain() const { return getUse<const Swapchain>(0); }
 
 private:
   unsigned getExtIndex(const Frame &frame) const override {

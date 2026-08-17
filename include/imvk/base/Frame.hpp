@@ -64,7 +64,7 @@ public:
   FObject &operator=(FObject &&) = delete;
   FObject &operator=(const FObject &) = delete;
 
-  virtual ~FObject() = default;
+  virtual ~FObject();
 
   template <typename T> T &as() { return static_cast<FObjectImpl<T> &>(*this); }
 
@@ -142,16 +142,74 @@ private:
   boost::container::small_vector<FONodeBase *, 2> m_uses;
 };
 
+struct FOUse {
+  FOUse(FONodeBase *r) : ref(r){};
+  FONodeRef ref;
+  FONodeBase *user = nullptr;
+  FOUse *next = nullptr;
+  FOUse *prev = nullptr;
+};
+
+class FOUseIterator {
+public:
+  using iterator_category = std::bidirectional_iterator_tag;
+  using value_type = FONodeBase;
+  using difference_type = std::ptrdiff_t;
+  using pointer = FONodeBase *;
+  using reference = FONodeBase &;
+
+  FOUseIterator(FOUse *ptr = nullptr) : current(ptr) {}
+
+  // Dereference operators
+  reference operator*() const { return *current->user; }
+  pointer operator->() const { return current->user; }
+
+  // Prefix increment
+  FOUseIterator &operator++() {
+    if (current)
+      current = current->next;
+    return *this;
+  }
+
+  // Postfix increment
+  FOUseIterator operator++(int) {
+    FOUseIterator tmp = *this;
+    ++(*this);
+    return tmp;
+  }
+
+  // Prefix increment
+  FOUseIterator &operator--() {
+    if (current)
+      current = current->prev;
+    return *this;
+  }
+
+  // Postfix increment
+  FOUseIterator operator--(int) {
+    FOUseIterator tmp = *this;
+    --(*this);
+    return tmp;
+  }
+
+  friend bool operator==(const FOUseIterator &a,
+                         const FOUseIterator &b) = default;
+
+private:
+  FOUse *current;
+};
+
 class FONodeBase {
 public:
   FONodeBase(FOUses &&uses = FOUses{})
       : m_uses([&]() {
-          boost::container::small_vector<FONodeRef, 2> ret;
+          boost::container::small_vector<FOUse, 2> ret;
           std::ranges::copy(uses.get(), std::back_inserter(ret));
           return ret;
         }()) {
     for (auto &&use : m_uses) {
-      use->addUser(*this);
+      use.ref->addUser(&use);
+      use.user = this;
     }
   }
   // This object is intrusively reference counter. Therefore no copy/moves.
@@ -161,9 +219,56 @@ public:
   FONodeBase &operator=(const FONodeBase &) = delete;
 
   virtual ~FONodeBase() {
+    assert(m_firstUser.next == nullptr);
     for (auto &&use : m_uses) {
-      use->removeUser(*this);
+      auto *prev = use.prev;
+      auto *next = use.next;
+      if (prev)
+        prev->next = next;
+      if (next)
+        next->prev = prev;
     }
+  }
+
+  auto users() const {
+    return std::ranges::subrange(FOUseIterator{m_firstUser.next},
+                                 FOUseIterator{nullptr});
+  }
+
+  auto uses() const {
+    return m_uses | std::views::transform(
+                        [](auto &&use) -> decltype(auto) { return *use.ref; });
+  }
+
+  template <typename T> T &getUse(size_t index) const {
+    return static_cast<T &>(*m_uses.at(index).ref);
+  }
+
+  void users_topological_traverse(bool reverse, auto &&userFilter,
+                                  auto &&visitAction) {
+    boost::container::small_flat_set<FONodeBase *, 20> visited;
+    boost::container::small_vector<FONodeBase *, 20> res;
+    boost::container::small_vector<std::pair<FONodeBase *, bool>, 20> stack;
+    stack.emplace_back(this, false);
+    while (!stack.empty()) {
+      auto &&[next, processed_nei] = stack.back();
+      if (processed_nei) {
+        res.push_back(next);
+        stack.pop_back();
+        continue;
+      }
+      processed_nei = true;
+      visited.insert(next);
+      for (auto &p : next->users()) {
+        if (!userFilter(*next, p) || visited.contains(&p))
+          continue;
+        stack.emplace_back(&p, false);
+      }
+    }
+    if (!reverse)
+      std::reverse(res.begin(), res.end());
+    for (auto *node : res)
+      visitAction(*node);
   }
 
   /// @brief this method marks this object and all it's subobjects as used in
@@ -174,25 +279,31 @@ public:
     markUsed(frame);
     onUse(frame);
     for (auto &&use : m_uses)
-      use->use(frame);
+      use.ref->use(frame);
   }
 
   virtual void onCowUseReplace(FramedEngine &engine,
                                FONodeImpl<fon_type::cow> &cowp) noexcept = 0;
 
 protected:
-  virtual bool addUser(FONodeBase &handle) = 0;
-  virtual void removeUser(FONodeBase &handle) = 0;
   virtual void onUse(const Frame &frame) = 0;
   virtual bool isUsed(const Frame &frame) const = 0;
   virtual void markUsed(const Frame &frame) = 0;
 
-  const boost::container::small_vector<FONodeRef, 2> m_uses;
-
 private:
+  void addUser(FOUse *user) {
+    auto *next = m_firstUser.next;
+    user->next = next;
+    user->prev = &m_firstUser;
+    if (next)
+      next->prev = user;
+    m_firstUser.next = user;
+  }
   friend void intrusive_ptr_add_ref(FONodeBase *p);
   friend void intrusive_ptr_release(FONodeBase *p);
 
+  boost::container::small_vector<FOUse, 2> m_uses;
+  FOUse m_firstUser = nullptr;
   // ref count is not synchronized, passing handles to other threads is not
   // allowed.
   size_t m_refCount = 0;
@@ -230,14 +341,6 @@ protected:
   void onCowUseReplace(FramedEngine &engine,
                        FONodeImpl<fon_type::cow> &cowp) noexcept final {
     setCowExpired();
-  }
-
-  bool addUser(FONodeBase &handle) final {
-    // do nothing. swap objects have no use for user tracking.
-    return false;
-  }
-  void removeUser(FONodeBase &handle) final {
-    // do nothing. swap objects have no use for user tracking.
   }
 
   void onUse(const Frame &frame) final {
@@ -293,14 +396,19 @@ public:
 
   void replace(FramedEngine &engine, FObject::Ptr obj) noexcept {
     // FIXME: this is not exception safe at all. need to rethink.
-    UserVec<20> traverseQueue;
-    m_user_topology_sort(traverseQueue, /* reverse */ false);
 
     m_current = std::move(obj);
 
-    for (auto &&user : traverseQueue | std::views::drop(1)) {
-      user->onCowUseReplace(engine, *this);
-    }
+    users_topological_traverse(
+        /* reverse */ false,
+        [](auto &&u, auto &v) {
+          return !!dynamic_cast<FONodeImpl<fon_type::cow> *>(&u);
+        },
+        [&](auto &&node) {
+          if (&node == this)
+            return;
+          node.onCowUseReplace(engine, *this);
+        });
   }
 
   const FObject &use(const Frame &frame) {
@@ -324,16 +432,6 @@ protected:
     m_current = constructNew(engine);
   }
 
-  bool addUser(FONodeBase &handle) final {
-    m_users.emplace_back(&handle);
-    return true;
-  }
-  void removeUser(FONodeBase &handle) final {
-    auto nend = std::remove_if(m_users.begin(), m_users.end(),
-                               [&](auto &ref) { return ref == &handle; });
-    m_users.erase(nend, m_users.end());
-  }
-
   void onUse(const Frame &frame) final {
     // do nothing. cow objects are immutable and do not require any per-frame
     // work.
@@ -348,32 +446,6 @@ protected:
   }
 
 private:
-  void m_user_topology_sort(UserVecBase &res, bool reverse) {
-    // dfs algo.
-    boost::container::small_flat_set<FONodeBase *, 20> visited;
-    boost::container::small_vector<std::pair<FONodeBase *, bool>, 20> stack;
-    stack.emplace_back(this, false);
-    while (!stack.empty()) {
-      auto &&[next, processed_nei] = stack.back();
-      if (processed_nei) {
-        res.push_back(next);
-        stack.pop_back();
-        continue;
-      }
-      processed_nei = true;
-      visited.insert(next);
-      if (auto *next_cow = dynamic_cast<FONodeImpl<fon_type::cow> *>(next)) {
-        for (auto *p : next_cow->m_users) {
-          if (visited.contains(p))
-            continue;
-          stack.emplace_back(p, false);
-        }
-      }
-    }
-    if (!reverse)
-      std::reverse(res.begin(), res.end());
-  }
-  boost::container::small_vector<FONodeBase *, 2> m_users;
   // cow's object references are mutable. The inner state of object is
   // immutable.
   FObject::Ptr m_current;
@@ -405,60 +477,26 @@ protected:
     reconstruct(engine);
   }
 
-  bool addUser(FONodeBase &handle) final {
-    m_users.emplace_back(static_cast<FONodeImpl<fon_type::ext> *>(&handle));
-    return true;
-  }
-  void removeUser(FONodeBase &handle) final {
-    auto nend = std::remove_if(m_users.begin(), m_users.end(),
-                               [&](auto &ref) { return ref == &handle; });
-    m_users.erase(nend, m_users.end());
-  }
   void destruct(FramedEngine &engine) {
-    UserVec<20> destructQueue;
-    m_user_topology_sort(destructQueue, /* reverse */ true);
-    for (auto &obj : destructQueue)
-      obj->onDestruct(engine);
+    users_topological_traverse(
+        /* reverse */ true, [](auto &u, auto &v) { return true; },
+        [&](auto &&node) {
+          assert(static_cast<FONodeImpl<fon_type::ext> *>(&node));
+          static_cast<FONodeImpl<fon_type::ext> &>(node).onDestruct(engine);
+        });
   }
 
   void construct(FramedEngine &engine) {
-    UserVec<20> constructQueue;
-    m_user_topology_sort(constructQueue, /* reverse */ false);
-    for (auto &obj : constructQueue)
-      obj->onConstruct(engine);
+    users_topological_traverse(
+        /* reverse */ false, [](auto &u, auto &v) { return true; },
+        [&](auto &&node) {
+          assert(static_cast<FONodeImpl<fon_type::ext> *>(&node));
+          static_cast<FONodeImpl<fon_type::ext> &>(node).onConstruct(engine);
+        });
   }
 
   virtual void onDestruct(FramedEngine &engine) = 0;
   virtual void onConstruct(FramedEngine &engine) = 0;
-
-private:
-  void m_user_topology_sort(UserVecBase &res, bool reverse) {
-    // dfs algo.
-    boost::container::small_flat_set<FONodeImpl<fon_type::ext> *, 20> visited;
-    boost::container::small_vector<std::pair<FONodeImpl<fon_type::ext> *, bool>,
-                                   20>
-        stack;
-    stack.emplace_back(this, false);
-    while (!stack.empty()) {
-      auto &&[next, processed_nei] = stack.back();
-      if (processed_nei) {
-        res.push_back(next);
-        stack.pop_back();
-        continue;
-      }
-      processed_nei = true;
-      visited.insert(next);
-      for (auto *p : next->m_users) {
-        if (visited.contains(p))
-          continue;
-        stack.emplace_back(p, false);
-      }
-    }
-    if (!reverse)
-      std::reverse(res.begin(), res.end());
-  }
-  // only ext objects can be a user of another ext object.
-  boost::container::small_vector<FONodeImpl<fon_type::ext> *, 2> m_users;
 };
 
 template <fon_type type> class FOExtImpl {};

@@ -122,19 +122,17 @@ public:
     }
   }
 
-  StageLayout &stage() const {
-    return static_cast<StageLayout &>(*m_uses.front());
-  }
+  StageLayout &stage() const { return getUse<StageLayout>(0); }
 
   bool hasSet(unsigned num) const { return m_setMap.contains(num); }
 
   const DescriptorSet &getSet(unsigned num) const {
     assert(m_setMap.contains(num));
-    return static_cast<const DescriptorSet &>(*m_uses.at(m_setMap.at(num)));
+    return getUse<const DescriptorSet>(m_setMap.at(num));
   }
   DescriptorSet &getSet(unsigned num) {
     assert(m_setMap.contains(num));
-    return static_cast<DescriptorSet &>(*m_uses.at(m_setMap.at(num)));
+    return getUse<DescriptorSet>(m_setMap.at(num));
   }
 
 private:
@@ -255,8 +253,8 @@ public:
         m_flags(flags) {}
 
   auto stages() const {
-    return m_uses | std::views::transform([](auto &&stage) -> decltype(auto) {
-             return static_cast<const StageTy &>(*stage);
+    return uses() | std::views::transform([](auto &&stage) -> decltype(auto) {
+             return static_cast<const StageTy &>(stage);
            });
   }
 
@@ -282,7 +280,8 @@ public:
             init(engine, layout), FOUses{layout}){};
 
   PipelineLayout<PipelineTraits> &layout() {
-    return static_cast<PipelineLayout<PipelineTraits> &>(*this->m_uses.front());
+    return static_cast<PipelineLayout<PipelineTraits> &>(
+        *std::begin(this->uses()));
   }
 
 private:

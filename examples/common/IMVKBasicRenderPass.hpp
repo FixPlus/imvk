@@ -26,12 +26,8 @@ class FrameBuffer final
 public:
   FrameBuffer(imvk::GraphicsEngine &engine, SwapchainView &sv, RenderPass &rp);
 
-  const SwapchainView &view() const {
-    return static_cast<const SwapchainView &>(*m_uses.front());
-  }
-  const RenderPass &renderPass() const {
-    return static_cast<const RenderPass &>(*m_uses.back());
-  }
+  const SwapchainView &view() const { return getUse<const SwapchainView>(0); }
+  const RenderPass &renderPass() const { return getUse<const RenderPass>(1); }
 
 private:
   unsigned getExtIndex(const Frame &frame) const final {
