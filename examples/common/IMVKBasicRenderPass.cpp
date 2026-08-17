@@ -38,22 +38,19 @@ RenderPass::RenderPass(imvk::GraphicsEngine &engine)
 
 FrameBuffer::FrameBuffer(imvk::GraphicsEngine &engine, SwapchainView &sv,
                          RenderPass &rp)
-    : imvk::FONode<vkw::FrameBuffer, imvk::fon_type::ext>(FOUses{sv, rp}) {
+    : imvk::Swapchained<vkw::FrameBuffer>(sv, FOUses{rp}) {
   onConstruct(engine);
 }
-void FrameBuffer::doConstructNew(
-    FramedEngine &engine, const SwapchainView &sv, const RenderPass &rp,
-    boost::container::small_vector_base<FObject::Ptr> &res) {
-  auto total = std::size(sv.swapchain().images());
-  for (auto i : std::ranges::iota_view{0ul, total}) {
-    auto &view = sv.get(i);
-    auto extents = VkExtent3D{view.image()->rawExtents().width,
-                              view.image()->rawExtents().height, /* layer */ 1};
-    vkw::FrameBufferInfo info{rp.get(), extents};
-    info.addAttachment(view);
-    res.push_back(engine.createObject<vkw::FrameBuffer>(info));
-  }
+
+FObject::Ptr FrameBuffer::constructOne(FramedEngine &engine, unsigned id) {
+  auto &v = view().get(id);
+  auto extents = VkExtent3D{v.image()->rawExtents().width,
+                            v.image()->rawExtents().height, /* layer */ 1};
+  vkw::FrameBufferInfo info{renderPass().get(), extents};
+  info.addAttachment(v);
+  return engine.createObject<vkw::FrameBuffer>(info);
 }
+
 BasicRenderPass::BasicRenderPass(imvk::GraphicsEngine &engine)
     : m_pass(engine.createNode<RenderPass>()),
       m_sv(engine.createNode<SwapchainView>(engine.swapchain())),

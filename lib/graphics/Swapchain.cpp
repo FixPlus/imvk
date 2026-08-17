@@ -68,8 +68,7 @@ Swapchain::Swapchain(GraphicsEngine &engine)
     : FONode<vkw::SwapChain, fon_type::cow>(doConstructNew(engine)) {}
 
 SwapchainView::SwapchainView(GraphicsEngine &engine, Swapchain &swapchain)
-    : FONode<vkw::ImageView<vkw::COLOR, vkw::V2DA>, fon_type::ext>(
-          FOUses{swapchain}) {
+    : Swapchained<vkw::ImageView<vkw::COLOR, vkw::V2DA>>(swapchain) {
   onConstruct(engine);
 }
 FObject::Ptr Swapchain::constructNew(FramedEngine &engine) noexcept {
@@ -80,26 +79,16 @@ FObject::Ptr Swapchain::doConstructNew(GraphicsEngine &engine) {
   return engine.m_createSwapchain();
 }
 
-unsigned SwapchainView::getExtIndex(const Frame &frame) const {
-  return swapchain().currentImage();
-}
-
-void SwapchainView::doConstructNew(
-    FramedEngine &engine,
-    boost::container::small_vector_base<FObject::Ptr> &res,
-    const vkw::SwapChain &swapchain) {
+FObject::Ptr SwapchainView::constructOne(FramedEngine &engine, unsigned id) {
+  auto &image = swapchain().images()[id];
   VkComponentMapping mapping;
   mapping.r = VK_COMPONENT_SWIZZLE_IDENTITY;
   mapping.g = VK_COMPONENT_SWIZZLE_IDENTITY;
   mapping.b = VK_COMPONENT_SWIZZLE_IDENTITY;
   mapping.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-  std::ranges::transform(
-      swapchain.images(), std::back_inserter(res), [&](auto &&image) {
-        return engine.createObject<vkw::ImageView<vkw::COLOR, vkw::V2DA>>(
-            engine.context().device(), image, image.format(), 0u, 1u, 0u, 1u,
-            mapping);
-      });
+  return engine.createObject<vkw::ImageView<vkw::COLOR, vkw::V2DA>>(
+      engine.context().device(), image, image.format(), 0u, 1u, 0u, 1u,
+      mapping);
 }
 
 } // namespace imvk

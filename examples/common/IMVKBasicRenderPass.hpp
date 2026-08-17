@@ -21,30 +21,19 @@ private:
   }
 };
 
-class FrameBuffer final
-    : public imvk::FONode<vkw::FrameBuffer, imvk::fon_type::ext> {
+class FrameBuffer final : public Swapchained<vkw::FrameBuffer> {
 public:
   FrameBuffer(imvk::GraphicsEngine &engine, SwapchainView &sv, RenderPass &rp);
 
-  const SwapchainView &view() const { return getUse<const SwapchainView>(0); }
-  const RenderPass &renderPass() const { return getUse<const RenderPass>(1); }
+  const SwapchainView &view() const { return getUse<const SwapchainView>(1); }
+  const RenderPass &renderPass() const { return getUse<const RenderPass>(2); }
 
 private:
-  unsigned getExtIndex(const Frame &frame) const final {
-    return view().swapchain().currentImage();
-  }
   void onUseAction(const Frame &frame, FObject &obj) final {
     // nothing to do.
   }
-  void
-  constructNew(FramedEngine &engine,
-               boost::container::small_vector_base<FObject::Ptr> &res) final {
-    doConstructNew(engine, view(), renderPass(), res);
-  }
-  static void
-  doConstructNew(FramedEngine &engine, const SwapchainView &sv,
-                 const RenderPass &rp,
-                 boost::container::small_vector_base<FObject::Ptr> &res);
+
+  FObject::Ptr constructOne(FramedEngine &engine, unsigned id) final;
 };
 
 class BasicRenderPass {

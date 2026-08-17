@@ -128,14 +128,28 @@ public:
   }
 
   std::span<FONodeBase *const> get() { return m_uses; }
-  FOUses &addUse(FONodeBase &use) {
+  FOUses &addUse(FONodeBase &use) & {
     m_uses.push_back(&use);
     return *this;
   }
-  template <std::ranges::range R> FOUses &addUses(const R &uses) {
+  FOUses &&addUse(FONodeBase &use) && {
+    m_uses.push_back(&use);
+    return std::move(*this);
+  }
+  template <std::ranges::range R> FOUses &addUses(const R &uses) & {
     std::ranges::transform(uses, std::back_inserter(m_uses),
                            [](auto &&use) { return &use; });
     return *this;
+  }
+  template <std::ranges::range R> FOUses &&addUses(const R &uses) && {
+    std::ranges::transform(uses, std::back_inserter(m_uses),
+                           [](auto &&use) { return &use; });
+    return *this;
+  }
+  FOUses operator|(const FOUses &another) const {
+    auto ret = FOUses{*this};
+    std::ranges::copy(another.m_uses, std::back_inserter(ret.m_uses));
+    return ret;
   }
 
 private:
@@ -252,6 +266,10 @@ public:
     stack.emplace_back(this, false);
     while (!stack.empty()) {
       auto &&[next, processed_nei] = stack.back();
+      if (visited.contains(next) && !processed_nei) {
+        stack.pop_back();
+        continue;
+      }
       if (processed_nei) {
         res.push_back(next);
         stack.pop_back();

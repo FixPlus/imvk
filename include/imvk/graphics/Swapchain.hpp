@@ -63,8 +63,48 @@ private:
   FObject::Ptr doConstructNew(GraphicsEngine &engine);
 };
 
+template <typename T> class Swapchained : public FONode<T, fon_type::ext> {
+public:
+  Swapchained(Swapchain &swapchain, FOUses &&uses)
+      : FONode<T, fon_type::ext>(FOUses{swapchain} | uses) {}
+  Swapchained(Swapchain &swapchain)
+      : FONode<T, fon_type::ext>(FOUses{swapchain}) {}
+
+  template <typename U>
+    requires !
+             std::convertible_to<U, Swapchain> Swapchained(U & swapchained,
+                                                           FOUses &&uses)
+      : FONode<T, fon_type::ext>(
+            FOUses{swapchained.getUse<Swapchain>(0), swapchained} | uses) {}
+  template <typename U>
+    requires !
+             std::convertible_to<U, Swapchain> Swapchained(U & swapchained)
+      : FONode<T, fon_type::ext>(
+            FOUses{swapchained.getUse<Swapchain>(0), swapchained}) {}
+
+  vkw::SwapChain &swapchain() { return this->getUse<Swapchain>(0).get(); }
+  const vkw::SwapChain &swapchain() const {
+    return this->getUse<Swapchain>(0).get();
+  }
+
+protected:
+  virtual FObject::Ptr constructOne(FramedEngine &engine, unsigned image) = 0;
+  unsigned getExtIndex(const Frame &frame) const final {
+    return swapchain().currentImage();
+  }
+
+  void
+  constructNew(FramedEngine &engine,
+               boost::container::small_vector_base<FObject::Ptr> &res) final {
+    for (auto id :
+         std::ranges::iota_view{0ul, std::ranges::size(swapchain().images())}) {
+      res.push_back(constructOne(engine, id));
+    }
+  }
+};
+
 class SwapchainView final
-    : public FONode<vkw::ImageView<vkw::COLOR, vkw::V2DA>, fon_type::ext> {
+    : public Swapchained<vkw::ImageView<vkw::COLOR, vkw::V2DA>> {
 public:
   SwapchainView(GraphicsEngine &engine, Swapchain &swapchain);
 
@@ -73,21 +113,10 @@ public:
   }
 
 private:
-  unsigned getExtIndex(const Frame &frame) const final;
   void onUseAction(const Frame &frame, FObject &obj) final {
     // nothing to do.
   }
-
-  void
-  constructNew(FramedEngine &engine,
-               boost::container::small_vector_base<FObject::Ptr> &res) final {
-    doConstructNew(engine, res, swapchain());
-  }
-
-  static void
-  doConstructNew(FramedEngine &engine,
-                 boost::container::small_vector_base<FObject::Ptr> &res,
-                 const vkw::SwapChain &);
+  FObject::Ptr constructOne(FramedEngine &engine, unsigned image) final;
 };
 
 } // namespace imvk
