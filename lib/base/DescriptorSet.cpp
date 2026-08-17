@@ -89,11 +89,15 @@ void DescriptorSet::onCowExpire(const Frame &frame) {
   // need to rewrite all bindings.
   writeDescriptors(frame.id());
 }
+
+void DescriptorSet::writeDescriptors(vkw::DescriptorSet &set, FrameID frame) {
+  for (auto &&[child, binding] : m_bindings) {
+    child->descriptorWrite(frame, set, binding);
+  }
+}
 void DescriptorSet::writeDescriptors(FrameID frame) {
   auto &set = get(frame);
-  for (auto &&[child, binding] : m_bindings) {
-    child->descriptorWrite(frame, *set, binding);
-  }
+  writeDescriptors(*set, frame);
 }
 
 DescriptorSet::DescriptorSet(
@@ -107,10 +111,17 @@ DescriptorSet::DescriptorSet(
           FOUses(bindings |
                  std::views::transform([](auto &&p) -> decltype(auto) {
                    return dynamic_cast<FONodeBase &>(*p.first);
-                 }))) {
+                 }))),
+      m_pool(pool) {
   std::ranges::copy(bindings, std::back_inserter(m_bindings));
   std::ranges::for_each(engine.frameIds(),
                         [this](FrameID frame) { writeDescriptors(frame); });
+}
+
+FObject::Ptr DescriptorSet::constructNew(FramedEngine &engine, FrameID id) {
+  auto ret = engine.createObject<DescriptorPool::SetHandle>(m_pool.get());
+  writeDescriptors(*ret->as<DescriptorPool::SetHandle>(), id);
+  return ret;
 }
 
 } // namespace imvk

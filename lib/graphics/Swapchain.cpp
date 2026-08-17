@@ -65,14 +65,14 @@ FObject::Ptr GraphicsEngine::m_createSwapchain() {
   return ret;
 }
 Swapchain::Swapchain(GraphicsEngine &engine)
-    : FOENode<vkw::SwapChain, fon_type::cow>(doConstructNew(engine)) {}
+    : FONode<vkw::SwapChain, fon_type::cow>(doConstructNew(engine)) {}
 
 SwapchainView::SwapchainView(GraphicsEngine &engine, Swapchain &swapchain)
-    : FOENode<vkw::ImageView<vkw::COLOR, vkw::V2DA>, fon_type::ext>(
+    : FONode<vkw::ImageView<vkw::COLOR, vkw::V2DA>, fon_type::ext>(
           FOUses{swapchain}) {
   onConstruct(engine);
 }
-FObject::Ptr Swapchain::constructNew(FramedEngine &engine) {
+FObject::Ptr Swapchain::constructNew(FramedEngine &engine) noexcept {
   return doConstructNew(static_cast<GraphicsEngine &>(engine));
 }
 

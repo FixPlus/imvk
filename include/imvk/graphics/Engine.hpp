@@ -37,9 +37,12 @@ private:
   void onUseAction(const Frame &frame, FObject &obj) override {
     // do nothing
   }
+  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) override {
+    return engine.createObject<vkw::Semaphore>(engine.context().device());
+  }
 };
 
-class SSemaphore final : public FOENode<vkw::Semaphore, fon_type::ext> {
+class SSemaphore final : public FONode<vkw::Semaphore, fon_type::ext> {
 public:
   SSemaphore(FramedEngine &engine, Swapchain &swapchain);
 

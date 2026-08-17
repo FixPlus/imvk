@@ -6,7 +6,7 @@
 namespace imvk {
 
 SSemaphore::SSemaphore(FramedEngine &engine, Swapchain &swapchain)
-    : FOENode<vkw::Semaphore, fon_type::ext>(FOUses{swapchain}) {
+    : FONode<vkw::Semaphore, fon_type::ext>(FOUses{swapchain}) {
   onConstruct(engine);
 }
 void SSemaphore::doConstructNew(

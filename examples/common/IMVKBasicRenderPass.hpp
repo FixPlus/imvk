@@ -22,7 +22,7 @@ private:
 };
 
 class FrameBuffer final
-    : public imvk::FOENode<vkw::FrameBuffer, imvk::fon_type::ext> {
+    : public imvk::FONode<vkw::FrameBuffer, imvk::fon_type::ext> {
 public:
   FrameBuffer(imvk::GraphicsEngine &engine, SwapchainView &sv, RenderPass &rp);
 

@@ -105,11 +105,15 @@ public:
   }
 
 private:
-  void onCowExpire(const Frame &frame) override;
-  void onUseAction(const Frame &frame, FObject &obj) override {
+  void onCowExpire(const Frame &frame) final;
+  void onUseAction(const Frame &frame, FObject &obj) final {
     // nothing to do for now
   }
+  FObject::Ptr constructNew(FramedEngine &engine, FrameID id) final;
+  void writeDescriptors(vkw::DescriptorSet &set, FrameID frame);
   void writeDescriptors(FrameID frame);
+  /// TODO - this should be a direct use.
+  DescriptorPool &m_pool;
   boost::container::small_vector<std::pair<Descriptable *, unsigned>, 2u>
       m_bindings;
 };

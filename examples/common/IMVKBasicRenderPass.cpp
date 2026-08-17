@@ -38,7 +38,7 @@ RenderPass::RenderPass(imvk::GraphicsEngine &engine)
 
 FrameBuffer::FrameBuffer(imvk::GraphicsEngine &engine, SwapchainView &sv,
                          RenderPass &rp)
-    : imvk::FOENode<vkw::FrameBuffer, imvk::fon_type::ext>(FOUses{sv, rp}) {
+    : imvk::FONode<vkw::FrameBuffer, imvk::fon_type::ext>(FOUses{sv, rp}) {
   onConstruct(engine);
 }
 void FrameBuffer::doConstructNew(

@@ -285,12 +285,33 @@ public:
   virtual void onCowUseReplace(FramedEngine &engine,
                                FONodeImpl<fon_type::cow> &cowp) noexcept = 0;
 
+  // reconstructs object and its users. destroyed objects are not placed in
+  // free queue and are destroyed in-place.
+  void reconstruct(FramedEngine &engine) {
+    destruct(engine);
+    construct(engine);
+  }
+
 protected:
   virtual void onUse(const Frame &frame) = 0;
   virtual bool isUsed(const Frame &frame) const = 0;
   virtual void markUsed(const Frame &frame) = 0;
 
+  virtual void onDestruct(FramedEngine &engine) = 0;
+  virtual void onConstruct(FramedEngine &engine) = 0;
+
 private:
+  void destruct(FramedEngine &engine) {
+    users_topological_traverse(
+        /* reverse */ true, [](auto &u, auto &v) { return true; },
+        [&](auto &&node) { node.onDestruct(engine); });
+  }
+
+  void construct(FramedEngine &engine) {
+    users_topological_traverse(
+        /* reverse */ false, [](auto &u, auto &v) { return true; },
+        [&](auto &&node) { node.onConstruct(engine); });
+  }
   void addUser(FOUse *user) {
     auto *next = m_firstUser.next;
     user->next = next;
@@ -338,6 +359,8 @@ protected:
   /// @param obj reference to current object to prepare.
   virtual void onUseAction(const Frame &frame, FObject &obj) = 0;
 
+  virtual FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) = 0;
+
   void onCowUseReplace(FramedEngine &engine,
                        FONodeImpl<fon_type::cow> &cowp) noexcept final {
     setCowExpired();
@@ -355,7 +378,13 @@ protected:
   void markUsed(const Frame &frame) final {
     getFor(frame)->useInFrame(frame.ordinal());
   }
-
+  void onDestruct(FramedEngine &engine) final {
+    resetCowExpired();
+    for (auto &obj : m_objects) {
+      delete obj.release();
+    }
+  }
+  void onConstruct(FramedEngine &engine) final;
   /// FIXME: not very safe.
   FObject *getFor(const Frame &frame) const {
     return m_objects[frame.id()].get();
@@ -374,13 +403,18 @@ private:
 
   bool isCowExpired(const Frame &frame) const { return m_cowFlags[frame.id()]; }
   void resetCowExpired(const Frame &frame) { m_cowFlags[frame.id()] = false; }
+  void resetCowExpired() {
+    for (auto &&flag : m_cowFlags)
+      flag = true;
+    haveExpiredCows = false;
+  }
   void setCowExpired() {
     for (auto &&flag : m_cowFlags)
       flag = true;
   }
   // swap's objects references are immutable. Their inner state is mutable
   // though.
-  const boost::container::small_vector<FObject::Ptr, 2> m_objects;
+  boost::container::small_vector<FObject::Ptr, 2> m_objects;
   boost::container::small_vector<bool, 2> m_cowFlags;
   bool haveExpiredCows = false;
 };
@@ -444,6 +478,10 @@ protected:
   void markUsed(const Frame &frame) final {
     m_current->useInFrame(frame.ordinal());
   }
+  void onDestruct(FramedEngine &engine) final { delete m_current.release(); }
+  void onConstruct(FramedEngine &engine) final {
+    m_current = constructNew(engine);
+  }
 
 private:
   // cow's object references are mutable. The inner state of object is
@@ -454,150 +492,7 @@ private:
 template <> class FONodeImpl<fon_type::ext> : public FONodeBase {
 public:
   FONodeImpl(FOUses &&uses = FOUses{}) : FONodeBase(std::move(uses)) {}
-
-  ~FONodeImpl() override = default;
-
-  // reconstructs object and its users. destroyed objects are not placed in
-  // free queue and are destroyed in-place.
-  void reconstruct(FramedEngine &engine) {
-    destruct(engine);
-    construct(engine);
-  }
-
-protected:
-  template <size_t n>
-  using UserVec =
-      boost::container::small_vector<FONodeImpl<fon_type::ext> *, n>;
-
-  using UserVecBase =
-      boost::container::small_vector_base<FONodeImpl<fon_type::ext> *>;
-
-  void onCowUseReplace(FramedEngine &engine,
-                       FONodeImpl<fon_type::cow> &cowp) noexcept final {
-    reconstruct(engine);
-  }
-
-  void destruct(FramedEngine &engine) {
-    users_topological_traverse(
-        /* reverse */ true, [](auto &u, auto &v) { return true; },
-        [&](auto &&node) {
-          assert(static_cast<FONodeImpl<fon_type::ext> *>(&node));
-          static_cast<FONodeImpl<fon_type::ext> &>(node).onDestruct(engine);
-        });
-  }
-
-  void construct(FramedEngine &engine) {
-    users_topological_traverse(
-        /* reverse */ false, [](auto &u, auto &v) { return true; },
-        [&](auto &&node) {
-          assert(static_cast<FONodeImpl<fon_type::ext> *>(&node));
-          static_cast<FONodeImpl<fon_type::ext> &>(node).onConstruct(engine);
-        });
-  }
-
-  virtual void onDestruct(FramedEngine &engine) = 0;
-  virtual void onConstruct(FramedEngine &engine) = 0;
-};
-
-template <fon_type type> class FOExtImpl {};
-
-template <> class FOExtImpl<fon_type::swap> : public FONodeImpl<fon_type::ext> {
-public:
-  FOExtImpl(FramedEngine &engine, auto &&objectFactory,
-            FOUses &&uses = FOUses{})
-      : FONodeImpl<fon_type::ext>(std::move(uses)) {
-    m_objectsInit(engine, objectFactory);
-  }
-
-  FObject &use(const Frame &frame) {
-    FONodeBase::use(frame);
-    return *m_objects[frame.id()];
-  }
-  const FObject &get(FrameID frameId) const { return *m_objects[frameId]; }
-
-protected:
-  /// @brief an action to do if object is used in frame. The purpose of those
-  /// actions are to prepare inner state of object at the beginning of gpu frame
-  /// or/and read current state of object after last frame was processed.
-  /// @param frame context to do action for.
-  /// @param obj reference to current object to prepare.
-  virtual void onUseAction(const Frame &frame, FObject &obj) = 0;
-
-  virtual FObject::Ptr constructNew(FramedEngine &engine) = 0;
-
-  void onUse(const Frame &frame) final { onUseAction(frame, *getFor(frame)); }
-
-  bool isUsed(const Frame &frame) const final {
-    return getFor(frame)->lastFrame() == frame.ordinal();
-  }
-
-  void markUsed(const Frame &frame) final {
-    getFor(frame)->useInFrame(frame.ordinal());
-  }
-
-  void onDestruct(FramedEngine &engine) final {
-    for (auto &obj : m_objects) {
-      delete obj.release();
-    }
-  }
-  void onConstruct(FramedEngine &engine) final {
-    for (auto &obj : m_objects) {
-      obj = constructNew(engine);
-    }
-  }
-  /// FIXME: not very safe.
-  FObject *getFor(const Frame &frame) const {
-    return m_objects[frame.id()].get();
-  }
-
-private:
-  using ObjGen = boost::compat::function_ref<FObject::Ptr(FrameID)>;
-  void m_objectsInit(FramedEngine &engine, ObjGen gen);
-  // ext's objects references and inner state are mutable.
-  boost::container::small_vector<FObject::Ptr, 2> m_objects;
-};
-
-template <> class FOExtImpl<fon_type::cow> : public FONodeImpl<fon_type::ext> {
-public:
-  FOExtImpl(FObject::Ptr obj, FOUses &&uses = FOUses{})
-      : FONodeImpl<fon_type::ext>(std::move(uses)), m_current(std::move(obj)) {}
-
-  const FObject &use(const Frame &frame) {
-    FONodeBase::use(frame);
-    return *m_current;
-  }
-  const FObject &get() const { return *m_current; }
-
-protected:
-  virtual FObject::Ptr constructNew(FramedEngine &engine) = 0;
-
-  void onUse(const Frame &frame) final {
-    // do nothing
-  }
-
-  bool isUsed(const Frame &frame) const final {
-    return m_current->lastFrame() == frame.ordinal();
-  }
-
-  void markUsed(const Frame &frame) final {
-    m_current->useInFrame(frame.ordinal());
-  }
-
-  void onDestruct(FramedEngine &engine) final { delete m_current.release(); }
-  void onConstruct(FramedEngine &engine) final {
-    m_current = constructNew(engine);
-  }
-
-private:
-  // ext's objects references are mutable, but inner state is immutable.
-  FObject::Ptr m_current;
-};
-
-template <> class FOExtImpl<fon_type::ext> : public FONodeImpl<fon_type::ext> {
-public:
-  FOExtImpl(FOUses &&uses = FOUses{})
-      : FONodeImpl<fon_type::ext>(std::move(uses)) {}
-  FOExtImpl() = default;
+  FONodeImpl() = default;
 
   FObject &use(const Frame &frame) {
     FONodeBase::use(frame);
@@ -632,6 +527,10 @@ protected:
   void onConstruct(FramedEngine &engine) final {
     constructNew(engine, m_objects);
   }
+  void onCowUseReplace(FramedEngine &engine,
+                       FONodeImpl<fon_type::cow> &cowp) noexcept final {
+    reconstruct(engine);
+  }
   /// FIXME: not very safe.
   FObject *getFor(const Frame &frame) const {
     return m_objects[getExtIndex(frame)].get();
@@ -643,7 +542,6 @@ private:
 };
 
 template <typename T, fon_type type> class FONode {};
-template <typename T, fon_type type> class FOENode {};
 
 template <typename T>
 class FONode<T, fon_type::swap> : public FONodeImpl<fon_type::swap> {
@@ -672,42 +570,16 @@ public:
 };
 
 template <typename T>
-class FOENode<T, fon_type::swap> : public FOExtImpl<fon_type::swap> {
+class FONode<T, fon_type::ext> : public FONodeImpl<fon_type::ext> {
 public:
-  FOENode(auto &&...args)
-      : FOExtImpl<fon_type::swap>(std::forward<decltype(args)>(args)...){};
+  FONode(auto &&...args)
+      : FONodeImpl<fon_type::ext>(std::forward<decltype(args)>(args)...){};
 
   T &use(const Frame &frame) {
-    return FOExtImpl<fon_type::swap>::use(frame).as<T>();
+    return FONodeImpl<fon_type::ext>::use(frame).as<T>();
   }
   const T &get(FrameID frame) const {
-    return FOExtImpl<fon_type::swap>::get(frame).as<T>();
-  }
-};
-
-template <typename T>
-class FOENode<T, fon_type::cow> : public FOExtImpl<fon_type::cow> {
-public:
-  FOENode(auto &&...args)
-      : FOExtImpl<fon_type::cow>(std::forward<decltype(args)>(args)...){};
-
-  const T &use(const Frame &frame) {
-    return FOExtImpl<fon_type::cow>::use(frame).as<T>();
-  }
-  const T &get() const { return FOExtImpl<fon_type::cow>::get().as<T>(); }
-};
-
-template <typename T>
-class FOENode<T, fon_type::ext> : public FOExtImpl<fon_type::ext> {
-public:
-  FOENode(auto &&...args)
-      : FOExtImpl<fon_type::ext>(std::forward<decltype(args)>(args)...){};
-
-  T &use(const Frame &frame) {
-    return FOExtImpl<fon_type::ext>::use(frame).as<T>();
-  }
-  const T &get(FrameID frame) const {
-    return FOExtImpl<fon_type::ext>::get(frame).as<T>();
+    return FONodeImpl<fon_type::ext>::get(frame).as<T>();
   }
 };
 

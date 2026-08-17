@@ -16,12 +16,12 @@ void FONodeImpl<fon_type::swap>::m_objectsInit(
     boost::container::small_vector_base<FObject::Ptr> &out) {
   std::ranges::transform(engine.frameIds(), std::back_inserter(out), gen);
 }
-
-void FOExtImpl<fon_type::swap>::m_objectsInit(FramedEngine &engine,
-                                              ObjGen gen) {
-  m_objects.clear();
-  std::ranges::transform(engine.frameIds(), std::back_inserter(m_objects), gen);
+void FONodeImpl<fon_type::swap>::onConstruct(FramedEngine &engine) {
+  for (auto &&id : engine.frameIds()) {
+    m_objects[id] = constructNew(engine, id);
+  }
 }
+
 void FObject::Deleter::operator()(FObject *obj) const {
   if (!m_engine || !obj)
     return;

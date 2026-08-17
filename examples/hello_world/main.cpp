@@ -160,6 +160,10 @@ private:
   void onUseAction(const imvk::Frame &frame, imvk::FObject &obj) override {
     std::invoke(m_action, frame, obj.as<Buf>());
   }
+  imvk::FObject::Ptr constructNew(imvk::FramedEngine &engine,
+                                  imvk::FrameID frame) override {
+    return nullptr;
+  }
   std::function<void(const imvk::Frame &, Buf &)> m_action;
 };
 
@@ -281,6 +285,11 @@ private:
 
   void onUseAction(const imvk::Frame &frame, imvk::FObject &obj) override {
     // do nothing
+  }
+
+  imvk::FObject::Ptr constructNew(imvk::FramedEngine &engine,
+                                  imvk::FrameID frame) override {
+    return nullptr;
   }
 };
 
@@ -433,7 +442,7 @@ int app() try {
         auto &anotherBuffer = anotherVertices->use(frame);
         commands.bindVertexBuffer(anotherBuffer, 0, 0);
         commands.draw(anotherBuffer.size(), 1u);
-        // updateCowVertices();
+        updateCowVertices();
       };
 #if 0
   imvk::RenderGraph rGraph;

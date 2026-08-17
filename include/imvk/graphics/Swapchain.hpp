@@ -44,27 +44,27 @@ public:
 
 /// @brief Thin wrapper over vkw::SwapChain that creates image views for
 /// swapchain images and transits image layout to present_src.
-class Swapchain final : public FOENode<vkw::SwapChain, fon_type::cow> {
+class Swapchain final : public FONode<vkw::SwapChain, fon_type::cow> {
 public:
   Swapchain(GraphicsEngine &engine);
 
   // Although a swapchain is a cow, we may still modify its state.
   vkw::SwapChain &get() {
     return const_cast<vkw::SwapChain &>(
-        FOENode<vkw::SwapChain, fon_type::cow>::get());
+        FONode<vkw::SwapChain, fon_type::cow>::get());
   }
   const vkw::SwapChain &get() const {
-    return FOENode<vkw::SwapChain, fon_type::cow>::get();
+    return FONode<vkw::SwapChain, fon_type::cow>::get();
   }
 
 private:
-  FObject::Ptr constructNew(FramedEngine &engine) final;
+  FObject::Ptr constructNew(FramedEngine &engine) noexcept final;
 
   FObject::Ptr doConstructNew(GraphicsEngine &engine);
 };
 
 class SwapchainView final
-    : public FOENode<vkw::ImageView<vkw::COLOR, vkw::V2DA>, fon_type::ext> {
+    : public FONode<vkw::ImageView<vkw::COLOR, vkw::V2DA>, fon_type::ext> {
 public:
   SwapchainView(GraphicsEngine &engine, Swapchain &swapchain);
 

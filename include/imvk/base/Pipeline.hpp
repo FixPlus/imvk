@@ -140,6 +140,15 @@ private:
     // TODO: implement.
     std::terminate();
   }
+  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) final {
+    auto &layout = stage().get();
+    StageSetView view;
+    view.layout = &layout;
+    for (auto &&[binding, _] : m_setMap) {
+      view.sets.insert({binding, &*getSet(binding).get(frame)});
+    }
+    return engine.createObject<StageSetView>(std::move(view));
+  }
 
   void onUseAction(const Frame &frame, FObject &obj) override {
     // no action required.
