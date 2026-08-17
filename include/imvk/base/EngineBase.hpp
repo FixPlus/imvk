@@ -136,30 +136,118 @@ protected:
   virtual bool postSubmit(const Frame &frame) = 0;
 
 private:
+  class GarbageCollector {
+  public:
+    GarbageCollector(FramedEngine &engine)
+        : m_engine(engine), m_thread(gcLoopProxy, std::ref(*this)) {}
+
+    void retireFrame(FrameID frame) {
+      std::unique_lock lc{m_listMutex};
+      m_engine.m_retired.store(frame, std::memory_order::relaxed);
+      m_engine.m_gcWaitingFor.store(0, std::memory_order::release);
+      lc.unlock();
+      m_waker.notify_one();
+    }
+
+    void trySubmit(std::vector<FObject *> &nextList) {
+      std::unique_lock lc{m_listMutex};
+      if (!m_pendingList.empty())
+        return;
+      std::swap(nextList, m_pendingList);
+      lc.unlock();
+      m_waker.notify_one();
+    }
+
+    void waitIdle() {
+      std::unique_lock lc{m_listMutex};
+      if (m_idle)
+        return;
+      m_idleWaker.wait(lc, [this]() { return m_idle; });
+    }
+
+  private:
+    static void gcLoopProxy(std::stop_token token, GarbageCollector &gc) {
+      gc.gcLoop(token);
+    }
+    void gcLoop(std::stop_token token) {
+      FrameID lastRetired = 0;
+      while (!token.stop_requested()) {
+        if (m_currentListIndex == m_currentList.size()) {
+          m_currentListIndex = 0;
+          m_currentList.clear();
+          std::unique_lock lc{m_listMutex};
+          if (!m_pendingList.empty()) {
+            std::swap(m_pendingList, m_currentList);
+            continue;
+          } else {
+            m_idle = true;
+            m_idleWaker.notify_one();
+            m_waker.wait(lc, [this, &token]() {
+              return !m_pendingList.empty() || token.stop_requested();
+            });
+            m_idle = false;
+            continue;
+          }
+        }
+        while (m_currentListIndex != m_currentList.size()) {
+          auto &next = m_currentList[m_currentListIndex];
+          auto nextFrame = next->lastFrame();
+          if (nextFrame > lastRetired) {
+            std::unique_lock lc{m_listMutex};
+            lastRetired = m_engine.m_retired.load(std::memory_order::acquire);
+            if (lastRetired >= nextFrame)
+              continue;
+            m_engine.m_gcWaitingFor.store(nextFrame,
+                                          std::memory_order::release);
+            m_idle = true;
+            m_idleWaker.notify_one();
+            m_waker.wait(lc, [&]() {
+              lastRetired = m_engine.m_retired.load(std::memory_order::acquire);
+              return lastRetired >= nextFrame || token.stop_requested();
+            });
+            m_idle = false;
+            continue;
+          }
+          delete next;
+          ++m_currentListIndex;
+        }
+      }
+      for (auto *obj : m_currentList)
+        delete obj;
+      std::unique_lock lc{m_listMutex};
+      for (auto *obj : m_pendingList)
+        delete obj;
+    }
+
+    FramedEngine &m_engine;
+    std::mutex m_listMutex;
+    std::condition_variable m_waker;
+    std::condition_variable m_idleWaker;
+    bool m_idle = false;
+
+    size_t m_currentListIndex = 0;
+    std::vector<FObject *> m_currentList;
+    std::vector<FObject *> m_pendingList;
+    std::jthread m_thread;
+  };
   struct FrameInfo {
     Frame frame;
     vkw::Fence fence;
   };
-  FrameInfo &getNextFrame() {
-    auto fences =
-        m_frames | std::views::transform([](FrameInfo &info) -> vkw::Fence & {
-          return info.fence;
-        });
-    vkw::Fence::wait_any(std::begin(fences), std::end(fences));
-    auto findSignaled = std::ranges::find_if(
-        m_frames, [](auto &&info) { return info.fence.signaled(); });
-    assert(findSignaled != m_frames.end());
-    auto &ret = *findSignaled;
-    ret.fence.reset();
-    ret.frame.ordinal() = m_ordinal++;
-    return ret;
-  }
+  FrameInfo &getNextFrame();
+
   void submit(vkw::SubmitInfo &&info, FrameInfo &frame) {
     queue().acquire().get().submit(info, frame.fence);
+    if (!m_freeList.empty())
+      m_gc.trySubmit(m_freeList);
   }
   std::vector<FrameInfo> m_frames;
   std::vector<FObject *> m_freeList;
   FrameID m_ordinal = 0;
+  FrameID m_retiredPrivate = 0;
+  std::atomic<FrameID> m_retired = 0;
+  std::atomic<FrameID> m_gcWaitingFor = 0;
+  GarbageCollector m_gc;
 };
 
 } // namespace imvk
