@@ -169,55 +169,7 @@ private:
     static void gcLoopProxy(std::stop_token token, GarbageCollector &gc) {
       gc.gcLoop(token);
     }
-    void gcLoop(std::stop_token token) {
-      FrameID lastRetired = 0;
-      while (!token.stop_requested()) {
-        if (m_currentListIndex == m_currentList.size()) {
-          m_currentListIndex = 0;
-          m_currentList.clear();
-          std::unique_lock lc{m_listMutex};
-          if (!m_pendingList.empty()) {
-            std::swap(m_pendingList, m_currentList);
-            continue;
-          } else {
-            m_idle = true;
-            m_idleWaker.notify_one();
-            m_waker.wait(lc, [this, &token]() {
-              return !m_pendingList.empty() || token.stop_requested();
-            });
-            m_idle = false;
-            continue;
-          }
-        }
-        while (m_currentListIndex != m_currentList.size()) {
-          auto &next = m_currentList[m_currentListIndex];
-          auto nextFrame = next->lastFrame();
-          if (nextFrame > lastRetired) {
-            std::unique_lock lc{m_listMutex};
-            lastRetired = m_engine.m_retired.load(std::memory_order::acquire);
-            if (lastRetired >= nextFrame)
-              continue;
-            m_engine.m_gcWaitingFor.store(nextFrame,
-                                          std::memory_order::release);
-            m_idle = true;
-            m_idleWaker.notify_one();
-            m_waker.wait(lc, [&]() {
-              lastRetired = m_engine.m_retired.load(std::memory_order::acquire);
-              return lastRetired >= nextFrame || token.stop_requested();
-            });
-            m_idle = false;
-            continue;
-          }
-          delete next;
-          ++m_currentListIndex;
-        }
-      }
-      for (auto *obj : m_currentList)
-        delete obj;
-      std::unique_lock lc{m_listMutex};
-      for (auto *obj : m_pendingList)
-        delete obj;
-    }
+    void gcLoop(std::stop_token token);
 
     FramedEngine &m_engine;
     std::mutex m_listMutex;

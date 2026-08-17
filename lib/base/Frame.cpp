@@ -1,8 +1,6 @@
 #include "imvk/base/Frame.hpp"
 #include "imvk/base/EngineBase.hpp"
 
-#include <iostream>
-
 namespace imvk {
 
 void intrusive_ptr_add_ref(FONodeBase *p) { p->m_refCount++; }
@@ -27,5 +25,4 @@ void FObject::Deleter::operator()(FObject *obj) const {
     return;
   m_engine->destroyObject(obj);
 }
-FObject::~FObject() { std::cout << "smashed" << std::endl; }
 } // namespace imvk

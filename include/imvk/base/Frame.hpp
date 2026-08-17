@@ -64,7 +64,7 @@ public:
   FObject &operator=(FObject &&) = delete;
   FObject &operator=(const FObject &) = delete;
 
-  virtual ~FObject();
+  virtual ~FObject() = default;
 
   template <typename T> T &as() { return static_cast<FObjectImpl<T> &>(*this); }
 
