@@ -122,8 +122,14 @@ class DescriptorSetBuilder {
 public:
   DescriptorSetBuilder(FramedEngine &engine, DescriptorPool &pool)
       : m_engine(engine), m_pool(pool){};
-  void addDescriptor(Descriptable &desc, unsigned binding) {
+  DescriptorSetBuilder &addDescriptor(Descriptable &desc, unsigned binding) & {
     descriptors.emplace_back(&desc, binding);
+    return *this;
+  }
+  DescriptorSetBuilder &&addDescriptor(Descriptable &desc,
+                                       unsigned binding) && {
+    descriptors.emplace_back(&desc, binding);
+    return std::move(*this);
   }
   operator Ref<DescriptorSet>() && {
     return m_engine.createNode<DescriptorSet>(m_pool, descriptors);

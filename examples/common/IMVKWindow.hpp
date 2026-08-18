@@ -138,7 +138,7 @@ public:
     m_recreateCallback = callback;
   }
 
-  virtual ~Window();
+  virtual ~Window() = default;
 
 private:
   struct Disposer {
@@ -170,7 +170,6 @@ private:
   std::pair<double, double> m_lastPos;
   bool m_cursor_enabled = true;
   FrameClock m_clock;
-  static std::unordered_map<GLFWwindow *, Window *> m_windowMap;
 };
 
 } // namespace imvk::examples

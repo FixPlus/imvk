@@ -1,6 +1,7 @@
 #include "IMVKBasicRenderPass.hpp"
 #include "IMVKDevice.hpp"
 #include "IMVKShaderLoader.hpp"
+#include "IMVKTexture.hpp"
 #include "IMVKWindow.hpp"
 
 #include "imvk/base/Context.hpp"
@@ -185,9 +186,11 @@ public:
 };
 
 struct VertexInfo : public vkw::AttributeBase<vkw::VertexAttributeType::VEC2F,
-                                              vkw::VertexAttributeType::VEC3F> {
+                                              vkw::VertexAttributeType::VEC3F,
+                                              vkw::VertexAttributeType::VEC2F> {
   float pos[2];
   float color[3];
+  float uv[2];
 };
 
 struct Pos2D {
@@ -217,6 +220,9 @@ std::array<VertexInfo, 3> getVerticesForFrame(float time, Pos2D pos,
     auto &vertex = ret[i];
     vertex.pos[0] = pos.x + std::cos(phase + phaseOffset) * scale;
     vertex.pos[1] = pos.y + std::sin(phase + phaseOffset) * scale;
+    vertex.uv[0] = vertex.pos[0] + 0.5;
+    vertex.uv[1] = vertex.pos[1] + 0.5;
+
     std::copy(std::next(colorTable.begin(), i * 3),
               std::next(colorTable.begin(), (i + 1) * 3), vertex.color);
     phaseOffset += 2.0f * pi / 3.0f;
@@ -376,7 +382,7 @@ int app() try {
           3, [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
             std::ranges::copy(
                 getVerticesForFrame(window.clock().totalTime().count() / 1000.0,
-                                    Pos2D{}, /* scale */ 0.5f),
+                                    Pos2D{}, /* scale */ 0.75f),
                 vbuf.mapped().begin());
             vbuf.flush();
           });
@@ -398,13 +404,21 @@ int app() try {
         u.mapped().front() = uniValue;
         u.flush();
       });
-
+  auto myTexture = graphicsEngine.createNode<imvk::examples::Texture>(
+      imvk::examples::Texture::load(graphicsEngine, copyEngine,
+                                    imvk::examples::assetsDir() / "image1"));
+  auto myTextureView =
+      graphicsEngine.createNode<imvk::examples::SampledView>(*myTexture);
   auto vertexStageSet = [&]() -> imvk::Ref<imvk::StageSet> {
     auto vsbuilder = imvk::StageSetBuilder{*vertexStage};
     vsbuilder.addDescriptorSet(0).addDescriptor(*myUniform, 0);
     return std::move(vsbuilder);
   }();
-
+  auto fragmentStageSet = [&]() -> imvk::Ref<imvk::StageSet> {
+    auto vsbuilder = imvk::StageSetBuilder{*fragmentStage};
+    vsbuilder.addDescriptorSet(1).addDescriptor(*myTextureView, 0);
+    return std::move(vsbuilder);
+  }();
   MyUniform uniValue{};
   uniValue.vals[0] = 0.5;
 
@@ -425,6 +439,11 @@ int app() try {
             graphicsEngine, copyEngine,
             getVerticesForFrame(0.5, Pos2D{0.3, 0.3},
                                 /* scale */ auxEven ? 0.5f : 0.2f)));
+    myTexture->replace(
+        graphicsEngine,
+        imvk::examples::Texture::load(graphicsEngine, copyEngine,
+                                      imvk::examples::assetsDir() /
+                                          (auxEven ? "image2" : "image1")));
   };
   std::function<void(vkw::RenderPassRecorder &, const imvk::Frame &)> passJob =
       [&](vkw::RenderPassRecorder &commands, const imvk::Frame &frame) {
@@ -434,7 +453,9 @@ int app() try {
         commands.bindDescriptorSet(pipeline.layout().use(frame),
                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    vertexStageSet->getSet(0u).use(frame), 0u);
-
+        commands.bindDescriptorSet(pipeline.layout().use(frame),
+                                   VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                   fragmentStageSet->getSet(1u).use(frame), 1u);
         auto &vertexBuffer = vertices->use(frame);
         commands.bindVertexBuffer(vertexBuffer, 0, 0);
         commands.draw(vertexBuffer.size(), 1u);
@@ -475,7 +496,6 @@ int main() {
   int ret = 0;
 
   ret = app();
-
   std::cout << "Total allocations: "
             << totalAllocations.load(std::memory_order_acquire) << std::endl;
   std::cout << "Total frees: " << totalFrees.load(std::memory_order_acquire)

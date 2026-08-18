@@ -4,8 +4,6 @@
 
 namespace imvk::examples {
 
-std::unordered_map<GLFWwindow *, Window *> Window::m_windowMap;
-
 class GLFWError : public std::runtime_error {
 public:
   GLFWError()
@@ -61,7 +59,7 @@ Window::Window(const WindowSettings &settings, const vkw::Instance &instance)
   glfwSetCursorPosCallback(m_handle.get(), m_cursor_position_callback);
   glfwSetFramebufferSizeCallback(m_handle.get(), m_framebuffer_size_callback);
   glfwSetScrollCallback(m_handle.get(), m_mouse_scroll_callback);
-  m_windowMap.emplace(m_handle.get(), this);
+  glfwSetWindowUserPointer(m_handle.get(), this);
 }
 
 bool Window::shouldClose() const {
@@ -87,15 +85,20 @@ std::vector<std::string> Window::surfaceExtensions() {
 void Window::Disposer::operator()(GLFWwindow *handle) {
   glfwDestroyWindow(handle);
 }
+
+static Window *fromRawWindow(GLFWwindow *handle) {
+  return static_cast<Window *>(glfwGetWindowUserPointer(handle));
+}
+
 void Window::m_key_callback(GLFWwindow *handle, int key, int scancode,
                             int action, int mods) {
-  auto *window = m_windowMap.at(handle);
+  auto *window = fromRawWindow(handle);
   auto &callbacks = window->m_keyDownCallbacks;
   for (auto &callback : callbacks)
     std::invoke(callback, key, scancode, action, mods);
 }
 void Window::m_char_callback(GLFWwindow *handle, unsigned unicode) {
-  auto *window = m_windowMap.at(handle);
+  auto *window = fromRawWindow(handle);
   auto &callbacks = window->m_charEventCallbacks;
   for (auto &callback : callbacks)
     std::invoke(callback, unicode);
@@ -103,7 +106,7 @@ void Window::m_char_callback(GLFWwindow *handle, unsigned unicode) {
 
 void Window::m_cursor_position_callback(GLFWwindow *handle, double xpos,
                                         double ypos) {
-  auto *window = m_windowMap.at(handle);
+  auto *window = fromRawWindow(handle);
   double deltaX = xpos - window->m_lastPos.first;
   double deltaY = ypos - window->m_lastPos.second;
   window->m_lastPos = std::make_pair(xpos, ypos);
@@ -114,13 +117,12 @@ void Window::m_cursor_position_callback(GLFWwindow *handle, double xpos,
 
 void Window::m_mouse_scroll_callback(GLFWwindow *handle, double xoffset,
                                      double yoffset) {
-  auto *window = m_windowMap.at(handle);
+  auto *window = fromRawWindow(handle);
   auto &callbacks = window->m_mouseScrollCallbacks;
   for (auto &callback : callbacks)
     std::invoke(callback, xoffset, yoffset);
 }
 
-Window::~Window() { m_windowMap.erase(m_handle.get()); }
 void Window::disableCursor() {
   if (!m_cursor_enabled)
     return;
@@ -138,7 +140,7 @@ void Window::enableCursor() {
 }
 void Window::m_framebuffer_size_callback(GLFWwindow *handle, int width,
                                          int height) {
-  auto *window = m_windowMap.at(handle);
+  auto *window = fromRawWindow(handle);
 
   auto &callbacks = window->m_windowResizeCallbacks;
   for (auto &callback : callbacks)
@@ -151,7 +153,7 @@ std::pair<int, int> Window::getSize() const {
 }
 void Window::m_mouse_button_callback(GLFWwindow *handle, int button, int action,
                                      int mods) {
-  auto *window = m_windowMap.at(handle);
+  auto *window = fromRawWindow(handle);
   auto &callbacks = window->m_mouseButtonEventCallbacks;
   for (auto &callback : callbacks)
     std::invoke(callback, button, action, mods);

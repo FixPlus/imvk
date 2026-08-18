@@ -228,7 +228,7 @@ private:
 
     /// TODO: add support for descriptor 'gaps'
     for (auto &&[setNum, set] : descriptorLayouts) {
-      if (setNum != expectedSetNum)
+      if (setNum != expectedSetNum++)
         throw std::runtime_error(
             "Pipeline declared non-contigous set number range");
       descriptorLayoutsRaw.emplace_back(set.get());

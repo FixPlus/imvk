@@ -51,13 +51,9 @@ class FObject {
 public:
   /// @brief Mark object as used in next frame. This value must not be
   /// decremented.
-  void useInFrame(size_t frameId) const {
-    m_lastFrame.store(frameId, std::memory_order::release);
-  }
+  void useInFrame(size_t frameId) const { m_lastFrame = frameId; }
 
-  size_t lastFrame() const {
-    return m_lastFrame.load(std::memory_order::acquire);
-  }
+  size_t lastFrame() const { return m_lastFrame; }
 
   FObject(FObject &&) = delete;
   FObject(const FObject &) = delete;
@@ -86,7 +82,7 @@ protected:
   FObject() = default;
 
 private:
-  mutable std::atomic<size_t> m_lastFrame = 0;
+  mutable size_t m_lastFrame = 0;
 };
 
 template <typename T> class FObjectImpl final : public FObject {
@@ -300,9 +296,6 @@ public:
       use.ref->use(frame);
   }
 
-  virtual void onCowUseReplace(FramedEngine &engine,
-                               FONodeImpl<fon_type::cow> &cowp) noexcept = 0;
-
   // reconstructs object and its users. destroyed objects are not placed in
   // free queue and are destroyed in-place.
   void reconstruct(FramedEngine &engine) {
@@ -317,6 +310,8 @@ protected:
 
   virtual void onDestruct(FramedEngine &engine) = 0;
   virtual void onConstruct(FramedEngine &engine) = 0;
+  virtual void onCowUseDestruct(FramedEngine &engine) noexcept = 0;
+  virtual void onCowUseConstruct(FramedEngine &engine) noexcept = 0;
 
 private:
   void destruct(FramedEngine &engine) {
@@ -379,11 +374,12 @@ protected:
 
   virtual FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) = 0;
 
-  void onCowUseReplace(FramedEngine &engine,
-                       FONodeImpl<fon_type::cow> &cowp) noexcept final {
+  void onCowUseDestruct(FramedEngine &engine) noexcept final {
     setCowExpired();
   }
-
+  void onCowUseConstruct(FramedEngine &engine) noexcept final {
+    setCowExpired();
+  }
   void onUse(const Frame &frame) final {
     checkCows(frame);
     onUseAction(frame, *getFor(frame));
@@ -449,8 +445,17 @@ public:
   void replace(FramedEngine &engine, FObject::Ptr obj) noexcept {
     // FIXME: this is not exception safe at all. need to rethink.
 
+    users_topological_traverse(
+        /* reverse */ true,
+        [](auto &&u, auto &v) {
+          return !!dynamic_cast<FONodeImpl<fon_type::cow> *>(&u);
+        },
+        [&](auto &&node) {
+          if (&node == this)
+            return;
+          std::invoke(&FONodeBase::onCowUseDestruct, node, engine);
+        });
     m_current = std::move(obj);
-
     users_topological_traverse(
         /* reverse */ false,
         [](auto &&u, auto &v) {
@@ -459,7 +464,7 @@ public:
         [&](auto &&node) {
           if (&node == this)
             return;
-          node.onCowUseReplace(engine, *this);
+          std::invoke(&FONodeBase::onCowUseConstruct, node, engine);
         });
   }
 
@@ -479,11 +484,12 @@ protected:
   /// may be returned with uses.
   virtual FObject::Ptr constructNew(FramedEngine &engine) noexcept = 0;
 
-  void onCowUseReplace(FramedEngine &engine,
-                       FONodeImpl<fon_type::cow> &cowp) noexcept final {
+  void onCowUseDestruct(FramedEngine &engine) noexcept final {
+    m_current.reset();
+  }
+  void onCowUseConstruct(FramedEngine &engine) noexcept final {
     m_current = constructNew(engine);
   }
-
   void onUse(const Frame &frame) final {
     // do nothing. cow objects are immutable and do not require any per-frame
     // work.
@@ -545,9 +551,13 @@ protected:
   void onConstruct(FramedEngine &engine) final {
     constructNew(engine, m_objects);
   }
-  void onCowUseReplace(FramedEngine &engine,
-                       FONodeImpl<fon_type::cow> &cowp) noexcept final {
-    reconstruct(engine);
+  void onCowUseDestruct(FramedEngine &engine) noexcept final {
+    // TODO: implement
+    std::terminate();
+  }
+  void onCowUseConstruct(FramedEngine &engine) noexcept final {
+    // TODO: implement
+    std::terminate();
   }
   /// FIXME: not very safe.
   FObject *getFor(const Frame &frame) const {
