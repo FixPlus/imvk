@@ -17,17 +17,12 @@ public:
             std::move(obj)) {}
   static FObject::Ptr load(FramedEngine &engine, CopyEngine &,
                            const std::filesystem::path &path);
-
-private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
-    return nullptr;
-  }
 };
 
 class SampledView final
     : public FONode<
           std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
-          fon_type::cow>,
+          fon_type::cow, fon_rec::rec>,
       public Descriptable {
 public:
   SampledView(FramedEngine &eng, Texture &texture);

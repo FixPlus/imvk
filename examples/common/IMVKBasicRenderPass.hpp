@@ -14,11 +14,6 @@ class RenderPass final
     : public imvk::FONode<vkw::RenderPass, imvk::fon_type::cow> {
 public:
   RenderPass(imvk::GraphicsEngine &engine);
-
-private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
-    return nullptr;
-  }
 };
 
 class FrameBuffer final : public Swapchained<vkw::FrameBuffer> {

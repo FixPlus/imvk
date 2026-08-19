@@ -16,8 +16,7 @@ GraphicsPipelineTraits::create(FramedEngine &engine,
   boost::container::small_vector<const vkw::SPIRVModule *, 4>
       fragmentShaderParts;
 
-  for (const GraphicsPipelineStage &stage : stages) {
-    auto &stageInfo = stage.get();
+  for (const GraphicsPipelineStage &stageInfo : stages) {
     if (!stageInfo.hasShader())
       continue;
     auto *pShader = &stageInfo.getShader();

@@ -44,17 +44,18 @@ public:
 
 /// @brief Thin wrapper over vkw::SwapChain that creates image views for
 /// swapchain images and transits image layout to present_src.
-class Swapchain final : public FONode<vkw::SwapChain, fon_type::cow> {
+class Swapchain final
+    : public FONode<vkw::SwapChain, fon_type::cow, fon_rec::rec> {
 public:
   Swapchain(GraphicsEngine &engine);
 
   // Although a swapchain is a cow, we may still modify its state.
   vkw::SwapChain &get() {
     return const_cast<vkw::SwapChain &>(
-        FONode<vkw::SwapChain, fon_type::cow>::get());
+        FONode<vkw::SwapChain, fon_type::cow, fon_rec::rec>::get());
   }
   const vkw::SwapChain &get() const {
-    return FONode<vkw::SwapChain, fon_type::cow>::get();
+    return FONode<vkw::SwapChain, fon_type::cow, fon_rec::rec>::get();
   }
 
 private:
@@ -63,23 +64,24 @@ private:
   FObject::Ptr doConstructNew(GraphicsEngine &engine);
 };
 
-template <typename T> class Swapchained : public FONode<T, fon_type::ext> {
+template <typename T>
+class Swapchained : public FONode<T, fon_type::ext, fon_rec::rec> {
 public:
   Swapchained(Swapchain &swapchain, FOUses &&uses)
-      : FONode<T, fon_type::ext>(FOUses{swapchain} | uses) {}
+      : FONode<T, fon_type::ext, fon_rec::rec>(FOUses{swapchain} | uses) {}
   Swapchained(Swapchain &swapchain)
-      : FONode<T, fon_type::ext>(FOUses{swapchain}) {}
+      : FONode<T, fon_type::ext, fon_rec::rec>(FOUses{swapchain}) {}
 
   template <typename U>
     requires !
              std::convertible_to<U, Swapchain> Swapchained(U & swapchained,
                                                            FOUses &&uses)
-      : FONode<T, fon_type::ext>(
+      : FONode<T, fon_type::ext, fon_rec::rec>(
             FOUses{swapchained.getUse<Swapchain>(0), swapchained} | uses) {}
   template <typename U>
     requires !
              std::convertible_to<U, Swapchain> Swapchained(U & swapchained)
-      : FONode<T, fon_type::ext>(
+      : FONode<T, fon_type::ext, fon_rec::rec>(
             FOUses{swapchained.getUse<Swapchain>(0), swapchained}) {}
 
   vkw::SwapChain &swapchain() { return this->getUse<Swapchain>(0).get(); }

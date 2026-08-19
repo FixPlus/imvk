@@ -6,8 +6,8 @@
 namespace imvk {
 
 SSemaphore::SSemaphore(FramedEngine &engine, Swapchain &swapchain)
-    : FONode<vkw::Semaphore, fon_type::ext>(FOUses{swapchain}) {
-  onConstruct(engine);
+    : FONode<vkw::Semaphore, fon_type::ext, fon_rec::rec>(FOUses{swapchain}) {
+  onConstruct(engine, /* immediate */ true);
 }
 void SSemaphore::doConstructNew(
     FramedEngine &engine, unsigned count,
@@ -49,7 +49,7 @@ bool GraphicsEngine::m_aquireSwapchainImage(const Frame &frame) {
 }
 void GraphicsEngine::m_recreate_swapchain() {
   queue().acquire().get().waitIdle();
-  m_swapchain->reconstruct(*this);
+  m_swapchain->reconstruct(*this, /* immediate */ true);
 }
 
 bool GraphicsEngine::m_surface_minimized() {

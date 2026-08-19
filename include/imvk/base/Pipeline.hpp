@@ -18,7 +18,7 @@
 
 namespace imvk {
 
-class StageLayoutImpl {
+class StageLayoutInfo {
 public:
   struct Description {
     /// TODO: think what can be done to eliminate need to copy shader code to
@@ -33,17 +33,10 @@ public:
     boost::container::small_vector<Set, 2> sets;
   };
 
-  /// @brief Create a stage with shader. Descriptor layouts are read from
-  /// shader's reflect information. For sets which are listed in description a
-  /// DescriptorPool will be allocated, that could be used by PipelineStageSet.
-  /// @param engine
-  /// @param description
-  StageLayoutImpl(FramedEngine &engine, const Description &description);
+  StageLayoutInfo(FramedEngine &engine, const Description &description);
+  StageLayoutInfo(FramedEngine &engine);
 
-  /// @brief Create empty stage
-  /// @param engine
-  StageLayoutImpl(FramedEngine &engine) : m_engine(engine) {}
-
+  virtual ~StageLayoutInfo() = default;
   FramedEngine &engine() const { return m_engine; }
 
   VkShaderStageFlagBits stage() const { return m_stage; }
@@ -54,53 +47,71 @@ public:
   bool hasShader() const { return m_module.has_value(); }
   auto &getShader() const { return *m_module; }
 
-  auto sets() const {
-    return std::ranges::subrange(m_sets.begin(), m_sets.end());
-  }
+  bool hasSet(unsigned binding) const { return m_setIds.contains(binding); }
 
-  auto sets() { return std::ranges::subrange(m_sets.begin(), m_sets.end()); }
-
-  bool hasSet(unsigned binding) const { return m_sets.contains(binding); }
-  DescriptorPool &getSet(unsigned binding) { return m_sets.at(binding); }
-  const DescriptorPool &getSet(unsigned binding) const {
-    return m_sets.at(binding);
-  }
-
-private:
+protected:
   FramedEngine &m_engine;
   std::optional<vkw::SPIRVModule> m_module;
   boost::container::small_vector<VkPushConstantRange, 3> m_pushConstants;
-  boost::container::small_flat_map<unsigned, DescriptorPool, 2> m_sets;
+  boost::container::small_flat_map<unsigned, unsigned, 2> m_setIds;
   VkShaderStageFlagBits m_stage{};
+  FOUses pools;
 };
 
-class StageLayout : public FONode<StageLayoutImpl, fon_type::cow> {
+class StageLayout : public StageLayoutInfo, public FONode<void, fon_type::mut> {
 public:
-  StageLayout(FramedEngine &engine, auto &&...args)
-      : FONode<StageLayoutImpl, fon_type::cow>{
-            engine.createObject<StageLayoutImpl>(
-                engine, std::forward<decltype(args)>(args)...)} {}
+  StageLayout(FramedEngine &engine, const Description &description)
+      : StageLayoutInfo(engine, description), FONode<void, fon_type::mut>(
+                                                  engine.createObject<void>(),
+                                                  std::move(pools)) {}
+  StageLayout(FramedEngine &engine)
+      : StageLayoutInfo(engine), FONode<void, fon_type::mut>(
+                                     engine.createObject<void>(),
+                                     std::move(pools)) {}
+
+  DescriptorPool &getSet(unsigned binding) {
+    return getUse<DescriptorPool &>(m_setIds.at(binding));
+  }
+  const DescriptorPool &getSet(unsigned binding) const {
+    return getUse<const DescriptorPool &>(m_setIds.at(binding));
+  }
+
+  auto sets() const {
+    return std::ranges::subrange(m_setIds.begin(), m_setIds.end()) |
+           std::views::transform([this](auto &&p) -> decltype(auto) {
+             return std::tuple<unsigned, const DescriptorPool &>(
+                 p.first, getUse<const DescriptorPool &>(p.second));
+           });
+  }
+
+  auto sets() {
+    return std::ranges::subrange(m_setIds.begin(), m_setIds.end()) |
+           std::views::transform([this](auto &&p) {
+             return std::tuple<unsigned, DescriptorPool &>(
+                 p.first, getUse<DescriptorPool &>(p.second));
+           });
+  }
 
 private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
-    // this is leaf object. can return null.
-    return nullptr;
+  void onUse(const Frame &frame) override {
+    // do nothing.
   }
 };
 
 struct StageSetView {
   boost::container::small_flat_map<unsigned, const vkw::DescriptorSet *, 2u>
       sets;
-  const StageLayoutImpl *layout;
+  const StageLayout *layout;
 };
 
-class StageSet final : public FONode<StageSetView, fon_type::swap> {
+class StageSet final
+    : public FONode<StageSetView, fon_type::swap, fon_rec::rec> {
 public:
   StageSet(FramedEngine &engine, StageLayout &stage, auto &&sets)
-      : FONode<StageSetView, fon_type::swap>(
+      : FONode<StageSetView, fon_type::swap, fon_rec::rec>(
             engine,
             [&](FrameID frame) {
-              auto &layout = stage.get();
+              auto &layout = stage;
               StageSetView view;
               view.layout = &layout;
               for (auto &&[set, binding] : sets) {
@@ -136,18 +147,9 @@ public:
   }
 
 private:
-  void onCowExpire(const Frame &frame) final {
-    // TODO: implement.
-    std::terminate();
-  }
+  bool keepAlive() final { return true; }
   FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) final {
-    auto &layout = stage().get();
-    StageSetView view;
-    view.layout = &layout;
-    for (auto &&[binding, _] : m_setMap) {
-      view.sets.insert({binding, &*getSet(binding).get(frame)});
-    }
-    return engine.createObject<StageSetView>(std::move(view));
+    return nullptr;
   }
 
   void onUseAction(const Frame &frame, FObject &obj) override {
@@ -160,17 +162,15 @@ private:
 class StageSetBuilder final {
 public:
   StageSetBuilder(StageLayout &stage) : m_stage(&stage) {
-    for (auto &&[setn, _] : stage.get().sets()) {
+    for (auto &&[setn, _] : stage.sets()) {
       m_setBuilders.insert({setn, nullptr});
     }
   };
   DescriptorSetBuilder &addDescriptorSet(unsigned binding) {
     assert(m_setBuilders.contains(binding));
     auto &optSet = m_setBuilders.at(binding);
-    // this is super fishy, but according to cow object semantics underlying
-    // object is immutable, however it is 100% safe to modify stage layout on go
-    // (trust me bro)
-    auto &stage = const_cast<StageLayoutImpl &>(m_stage->get());
+
+    auto &stage = *m_stage;
     if (!optSet) {
       optSet = std::make_unique<DescriptorSetBuilder>(stage.engine(),
                                                       stage.getSet(binding));
@@ -184,7 +184,7 @@ public:
       assert(setBuilder);
       sets.emplace_back(Ref<DescriptorSet>{std::move(*setBuilder)}, binding);
     }
-    return m_stage->get().engine().createNode<StageSet>(*m_stage, sets);
+    return m_stage->engine().createNode<StageSet>(*m_stage, sets);
   }
 
 private:
@@ -207,8 +207,7 @@ private:
         4>
         descriptorLayouts;
     boost::container::small_vector<VkPushConstantRange, 4> pushConstants;
-    for (const StageLayout &stageRef : stages) {
-      const StageLayoutImpl &stage = stageRef.get();
+    for (const StageLayout &stage : stages) {
       std::ranges::transform(
           stage.sets(), std::back_inserter(descriptorLayouts), [](auto &&set) {
             return std::make_pair(
@@ -268,9 +267,6 @@ public:
   }
 
 private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
-    return init(engine, m_flags, stages());
-  }
   VkPipelineLayoutCreateFlags m_flags;
 };
 
@@ -291,11 +287,6 @@ public:
   PipelineLayout<PipelineTraits> &layout() {
     return static_cast<PipelineLayout<PipelineTraits> &>(
         *std::begin(this->uses()));
-  }
-
-private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
-    return init(engine, layout());
   }
 };
 

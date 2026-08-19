@@ -5,9 +5,10 @@
 #include <boost/container/flat_map.hpp>
 
 namespace imvk {
-DescriptorPool::DescriptorPool(vkw::Device &device,
-                               vkw::DescriptorSetLayout &&layout,
-                               uint32_t setsPerPool)
+
+DescriptorPoolImpl::DescriptorPoolImpl(vkw::Device &device,
+                                       vkw::DescriptorSetLayout &&layout,
+                                       uint32_t setsPerPool)
     : m_settings([&]() {
         PoolSettings ret{};
         ret.setsPerPool = setsPerPool;
@@ -25,36 +26,11 @@ DescriptorPool::DescriptorPool(vkw::Device &device,
                                });
         return ret;
       }()),
-      m_state(std::make_shared<State>(device, std::move(layout))) {}
+      m_device(device), m_layout(std::move(layout)) {}
 
-void DescriptorPool::SetDeleter::operator()(vkw::DescriptorSet *set) const {
-  auto lock = std::unique_lock(m_origPool->second);
-  delete set;
-  if (m_origPool->first.currentSetsCount() != 0u)
-    return;
-  lock.unlock();
-  auto listLock = std::unique_lock(m_state->poolsMutex);
-  auto &list = m_state->pools;
-  // checks list.size() == 1, but faster.
-  if (std::prev(list.end()) == list.begin())
-    return;
-  PoolList localList;
-  localList.splice(localList.end(), list, m_origPool);
-  listLock.unlock();
-  m_origPool->second.lock();
-  if (m_origPool->first.currentSetsCount() == 0u) {
-    m_state->poolCount.fetch_sub(1u);
-    return;
-  }
-  // erase failed. return pool back to list.
-  m_origPool->second.unlock();
-  listLock.lock();
-  list.splice(list.begin(), localList);
-}
-
-DescriptorPool::SetHandle DescriptorPool::get() {
-  auto listLock = std::lock_guard(m_state->poolsMutex);
-  auto &list = m_state->pools;
+DescriptorPoolImpl::SetHandle DescriptorPoolImpl::createSet() {
+  auto listLock = std::lock_guard(poolsMutex);
+  auto &list = pools;
   auto startIt = list.begin();
   auto curIt = startIt;
   if (startIt != list.end())
@@ -68,26 +44,53 @@ DescriptorPool::SetHandle DescriptorPool::get() {
         curIt = list.begin();
         continue;
       }
-      return {new vkw::DescriptorSet(pool.first, m_state->m_layout),
-              SetDeleter(m_state, curIt)};
+      return {new vkw::DescriptorSet(pool.first, m_layout),
+              SetDeleter(*this, &*curIt)};
     } while (startIt != curIt);
 
   // no space in current pools, allocate new
   list.emplace_front(
       std::piecewise_construct,
-      std::make_tuple(std::ref(m_state->m_device.get()), m_settings.setsPerPool,
+      std::make_tuple(std::ref(m_device.get()), m_settings.setsPerPool,
                       std::span<const VkDescriptorPoolSize>(m_settings.sizes),
                       VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),
       std::make_tuple());
-  m_state->poolCount.fetch_add(1u);
+  m_poolCount.fetch_add(1u);
   auto poolIt = list.begin();
-  return {new vkw::DescriptorSet(poolIt->first, m_state->m_layout),
-          SetDeleter(m_state, poolIt)};
+  return {new vkw::DescriptorSet(poolIt->first, m_layout),
+          SetDeleter(*this, &*poolIt)};
 }
-
-void DescriptorSet::onCowExpire(const Frame &frame) {
-  // need to rewrite all bindings.
-  writeDescriptors(frame.id());
+void DescriptorPoolImpl::destroySet(vkw::DescriptorSet *set, void *ctx) {
+  auto &origPool =
+      *reinterpret_cast<std::pair<vkw::DescriptorPool, std::mutex> *>(ctx);
+  auto lock = std::unique_lock(origPool.second);
+  delete set;
+  if (origPool.first.currentSetsCount() != 0u)
+    return;
+  lock.unlock();
+  auto listLock = std::unique_lock(poolsMutex);
+  auto &list = pools;
+  // checks list.size() == 1, but faster.
+  if (std::prev(list.end()) == list.begin())
+    return;
+  PoolList localList;
+  auto foundOrig = std::ranges::find_if(
+      list, [&](auto &&elem) { return &elem == &origPool; });
+  assert(foundOrig != list.end());
+  localList.splice(localList.end(), list, foundOrig);
+  listLock.unlock();
+  foundOrig->second.lock();
+  if (foundOrig->first.currentSetsCount() == 0u) {
+    m_poolCount.fetch_sub(1u);
+    return;
+  }
+  // erase failed. return pool back to list.
+  foundOrig->second.unlock();
+  listLock.lock();
+  list.splice(list.begin(), localList);
+}
+const vkw::DescriptorSetLayout &DescriptorPoolImpl::layout() {
+  return m_layout;
 }
 
 void DescriptorSet::writeDescriptors(vkw::DescriptorSet &set, FrameID frame) {
@@ -103,25 +106,32 @@ void DescriptorSet::writeDescriptors(FrameID frame) {
 DescriptorSet::DescriptorSet(
     FramedEngine &engine, DescriptorPool &pool,
     std::span<std::pair<Descriptable *, unsigned>> bindings)
-    : FONode<DescriptorPool::SetHandle, fon_type::swap>(
+    : FONode<DescriptorPool::SetHandle, fon_type::swap, fon_rec::rec>(
           engine,
           [&](FrameID id) {
-            return engine.createObject<DescriptorPool::SetHandle>(pool.get());
+            return engine.createObject<DescriptorPool::SetHandle>(
+                pool.createSet());
           },
-          FOUses(bindings |
-                 std::views::transform([](auto &&p) -> decltype(auto) {
-                   return dynamic_cast<FONodeBase &>(*p.first);
-                 }))),
-      m_pool(pool) {
+          FOUses(pool).addUses(
+              bindings | std::views::transform([](auto &&p) -> decltype(auto) {
+                return dynamic_cast<FONodeBase &>(*p.first);
+              }))) {
   std::ranges::copy(bindings, std::back_inserter(m_bindings));
   std::ranges::for_each(engine.frameIds(),
                         [this](FrameID frame) { writeDescriptors(frame); });
 }
 
+void DescriptorSet::onUseAction(const Frame &frame, FObject &obj) {
+  auto &id = frame.id();
+  if (m_pendingWrites.test(id)) {
+    writeDescriptors(id);
+    m_pendingWrites.set(id, false);
+  }
+}
 FObject::Ptr DescriptorSet::constructNew(FramedEngine &engine, FrameID id) {
-  auto ret = engine.createObject<DescriptorPool::SetHandle>(m_pool.get());
-  writeDescriptors(*ret->as<DescriptorPool::SetHandle>(), id);
-  return ret;
+  m_pendingWrites.set(id, true);
+
+  return nullptr;
 }
 
 } // namespace imvk

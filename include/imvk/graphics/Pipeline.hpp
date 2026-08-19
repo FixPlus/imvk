@@ -7,7 +7,7 @@ namespace imvk {
 class GraphicsPipelineStage : public StageLayout {
 public:
   GraphicsPipelineStage(GraphicsEngine &engine,
-                        const StageLayoutImpl::Description &description)
+                        const StageLayout::Description &description)
       : StageLayout(engine, description) {}
 
   virtual bool isProvoking() const { return false; }

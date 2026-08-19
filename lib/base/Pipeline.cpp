@@ -16,7 +16,7 @@ findStageSet(vkw::SPIRVModuleInfo const &moduleInfo, uint32_t stageSet) {
 
 } // namespace
 
-StageLayoutImpl::StageLayoutImpl(FramedEngine &engine,
+StageLayoutInfo::StageLayoutInfo(FramedEngine &engine,
                                  const Description &description)
     : m_engine(engine), m_stage(description.stage ? *description.stage
                                                   : VkShaderStageFlagBits{}) {
@@ -29,6 +29,7 @@ StageLayoutImpl::StageLayoutImpl(FramedEngine &engine,
           : engine.context().linkContext().link(description.shaders,
                                                 /*link library */ true));
   auto reflectInfo = vkw::SPIRVModuleInfo{*m_module};
+  unsigned counter = 0;
   for (auto &&[num, flags, setsPerPool] : description.sets) {
     auto setInfo = findStageSet(reflectInfo, num);
     if (!setInfo)
@@ -38,11 +39,12 @@ StageLayoutImpl::StageLayoutImpl(FramedEngine &engine,
 
     for (auto &&binding : setInfo->bindings())
       bindings.emplace_back(binding.index(), binding.descriptorType(), flags);
-
-    m_sets.emplace(num, DescriptorPool{engine.context().device(),
-                                       vkw::DescriptorSetLayout{
-                                           engine.context().device(), bindings},
-                                       setsPerPool});
+    m_setIds.emplace(num, counter++);
+    pools.addUse(
+        engine.createNode<DescriptorPool>(std::make_unique<DescriptorPoolImpl>(
+            engine.context().device(),
+            vkw::DescriptorSetLayout{engine.context().device(), bindings},
+            setsPerPool)));
   }
 
   for (auto &&pushC : reflectInfo.pushConstants()) {

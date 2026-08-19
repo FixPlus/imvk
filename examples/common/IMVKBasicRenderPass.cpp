@@ -39,7 +39,7 @@ RenderPass::RenderPass(imvk::GraphicsEngine &engine)
 FrameBuffer::FrameBuffer(imvk::GraphicsEngine &engine, SwapchainView &sv,
                          RenderPass &rp)
     : imvk::Swapchained<vkw::FrameBuffer>(sv, FOUses{rp}) {
-  onConstruct(engine);
+  onConstruct(engine, /* immediate*/ true);
 }
 
 FObject::Ptr FrameBuffer::constructOne(FramedEngine &engine, unsigned id) {
@@ -96,7 +96,7 @@ BasicVertexStage::BasicVertexStage(
     : GraphicsPipelineStage(
           engine,
           [&]() {
-            StageLayoutImpl::Description desc{};
+            StageLayout::Description desc{};
             desc.stage = VK_SHADER_STAGE_VERTEX_BIT;
             desc.shaders.emplace_back(*shaderFactory.getModule(shaderName));
             desc.sets.emplace_back(/* set*/ 0, VK_SHADER_STAGE_VERTEX_BIT,
@@ -119,7 +119,7 @@ BasicFragmentStage::BasicFragmentStage(GraphicsEngine &engine,
     : GraphicsPipelineStage(
           engine,
           [&]() {
-            StageLayoutImpl::Description desc{};
+            StageLayout::Description desc{};
             desc.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
             desc.shaders.emplace_back(*shaderFactory.getModule(shaderName));
             desc.sets.emplace_back(/* set*/ 1, VK_SHADER_STAGE_FRAGMENT_BIT,

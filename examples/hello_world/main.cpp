@@ -115,12 +115,6 @@ public:
   MyBuffer(imvk::FramedEngine &engine, imvk::CopyEngine &copyEngine, U &&data)
       : imvk::FONode<Buf, imvk::fon_type::cow>(
             create(engine, copyEngine, std::forward<U>(data))) {}
-
-private:
-  imvk::FObject::Ptr
-  constructNew(imvk::FramedEngine &engine) noexcept override {
-    return nullptr;
-  }
 };
 
 template <typename Buf>
@@ -154,16 +148,8 @@ public:
         m_action(std::forward<decltype(action)>(action)) {}
 
 private:
-  void onCowExpire(const imvk::Frame &frame) override {
-    // do nothing
-  }
-
   void onUseAction(const imvk::Frame &frame, imvk::FObject &obj) override {
     std::invoke(m_action, frame, obj.as<Buf>());
-  }
-  imvk::FObject::Ptr constructNew(imvk::FramedEngine &engine,
-                                  imvk::FrameID frame) override {
-    return nullptr;
   }
   std::function<void(const imvk::Frame &, Buf &)> m_action;
 };
@@ -285,17 +271,8 @@ public:
             }) {}
 
 private:
-  void onCowExpire(const imvk::Frame &frame) override {
-    // do nothing
-  }
-
   void onUseAction(const imvk::Frame &frame, imvk::FObject &obj) override {
     // do nothing
-  }
-
-  imvk::FObject::Ptr constructNew(imvk::FramedEngine &engine,
-                                  imvk::FrameID frame) override {
-    return nullptr;
   }
 };
 
