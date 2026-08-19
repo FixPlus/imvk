@@ -123,8 +123,12 @@ public:
     FrameInfo *nextFrame = nullptr;
     do {
       nextFrame = &getNextFrame();
-      submit(onFrame(nextFrame->frame), *nextFrame);
-    } while (postSubmit(nextFrame->frame));
+      auto submitOpt = onFrame(nextFrame->frame());
+      if (submitOpt && nextFrame->status() == FrameInfo::stat::recd) {
+        submit(*std::move(submitOpt), *nextFrame);
+        postSubmit(nextFrame->frame());
+      }
+    } while (!shouldStop());
   }
 
   void flush();
@@ -132,11 +136,12 @@ public:
   ~FramedEngine() override;
 
 protected:
-  virtual vkw::SubmitInfo onFrame(const Frame &frame) = 0;
-  virtual bool postSubmit(const Frame &frame) = 0;
+  virtual std::optional<vkw::SubmitInfo> onFrame(const Frame &frame) = 0;
+  virtual void postSubmit(const Frame &frame) = 0;
+  virtual bool shouldStop() = 0;
 
 private:
-  class GarbageCollector {
+  class GarbageCollector final {
   public:
     GarbageCollector(FramedEngine &engine)
         : m_engine(engine), m_thread(gcLoopProxy, std::ref(*this)) {}
@@ -145,6 +150,7 @@ private:
       std::unique_lock lc{m_listMutex};
       m_engine.m_retired.store(frame, std::memory_order::relaxed);
       m_engine.m_gcWaitingFor.store(0, std::memory_order::release);
+      m_idle = false;
       lc.unlock();
       m_waker.notify_one();
     }
@@ -153,6 +159,7 @@ private:
       std::unique_lock lc{m_listMutex};
       if (!m_pendingList.empty())
         return;
+      m_idle = false;
       std::swap(nextList, m_pendingList);
       lc.unlock();
       m_waker.notify_one();
@@ -163,6 +170,12 @@ private:
       if (m_idle)
         return;
       m_idleWaker.wait(lc, [this]() { return m_idle; });
+    }
+    ~GarbageCollector() {
+      std::unique_lock lc{m_listMutex};
+      m_thread.request_stop();
+      lc.unlock();
+      m_waker.notify_one();
     }
 
   private:
@@ -182,14 +195,114 @@ private:
     std::vector<FObject *> m_pendingList;
     std::jthread m_thread;
   };
-  struct FrameInfo {
-    Frame frame;
-    vkw::Fence fence;
+  class FrameInfo final {
+  public:
+    enum class stat { init, recd, subd };
+    FrameInfo(FramedEngine &e, FrameID index)
+        : m_frame(e, index),
+          m_fence(e.context().device(), /* create signaled */ true),
+          m_status(stat::init) {}
+    FrameInfo(FrameInfo &&another)
+        : m_frame(std::move(another.m_frame)),
+          m_fence(std::move(another.m_fence)),
+          m_status(std::exchange(another.m_status, stat::init)) {}
+    FrameInfo &operator=(FrameInfo &&another) {
+      if (this == &another)
+        return *this;
+      std::swap(m_frame, another.m_frame);
+      std::swap(m_fence, another.m_fence);
+      std::swap(m_status, another.m_status);
+      return *this;
+    }
+    ~FrameInfo() { reset(); }
+    void reset() {
+      if (m_status == stat::init)
+        return;
+      if (m_status == stat::subd) {
+        m_fence.wait();
+        m_fence.reset();
+      } else {
+        // we have no direct way to set fence in signaled state
+        m_fence = vkw::Fence(m_frame.engine().context().device(),
+                             /* create signaled */ true);
+      }
+      m_status = stat::init;
+    }
+
+    void record(FrameID ordinal) {
+      assert(m_status == stat::init);
+      m_fence.reset();
+      m_frame.ordinal() = ordinal;
+      m_status = stat::recd;
+    }
+
+    void submit(vkw::Queue &queue, vkw::SubmitInfo &si) {
+      assert(m_status == stat::recd);
+      queue.submit(si, m_fence);
+      m_status = stat::subd;
+    }
+
+    const Frame &frame() const { return m_frame; }
+    bool isRetired() const { return m_status == stat::init; }
+    stat status() const { return m_status; }
+
+    static FrameInfo &waitAny(auto &&frames) {
+      for (auto &&frame : frames)
+        frame.retireIfSignaled();
+      auto retiredPred = [](const FrameInfo &frame) {
+        return frame.isRetired();
+      };
+      auto foundRetired = std::ranges::find_if(frames, retiredPred);
+      if (foundRetired != std::end(frames))
+        return *foundRetired;
+
+      auto submitted = frames | std::views::filter([](const FrameInfo &frame) {
+                         return frame.m_status == stat::subd;
+                       });
+      auto fences =
+          submitted | std::views::transform(
+                          [](const FrameInfo &frame) -> const vkw::Fence & {
+                            return frame.m_fence;
+                          });
+      if (!std::ranges::empty(fences))
+        vkw::Fence::wait_any(std::begin(fences), std::end(fences));
+      for (auto &&frame : frames)
+        frame.retireIfSignaled();
+      foundRetired = std::ranges::find_if(frames, retiredPred);
+      assert(foundRetired != std::end(frames));
+      return *foundRetired;
+    }
+
+    static void waitAll(auto &&frames) {
+      auto submitted = frames | std::views::filter([](const FrameInfo &frame) {
+                         return frame.m_status == stat::subd;
+                       });
+      auto fences =
+          submitted | std::views::transform(
+                          [](const FrameInfo &frame) -> const vkw::Fence & {
+                            return frame.m_fence;
+                          });
+      if (!std::ranges::empty(fences))
+        vkw::Fence::wait_all(std::begin(fences), std::end(fences));
+      for (auto &&frame : frames)
+        frame.retireIfSignaled();
+    }
+
+  private:
+    void retireIfSignaled() {
+      if (m_status != stat::subd)
+        return;
+      if (m_fence.signaled())
+        m_status = stat::init;
+    }
+    Frame m_frame;
+    vkw::Fence m_fence;
+    stat m_status;
   };
   FrameInfo &getNextFrame();
 
   void submit(vkw::SubmitInfo &&info, FrameInfo &frame) {
-    queue().acquire().get().submit(info, frame.fence);
+    frame.submit(queue().acquire().get(), info);
     if (!m_freeList.empty())
       m_gc.trySubmit(m_freeList);
   }

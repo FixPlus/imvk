@@ -27,6 +27,8 @@ public:
   /// @param engine
   /// @param id
   Frame(FramedEngine &engine, FrameID id) : m_engine(&engine), m_id(id) {}
+  Frame(Frame &&) = default;
+  Frame &operator=(Frame &&) = default;
 
   /// @return the engine this frame is registered in.
   FramedEngine &engine() const { return *m_engine; }
@@ -41,7 +43,7 @@ public:
 
 private:
   FramedEngine *m_engine;
-  const FrameID m_id;
+  FrameID m_id;
   FrameID m_ordinal = 0;
 };
 
@@ -340,11 +342,12 @@ private:
 class FOReconstructible : public FONodeBase {
 public:
   FOReconstructible(FOUses &&uses = FOUses{}) : FONodeBase(std::move(uses)) {}
-  // reconstructs object and its users. destroyed objects are not placed in
-  // free queue and are destroyed in-place.
-  void reconstruct(FramedEngine &engine, bool immediate) {
-    destruct(engine, immediate);
-    construct(engine, immediate);
+  // Reconstructs object and its users. destroyed objects are not placed in
+  // free queue and are destroyed in-place. Engine pipeline must be flushed
+  // beforehand.
+  void reconstruct(FramedEngine &engine) noexcept {
+    destruct(engine, /* immediate */ true);
+    construct(engine, /* immediate */ true);
   }
 
 protected:

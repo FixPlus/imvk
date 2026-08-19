@@ -9,29 +9,22 @@ FramedEngine::FramedEngine(Context &ctx, const QueueCapsInfo &queueInfo,
   m_frames.reserve(frameInFlightCount);
   std::ranges::transform(std::ranges::iota_view{0u, frameInFlightCount},
                          std::back_inserter(m_frames), [this, &ctx](auto &&i) {
-                           return FrameInfo{
-                               Frame(*this, i),
-                               vkw::Fence{ctx.device(), /* signaled */ true}};
+                           return FrameInfo{*this, i};
                          });
 }
 FramedEngine::~FramedEngine() { flush(); }
 
 void FramedEngine::flush() {
-  auto fences =
-      m_frames | std::views::transform([](FrameInfo &info) -> vkw::Fence & {
-        return info.fence;
-      });
-  vkw::Fence::wait_all(std::begin(fences), std::end(fences));
+  FrameInfo::waitAll(m_frames);
   FrameID lastRetired = 0;
   for (auto &&info : m_frames) {
-    if (info.fence.signaled()) {
-      info.fence.reset();
-      if (info.frame.ordinal() > lastRetired)
-        lastRetired = info.frame.ordinal();
-    }
+    info.reset();
+    if (info.frame().ordinal() > lastRetired)
+      lastRetired = info.frame().ordinal();
   }
-  m_gc.retireFrame(lastRetired);
+  assert(lastRetired == m_ordinal);
   queue().acquire().get().waitIdle();
+  m_gc.retireFrame(lastRetired);
   m_gc.waitIdle();
   while (!m_freeList.empty()) {
     m_gc.trySubmit(m_freeList);
@@ -40,22 +33,18 @@ void FramedEngine::flush() {
 }
 
 FramedEngine::FrameInfo &FramedEngine::getNextFrame() {
-  auto fences =
-      m_frames | std::views::transform([](FrameInfo &info) -> vkw::Fence & {
-        return info.fence;
-      });
-  vkw::Fence::wait_any(std::begin(fences), std::end(fences));
+  FrameInfo::waitAny(m_frames);
   boost::container::small_vector<std::reference_wrapper<FrameInfo>, 3> retired;
   std::ranges::copy_if(m_frames, std::back_inserter(retired),
-                       [](auto &&info) { return info.fence.signaled(); });
+                       [](auto &&info) { return info.isRetired(); });
   assert(!retired.empty());
   std::sort(retired.begin(), retired.end(), [](auto &&lhs, auto &&rhs) {
-    return lhs.get().frame.ordinal() < rhs.get().frame.ordinal();
+    return lhs.get().frame().ordinal() < rhs.get().frame().ordinal();
   });
 
   auto oldRetired = m_retiredPrivate;
   for (auto &&info : retired) {
-    if (m_retiredPrivate + 1 == info.get().frame.ordinal())
+    if (m_retiredPrivate + 1 == info.get().frame().ordinal())
       m_retiredPrivate++;
   }
   if (oldRetired != m_retiredPrivate) {
@@ -64,8 +53,9 @@ FramedEngine::FrameInfo &FramedEngine::getNextFrame() {
       m_gc.retireFrame(m_retiredPrivate);
   }
   auto &ret = retired.front().get();
-  ret.fence.reset();
-  ret.frame.ordinal() = m_ordinal++;
+  ret.record(++m_ordinal);
+  if (m_ordinal == 0)
+    throw std::runtime_error("Frame count overflow");
   return ret;
 }
 
@@ -87,9 +77,13 @@ void FramedEngine::GarbageCollector::gcLoop(std::stop_token token) {
         m_idle = true;
         m_idleWaker.notify_one();
         m_waker.wait(lc, [this, &token]() {
-          return !m_pendingList.empty() || token.stop_requested();
+          auto ret = !m_pendingList.empty() || token.stop_requested();
+          if (!ret && !m_idle) {
+            m_idleWaker.notify_one();
+            m_idle = true;
+          }
+          return ret;
         });
-        m_idle = false;
         continue;
       }
     }
@@ -106,9 +100,13 @@ void FramedEngine::GarbageCollector::gcLoop(std::stop_token token) {
         m_idleWaker.notify_one();
         m_waker.wait(lc, [&]() {
           lastRetired = m_engine.m_retired.load(std::memory_order::acquire);
-          return lastRetired >= nextFrame || token.stop_requested();
+          auto ret = lastRetired >= nextFrame || token.stop_requested();
+          if (!ret && !m_idle) {
+            m_idleWaker.notify_one();
+            m_idle = true;
+          }
+          return ret;
         });
-        m_idle = false;
         continue;
       }
       delete next;

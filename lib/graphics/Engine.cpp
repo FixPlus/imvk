@@ -6,16 +6,12 @@
 namespace imvk {
 
 SSemaphore::SSemaphore(FramedEngine &engine, Swapchain &swapchain)
-    : FONode<vkw::Semaphore, fon_type::ext, fon_rec::rec>(FOUses{swapchain}) {
+    : Swapchained<vkw::Semaphore>(swapchain) {
   onConstruct(engine, /* immediate */ true);
 }
-void SSemaphore::doConstructNew(
-    FramedEngine &engine, unsigned count,
-    boost::container::small_vector_base<FObject::Ptr> &res) {
-  std::ranges::transform(
-      engine.frameIds(), std::back_inserter(res), [&](FrameID) {
-        return engine.createObject<vkw::Semaphore>(engine.context().device());
-      });
+
+FObject::Ptr SSemaphore::constructOne(FramedEngine &engine, unsigned image) {
+  return engine.createObject<vkw::Semaphore>(engine.context().device());
 }
 GraphicsEngine::GraphicsEngine(Context &context,
                                const GraphicsEngineCreateInfo &CI)
@@ -41,15 +37,14 @@ bool GraphicsEngine::m_aquireSwapchainImage(const Frame &frame) {
   }
   if (status == vkw::SwapChain::AcquireStatus::OUT_OF_DATE ||
       status == vkw::SwapChain::AcquireStatus::SUBOPTIMAL) {
+    flush();
     if (!m_surface_minimized())
-      m_recreate_swapchain();
+      m_swapchain->reconstruct(*this);
+    ;
+
     return false;
   }
   return true;
-}
-void GraphicsEngine::m_recreate_swapchain() {
-  queue().acquire().get().waitIdle();
-  m_swapchain->reconstruct(*this, /* immediate */ true);
 }
 
 bool GraphicsEngine::m_surface_minimized() {
@@ -62,9 +57,9 @@ bool GraphicsEngine::m_surface_minimized() {
 
 GraphicsEngine::~GraphicsEngine() = default;
 
-vkw::SubmitInfo GraphicsEngine::onFrame(const Frame &frame) {
-  while (!m_aquireSwapchainImage(frame))
-    midFrameAction();
+std::optional<vkw::SubmitInfo> GraphicsEngine::onFrame(const Frame &frame) {
+  if (!m_aquireSwapchainImage(frame))
+    return std::nullopt;
   auto submitInfo = frameAction(frame);
   submitInfo.addWaitCondition(m_presentComplete->use(frame),
                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
@@ -72,10 +67,11 @@ vkw::SubmitInfo GraphicsEngine::onFrame(const Frame &frame) {
   return submitInfo;
 }
 
-bool GraphicsEngine::postSubmit(const Frame &frame) {
+void GraphicsEngine::postSubmit(const Frame &frame) {
   auto presentInfo =
       vkw::PresentInfo{swapchain().use(frame), m_renderComplete->use(frame)};
   queue().acquire().get().present(presentInfo);
-  return midFrameAction();
 }
+
+bool GraphicsEngine::shouldStop() { return !midFrameAction(); }
 } // namespace imvk

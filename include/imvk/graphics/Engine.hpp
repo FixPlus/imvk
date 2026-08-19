@@ -36,29 +36,16 @@ private:
   }
 };
 
-class SSemaphore final
-    : public FONode<vkw::Semaphore, fon_type::ext, fon_rec::rec> {
+class SSemaphore final : public Swapchained<vkw::Semaphore> {
 public:
   SSemaphore(FramedEngine &engine, Swapchain &swapchain);
 
-  const Swapchain &swapchain() const { return getUse<const Swapchain>(0); }
-
 private:
-  unsigned getExtIndex(const Frame &frame) const override {
-    return swapchain().get().currentImage();
-  }
-
-  void constructNew(
-      FramedEngine &engine,
-      boost::container::small_vector_base<FObject::Ptr> &res) override {
-    doConstructNew(engine, std::ranges::size(swapchain().get().images()), res);
-  }
   void onUseAction(const Frame &, FObject &obj) final {
     // nothing to do.
   }
-  static void
-  doConstructNew(FramedEngine &engine, unsigned count,
-                 boost::container::small_vector_base<FObject::Ptr> &res);
+
+  FObject::Ptr constructOne(FramedEngine &engine, unsigned image) final;
 };
 
 /// @brief Graphics engine is used to render and present images using
@@ -82,12 +69,13 @@ public:
   ~GraphicsEngine() override;
 
 private:
-  vkw::SubmitInfo onFrame(const Frame &frame) final;
-  bool postSubmit(const Frame &frame) final;
+  std::optional<vkw::SubmitInfo> onFrame(const Frame &frame) final;
+  void postSubmit(const Frame &frame) final;
+  bool shouldStop() final;
 
   bool m_aquireSwapchainImage(const Frame &frame);
-  void m_recreate_swapchain();
   bool m_surface_minimized();
+
   FObject::Ptr m_createSwapchain();
   friend class Swapchain;
 
