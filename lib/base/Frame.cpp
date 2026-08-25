@@ -21,6 +21,12 @@ void FONodeBaseImpl<fon_type::swap, fon_rec::norec>::m_objectsInit(
   std::ranges::transform(engine.frameIds(), std::back_inserter(out), gen);
 }
 
+void FONodeBaseImpl<fon_type::swap, fon_rec::expir>::m_objectsInit(
+    FramedEngine &engine, ObjGen gen,
+    boost::container::small_vector_base<FObject::Ptr> &out) {
+  std::ranges::transform(engine.frameIds(), std::back_inserter(out), gen);
+}
+
 void FONodeRecImpl<fon_type::swap>::onConstruct(FramedEngine &engine,
                                                 bool immediate) {
   for (auto &&id : engine.frameIds()) {

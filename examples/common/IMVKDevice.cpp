@@ -82,11 +82,11 @@ Device::Device(const DeviceCreateInfo &CI)
       m_vkLib(nullptr),
       m_instance(m_vkLib,
                  [&]() {
-                   if (m_vkLib.instanceAPIVersion() < vkw::ApiVersion{1, 2, 0})
+                   if (m_vkLib.instanceAPIVersion() < vkw::ApiVersion{1, 3, 0})
                      throw std::runtime_error(
-                         "Unsupported vulkan version. Required minimum: 1.2");
+                         "Unsupported vulkan version. Required minimum: 1.3");
                    vkw::InstanceCreateInfo ICI;
-                   ICI.apiVersion = vkw::ApiVersion{1, 2, 0};
+                   ICI.apiVersion = vkw::ApiVersion{1, 3, 0};
                    auto surfaceExts = Window::surfaceExtensions();
                    for (auto &ext : surfaceExts)
                      ICI.requestExtension(vkw::Library::ExtensionId(ext));
@@ -104,11 +104,14 @@ Device::Device(const DeviceCreateInfo &CI)
             if (available.empty())
               throw std::runtime_error("No available GPUs found");
             for (auto &&dev : available) {
-              if (dev.supportedApiVersion() < vkw::ApiVersion{1, 2, 0})
+              if (dev.supportedApiVersion() < vkw::ApiVersion{1, 3, 0})
                 continue;
               if (!dev.extensionSupported(vkw::ext::KHR_swapchain))
                 continue;
               dev.enableExtension(vkw::ext::KHR_swapchain);
+              dev.requestApiVersion(vkw::ApiVersion{1, 3, 0});
+              dev.enableFeature(
+                  vkw::PhysicalDevice::feature_v13::dynamicRendering);
               auto neededQueue =
                   std::ranges::find_if(dev.queueFamilies(), [&](auto &fam) {
                     return fam.graphics() && fam.transfer() && fam.compute();

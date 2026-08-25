@@ -11,7 +11,6 @@
 #include <mutex>
 #include <span>
 
-
 namespace imvk {
 struct IDescriptorPoolState {
   class SetDeleter {
@@ -99,8 +98,11 @@ class FramedEngine;
 
 class Frame;
 
+template <fon_rec = fon_rec::rec> class DescriptorSet {};
+
 /// @brief Frame-aware descriptor set wrapper.
-class DescriptorSet final
+template <>
+class DescriptorSet<fon_rec::rec> final
     : public FONode<DescriptorPool::SetHandle, fon_type::swap, fon_rec::rec> {
 public:
   DescriptorSet(FramedEngine &engine, DescriptorPool &pool,
@@ -125,7 +127,26 @@ private:
   std::bitset<8> m_pendingWrites;
 };
 
-class DescriptorSetBuilder {
+template <>
+class DescriptorSet<fon_rec::expir> final
+    : public FONode<DescriptorPool::SetHandle, fon_type::swap, fon_rec::expir> {
+public:
+  DescriptorSet(FramedEngine &engine, DescriptorPool &pool,
+                std::span<std::pair<Descriptable *, unsigned>> descriptors);
+
+  vkw::DescriptorSet &use(const Frame &frame) {
+    return *FONode<DescriptorPool::SetHandle, fon_type::swap,
+                   fon_rec::expir>::use(frame);
+  }
+  DescriptorPool &pool() { return getUse<DescriptorPool &>(0); }
+
+private:
+  void onUseAction(const Frame &frame, FObject &obj) final {
+    // do nothing.
+  }
+};
+
+template <fon_rec F = fon_rec::rec> class DescriptorSetBuilder {
 public:
   DescriptorSetBuilder(FramedEngine &engine, DescriptorPool &pool)
       : m_engine(engine), m_pool(&pool){};
@@ -138,8 +159,8 @@ public:
     descriptors.emplace_back(&desc, binding);
     return std::move(*this);
   }
-  operator Ref<DescriptorSet>() && {
-    return m_engine.createNode<DescriptorSet>(*m_pool, descriptors);
+  operator Ref<DescriptorSet<F>>() && {
+    return m_engine.createNode<DescriptorSet<F>>(*m_pool, descriptors);
   }
 
 private:

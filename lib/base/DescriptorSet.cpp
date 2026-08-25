@@ -93,17 +93,18 @@ const vkw::DescriptorSetLayout &DescriptorPoolImpl::layout() {
   return m_layout;
 }
 
-void DescriptorSet::writeDescriptors(vkw::DescriptorSet &set, FrameID frame) {
+void DescriptorSet<fon_rec::rec>::writeDescriptors(vkw::DescriptorSet &set,
+                                                   FrameID frame) {
   for (auto &&[child, binding] : m_bindings) {
     child->descriptorWrite(frame, set, binding);
   }
 }
-void DescriptorSet::writeDescriptors(FrameID frame) {
+void DescriptorSet<fon_rec::rec>::writeDescriptors(FrameID frame) {
   auto &set = get(frame);
   writeDescriptors(*set, frame);
 }
 
-DescriptorSet::DescriptorSet(
+DescriptorSet<fon_rec::rec>::DescriptorSet(
     FramedEngine &engine, DescriptorPool &pool,
     std::span<std::pair<Descriptable *, unsigned>> bindings)
     : FONode<DescriptorPool::SetHandle, fon_type::swap, fon_rec::rec>(
@@ -121,14 +122,37 @@ DescriptorSet::DescriptorSet(
                         [this](FrameID frame) { writeDescriptors(frame); });
 }
 
-void DescriptorSet::onUseAction(const Frame &frame, FObject &obj) {
+DescriptorSet<fon_rec::expir>::DescriptorSet(
+    FramedEngine &engine, DescriptorPool &pool,
+    std::span<std::pair<Descriptable *, unsigned>> bindings)
+    : FONode<DescriptorPool::SetHandle, fon_type::swap, fon_rec::expir>(
+          engine,
+          [&](FrameID id) {
+            return engine.createObject<DescriptorPool::SetHandle>(
+                pool.createSet());
+          },
+          FOUses(pool).addUses(
+              bindings | std::views::transform([](auto &&p) -> decltype(auto) {
+                return dynamic_cast<FONodeBase &>(*p.first);
+              }))) {
+  std::ranges::for_each(engine.frameIds(), [this, &bindings](FrameID frame) {
+    auto &set = get(frame);
+    for (auto &&[child, binding] : bindings) {
+      child->descriptorWrite(frame, *set, binding);
+    }
+  });
+}
+
+void DescriptorSet<fon_rec::rec>::onUseAction(const Frame &frame,
+                                              FObject &obj) {
   auto &id = frame.id();
   if (m_pendingWrites.test(id)) {
     writeDescriptors(id);
     m_pendingWrites.set(id, false);
   }
 }
-FObject::Ptr DescriptorSet::constructNew(FramedEngine &engine, FrameID id) {
+FObject::Ptr DescriptorSet<fon_rec::rec>::constructNew(FramedEngine &engine,
+                                                       FrameID id) {
   m_pendingWrites.set(id, true);
 
   return nullptr;

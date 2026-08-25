@@ -137,13 +137,13 @@ public:
 
   bool hasSet(unsigned num) const { return m_setMap.contains(num); }
 
-  const DescriptorSet &getSet(unsigned num) const {
+  const DescriptorSet<> &getSet(unsigned num) const {
     assert(m_setMap.contains(num));
-    return getUse<const DescriptorSet>(m_setMap.at(num));
+    return getUse<const DescriptorSet<>>(m_setMap.at(num));
   }
-  DescriptorSet &getSet(unsigned num) {
+  DescriptorSet<> &getSet(unsigned num) {
     assert(m_setMap.contains(num));
-    return getUse<DescriptorSet>(m_setMap.at(num));
+    return getUse<DescriptorSet<>>(m_setMap.at(num));
   }
 
 private:
@@ -166,23 +166,24 @@ public:
       m_setBuilders.insert({setn, nullptr});
     }
   };
-  DescriptorSetBuilder &addDescriptorSet(unsigned binding) {
+  DescriptorSetBuilder<> &addDescriptorSet(unsigned binding) {
     assert(m_setBuilders.contains(binding));
     auto &optSet = m_setBuilders.at(binding);
 
     auto &stage = *m_stage;
     if (!optSet) {
-      optSet = std::make_unique<DescriptorSetBuilder>(stage.engine(),
-                                                      stage.getSet(binding));
+      optSet = std::make_unique<DescriptorSetBuilder<>>(stage.engine(),
+                                                        stage.getSet(binding));
     }
     return *optSet;
   }
   operator Ref<StageSet>() && {
-    boost::container::small_vector<std::pair<Ref<DescriptorSet>, unsigned>, 2u>
+    boost::container::small_vector<std::pair<Ref<DescriptorSet<>>, unsigned>,
+                                   2u>
         sets;
     for (auto &&[binding, setBuilder] : m_setBuilders) {
       assert(setBuilder);
-      sets.emplace_back(Ref<DescriptorSet>{std::move(*setBuilder)}, binding);
+      sets.emplace_back(Ref<DescriptorSet<>>{std::move(*setBuilder)}, binding);
     }
     return m_stage->engine().createNode<StageSet>(*m_stage, sets);
   }
@@ -190,7 +191,7 @@ public:
 private:
   Ref<StageLayout> m_stage;
   boost::container::small_flat_map<unsigned,
-                                   std::unique_ptr<DescriptorSetBuilder>, 2u>
+                                   std::unique_ptr<DescriptorSetBuilder<>>, 2u>
       m_setBuilders;
 };
 

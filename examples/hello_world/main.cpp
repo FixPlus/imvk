@@ -8,8 +8,10 @@
 #include "imvk/base/Frame.hpp"
 #include "imvk/copy/Engine.hpp"
 #include "imvk/graphics/Engine.hpp"
-#if 0
-#include "imvk/graphics/Graph.hpp"
+#if 1
+#include "imvk/graph/Materialization.hpp"
+#include "imvk/graph/Nodes.hpp"
+
 #endif
 
 #include <vkw/StagingBuffer.hpp>
@@ -216,20 +218,6 @@ std::array<VertexInfo, 3> getVerticesForFrame(float time, Pos2D pos,
   return ret;
 }
 
-static std::atomic<bool> doQuit = false;
-#if 0
-void secondThread(
-    MyVertexBuffer<imvk::PrimitiveBase::Type::cow> &someVertices) {
-  unsigned counter = 0;
-  while (!doQuit.load()) {
-    bool even = counter % 2 == 0;
-    someVertices.resetSync(getVerticesForFrame(0.5, Pos2D{0.3, 0.3},
-                                               /* scale */ even ? 0.5f : 0.2f));
-    counter++;
-    std::this_thread::sleep_for(200ms);
-  }
-}
-#endif
 class AllocLogger {
 public:
   AllocLogger() = default;
@@ -275,6 +263,94 @@ private:
     // do nothing
   }
 };
+
+imvk::graph::Value &createCopyExtents(imvk::graph::WorkflowBuilder &builder,
+                                      imvk::graph::Value &extentSource) {
+  auto &c1 =
+      builder.create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(1)
+          ->results()
+          .front();
+  auto &fmt = builder
+                  .create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(
+                      VK_FORMAT_R8G8B8A8_UNORM)
+                  ->results()
+                  .front();
+  auto &extents =
+      builder.create<imvk::graph::GetExtents>(extentSource)->results().front();
+  return builder
+      .create<imvk::graph::MakeImage>(
+          static_cast<const imvk::graph::ImageTy &>(extentSource.type()),
+          extents, fmt, c1, c1)
+      ->results()
+      .front();
+}
+
+imvk::graph::Value &renderImage(imvk::graph::WorkflowBuilder &builder,
+                                imvk::graph::Value &image, auto &&descriptors) {
+
+  return builder
+      .create<imvk::graph::RenderPass>(
+          std::array{imvk::graph::colorAttachment(image)},
+          std::forward<decltype(descriptors)>(descriptors),
+          [](const imvk::graph::RenderPass::PassInfo &info,
+             vkw::RenderPassRecorder &rec, const imvk::Frame &frame) {
+            // do nothing.
+          })
+      ->results()
+      .front();
+}
+
+void experimentalGraph(imvk::GraphicsEngine &e) {
+  imvk::graph::Context ctx;
+  imvk::graph::Workflow workflow{ctx};
+  imvk::graph::WorkflowBuilder builder{workflow, workflow.end()};
+
+  imvk::graph::Value &image =
+      builder.create<imvk::graph::AcquireImage>()->results().front();
+  imvk::graph::Value &anotherImage = createCopyExtents(builder, image);
+
+  imvk::graph::Value &dynamicTexture =
+      renderImage(builder, anotherImage, imvk::graph::Node::EmptyUses);
+  imvk::graph::Value &dynamicTexture2 =
+      renderImage(builder, dynamicTexture, imvk::graph::Node::EmptyUses);
+  imvk::graph::Value &readyImage = renderImage(
+      builder, image,
+      std::array{imvk::graph::combinedImageSampler(dynamicTexture),
+                 imvk::graph::combinedImageSampler(dynamicTexture2)});
+  builder.create<imvk::graph::Present>(readyImage);
+#if 0
+  auto chains = imvk::graph::materializeImageValueChains(workflow);
+  std::cout << workflow;
+  std::cout << "Total chains: " << chains.size() << std::endl;
+  for (auto &&chain : chains) {
+    for (auto &&bind : chain.chain) {
+      std::cout << *bind.def << " -> ";
+    }
+    std::cout << "term\n";
+  }
+  imvk::graph::AttributesAnalysis aa{workflow};
+  aa.dump(std::cout);
+#endif
+  auto mat = imvk::graph::MaterializationContext{e, workflow};
+  std::cout << workflow << std::endl;
+}
+
+imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx, auto &&passJob) {
+  imvk::graph::Workflow workflow{ctx};
+  imvk::graph::WorkflowBuilder builder{workflow, workflow.end()};
+  imvk::graph::Value &image =
+      builder.create<imvk::graph::AcquireImage>()->results().front();
+  imvk::graph::Value &renderedImage =
+      builder
+          .create<imvk::graph::RenderPass>(
+              std::array{imvk::graph::colorAttachment(image)},
+              imvk::graph::Node::EmptyUses,
+              std::forward<decltype(passJob)>(passJob))
+          ->results()
+          .front();
+  builder.create<imvk::graph::Present>(renderedImage);
+  return workflow;
+}
 
 class MyGraphicsEngine : public imvk::GraphicsEngine {
 public:
@@ -338,8 +414,6 @@ int app() try {
   auto graphicsEngine = MyGraphicsEngine(imvkContext, window);
 
   auto copyEngine = imvk::CopyEngine(imvkContext, imvk::CopyEngineCreateInfo{});
-  // Create basic render pass.
-  auto renderPass = imvk::examples::BasicRenderPass{graphicsEngine};
 
   auto vertexStage =
       graphicsEngine.createNode<imvk::examples::BasicVertexStage>(
@@ -348,11 +422,12 @@ int app() try {
               vkw::per_vertex<VertexInfo, 0>>>());
 
   auto fragmentStage =
-      graphicsEngine.createNode<imvk::examples::BasicFragmentStage>(
-          shaderLoader, "hello.frag", renderPass.pass()->get());
+      graphicsEngine.createNode<imvk::examples::AlternateFragmentStage>(
+          shaderLoader, "hello.frag");
   auto pipelinePool =
-      imvk::GraphicsPipelinePool<imvk::examples::BasicVertexStage,
-                                 imvk::examples::BasicFragmentStage>{
+      imvk::GraphicsPipelinePool<imvk::graph::RenderPass::PipeHook,
+                                 imvk::examples::BasicVertexStage,
+                                 imvk::examples::AlternateFragmentStage>{
           graphicsEngine, /* cache size*/ 10u};
   auto vertices =
       graphicsEngine.createNode<MyVertexBuffer<imvk::fon_type::swap>>(
@@ -422,10 +497,13 @@ int app() try {
                                       imvk::examples::assetsDir() /
                                           (auxEven ? "image2" : "image1")));
   };
-  std::function<void(vkw::RenderPassRecorder &, const imvk::Frame &)> passJob =
-      [&](vkw::RenderPassRecorder &commands, const imvk::Frame &frame) {
+  std::function<void(const imvk::graph::RenderPass::PassInfo &,
+                     vkw::RenderPassRecorder &, const imvk::Frame &)>
+      passJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
+                    vkw::RenderPassRecorder &commands,
+                    const imvk::Frame &frame) {
         imvk::Pipeline<imvk::GraphicsPipelineTraits> &pipeline =
-            pipelinePool.get(*vertexStage, *fragmentStage);
+            pipelinePool.get(*pass.passStage, *vertexStage, *fragmentStage);
         commands.bindPipeline(pipeline.use(frame));
         commands.bindDescriptorSet(pipeline.layout().use(frame),
                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -442,20 +520,24 @@ int app() try {
         commands.draw(anotherBuffer.size(), 1u);
         updateCowVertices();
       };
+  imvk::graph::Context graphCtx{};
+  auto wf = basicWorkflow(graphCtx, passJob);
+  imvk::graph::MaterializationContext matCtx{graphicsEngine, wf};
+  std::cout << wf << std::endl;
 #if 0
   imvk::RenderGraph rGraph;
   imvk::CompiledRenderGraph rCompiledGraph{*graphicsEngine};
   rCompiledGraph.recompile(rGraph);
 #endif
-  // std::jthread thread2{secondThread, std::ref(anotherVertices)};
+  // experimentalGraph(graphicsEngine);
+#if 1
   //  Main application loop.
   graphicsEngine.setFrameAction(
       [&](vkw::BufferRecorder &recorder, const imvk::Frame &frame) {
-        renderPass.run(recorder, frame, passJob);
+        matCtx.run(recorder, frame);
       });
   graphicsEngine.run();
-
-  doQuit = true;
+#endif
 
   return 0;
 } catch (std::runtime_error &e) {

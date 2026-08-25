@@ -112,13 +112,16 @@ void intrusive_ptr_release(FONodeBase *p);
 using FONodeRef = boost::intrusive_ptr<FONodeBase>;
 
 enum class fon_type { cow, swap, ext, mut };
-enum class fon_rec { rec, norec };
+enum class fon_rec { rec, norec, expir };
 template <fon_type type, fon_rec r> class FONodeBaseImpl {};
 template <fon_type type> class FONodeRecImpl {};
+template <fon_type type> class FONodeExpirImpl {};
 
 template <fon_type type, fon_rec r>
-using FONodeImpl = std::conditional_t<r == fon_rec::rec, FONodeRecImpl<type>,
-                                      FONodeBaseImpl<type, r>>;
+using FONodeImpl = std::conditional_t<
+    r == fon_rec::rec, FONodeRecImpl<type>,
+    std::conditional_t<r == fon_rec::expir, FONodeExpirImpl<type>,
+                       FONodeBaseImpl<type, r>>>;
 
 class FOUses {
 public:
@@ -245,17 +248,7 @@ public:
   FONodeBase &operator=(FONodeBase &&) = delete;
   FONodeBase &operator=(const FONodeBase &) = delete;
 
-  virtual ~FONodeBase() {
-    assert(m_firstUser.next == nullptr);
-    for (auto &&use : m_uses) {
-      auto *prev = use.prev;
-      auto *next = use.next;
-      if (prev)
-        prev->next = next;
-      if (next)
-        next->prev = prev;
-    }
-  }
+  virtual ~FONodeBase() { unlink(); }
 
   auto users() const {
     return std::ranges::subrange(FOUseIterator{m_firstUser.next},
@@ -319,6 +312,18 @@ protected:
   virtual void onUse(const Frame &frame) = 0;
   virtual bool isUsed(const Frame &frame) const = 0;
   virtual void markUsed(const Frame &frame) = 0;
+  void unlink() {
+    assert(m_firstUser.next == nullptr);
+    for (auto &&use : m_uses) {
+      auto *prev = use.prev;
+      auto *next = use.next;
+      if (prev)
+        prev->next = next;
+      if (next)
+        next->prev = prev;
+    }
+    m_uses.clear();
+  }
 
 private:
   void addUser(FOUse *user) {
@@ -339,28 +344,60 @@ private:
   size_t m_refCount = 0;
 };
 
-class FOReconstructible : public FONodeBase {
+class FODestructible : public FONodeBase {
 public:
-  FOReconstructible(FOUses &&uses = FOUses{}) : FONodeBase(std::move(uses)) {}
+  FODestructible(FOUses &&uses = FOUses{}) : FONodeBase(std::move(uses)) {}
+
+protected:
+  virtual void onDestruct(bool immediate) = 0;
+};
+
+class FOExpirable : public FODestructible {
+public:
+  FOExpirable(FOUses &&uses = FOUses{}) : FODestructible(std::move(uses)) {}
+  void expire(bool immediate = true) noexcept {
+    users_topological_traverse<FOExpirable>(
+        /* reverse */ true, [](auto &u, auto &v) { return true; },
+        [&](auto &&node) {
+          node.onDestruct(immediate);
+          node.expired = true;
+        });
+  }
+
+  bool isExpired() const { return expired; }
+
+protected:
+  void onDestruct(bool immediate) final { expire(immediate); }
+  virtual void onExpire(bool immediate) = 0;
+  bool expired = false;
+};
+
+class FOReconstructible : public FODestructible {
+public:
+  FOReconstructible(FOUses &&uses = FOUses{})
+      : FODestructible(std::move(uses)) {}
   // Reconstructs object and its users. destroyed objects are not placed in
   // free queue and are destroyed in-place. Engine pipeline must be flushed
   // beforehand.
-  void reconstruct(FramedEngine &engine) noexcept {
-    destruct(engine, /* immediate */ true);
-    construct(engine, /* immediate */ true);
+  void reconstruct(FramedEngine &engine, bool immediate = true) noexcept {
+    destruct(immediate);
+    construct(engine, immediate);
   }
 
 protected:
+  using FODestructible::onDestruct;
   friend class FONodeBaseImpl<fon_type::cow, fon_rec::norec>;
 
-  virtual void onDestruct(FramedEngine &engine, bool immediate) = 0;
   virtual void onConstruct(FramedEngine &engine, bool immediate) = 0;
 
 private:
-  void destruct(FramedEngine &engine, bool immediate) {
-    users_topological_traverse<FOReconstructible>(
-        /* reverse */ true, [](auto &u, auto &v) { return true; },
-        [&](auto &&node) { node.onDestruct(engine, immediate); });
+  void destruct(bool immediate) {
+    users_topological_traverse<FODestructible>(
+        /* reverse */ true,
+        [](auto &u, auto &v) { return !dynamic_cast<FOExpirable *>(&u); },
+        [&](auto &&node) {
+          std::invoke(&FODestructible::onDestruct, node, immediate);
+        });
   }
 
   void construct(FramedEngine &engine, bool immediate) {
@@ -372,8 +409,9 @@ private:
 
 namespace __detail {
 template <fon_rec r>
-using FOBaseFor =
-    std::conditional_t<r == fon_rec::rec, FOReconstructible, FONodeBase>;
+using FOBaseFor = std::conditional_t<
+    r == fon_rec::rec, FOReconstructible,
+    std::conditional_t<r == fon_rec::expir, FOExpirable, FONodeBase>>;
 }
 template <fon_rec r>
 class FONodeBaseImpl<fon_type::swap, r> : public __detail::FOBaseFor<r> {
@@ -417,6 +455,7 @@ protected:
 
 private:
   friend class FONodeRecImpl<fon_type::swap>;
+  friend class FONodeExpirImpl<fon_type::swap>;
   using ObjGen = boost::compat::function_ref<FObject::Ptr(FrameID)>;
   void m_objectsInit(FramedEngine &engine, ObjGen gen,
                      boost::container::small_vector_base<FObject::Ptr> &out);
@@ -437,7 +476,7 @@ protected:
   virtual FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) = 0;
   virtual bool keepAlive() = 0;
 
-  void onDestruct(FramedEngine &engine, bool immediate) final {
+  void onDestruct(bool immediate) final {
     if (keepAlive())
       return;
     for (auto &obj : this->m_objects) {
@@ -448,6 +487,25 @@ protected:
     }
   }
   void onConstruct(FramedEngine &engine, bool immediate) final;
+};
+
+template <>
+class FONodeExpirImpl<fon_type::swap>
+    : public FONodeBaseImpl<fon_type::swap, fon_rec::expir> {
+public:
+  FONodeExpirImpl(auto &&...args)
+      : FONodeBaseImpl<fon_type::swap, fon_rec::expir>(
+            std::forward<decltype(args)>(args)...) {}
+
+protected:
+  void onExpire(bool immediate) final {
+    for (auto &obj : this->m_objects) {
+      if (immediate)
+        delete obj.release();
+      else
+        obj.reset();
+    }
+  }
 };
 
 template <fon_rec r>
@@ -469,7 +527,7 @@ public:
           if (&node == this)
             return;
           auto &rec = static_cast<FOReconstructible &>(node);
-          std::invoke(&FOReconstructible::onDestruct, rec, engine,
+          std::invoke(&FOReconstructible::onDestruct, rec,
                       /* immediate */ false);
         });
     m_current = std::move(obj);
@@ -506,6 +564,7 @@ protected:
 
 private:
   friend class FONodeRecImpl<fon_type::cow>;
+  friend class FONodeExpirImpl<fon_type::cow>;
   // cow's object references are mutable. The inner state of object is
   // immutable.
   FObject::Ptr m_current;
@@ -529,7 +588,7 @@ protected:
   /// may be returned with uses.
   virtual FObject::Ptr constructNew(FramedEngine &engine) noexcept = 0;
 
-  void onDestruct(FramedEngine &engine, bool immediate) final {
+  void onDestruct(bool immediate) final {
     if (immediate)
       delete m_current.release();
     else
@@ -537,6 +596,23 @@ protected:
   }
   void onConstruct(FramedEngine &engine, bool immediate) final {
     m_current = constructNew(engine);
+  }
+};
+
+template <>
+class FONodeExpirImpl<fon_type::cow>
+    : public FONodeBaseImpl<fon_type::cow, fon_rec::expir> {
+public:
+  FONodeExpirImpl(auto &&...args)
+      : FONodeBaseImpl<fon_type::cow, fon_rec::expir>(
+            std::forward<decltype(args)>(args)...) {}
+
+protected:
+  void onExpire(bool immediate) final {
+    if (immediate)
+      delete m_current.release();
+    else
+      m_current.reset();
   }
 };
 
@@ -575,6 +651,7 @@ protected:
 
 private:
   friend class FONodeRecImpl<fon_type::ext>;
+  friend class FONodeExpirImpl<fon_type::ext>;
   // ext's objects references and inner state are mutable.
   boost::container::small_vector<FObject::Ptr, 2> m_objects;
 };
@@ -592,7 +669,7 @@ protected:
   constructNew(FramedEngine &engine,
                boost::container::small_vector_base<FObject::Ptr> &res) = 0;
 
-  void onDestruct(FramedEngine &engine, bool immediate) final {
+  void onDestruct(bool immediate) final {
     if (!immediate)
       m_objects.clear();
     for (auto &&obj : m_objects)
@@ -601,6 +678,28 @@ protected:
   }
   void onConstruct(FramedEngine &engine, bool immediate) final {
     constructNew(engine, m_objects);
+  }
+};
+
+template <>
+class FONodeExpirImpl<fon_type::ext>
+    : public FONodeBaseImpl<fon_type::ext, fon_rec::expir> {
+public:
+  FONodeExpirImpl(auto &&objects, auto &&...args)
+      : FONodeBaseImpl<fon_type::ext, fon_rec::expir>(
+            std::forward<decltype(args)>(args)...) {
+    for (auto &obj : objects) {
+      m_objects.emplace_back(std::move(obj));
+    }
+  }
+
+protected:
+  void onExpire(bool immediate) final {
+    if (!immediate)
+      m_objects.clear();
+    for (auto &&obj : m_objects)
+      delete obj.release();
+    m_objects.clear();
   }
 };
 

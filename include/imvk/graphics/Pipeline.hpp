@@ -1,4 +1,5 @@
 
+#pragma once
 #include "imvk/base/Pipeline.hpp"
 #include "imvk/graphics/Engine.hpp"
 

@@ -78,4 +78,14 @@ private:
   const vkw::RenderPass &m_pass;
 };
 
+class AlternateFragmentStage : public imvk::GraphicsPipelineStage {
+public:
+  AlternateFragmentStage(GraphicsEngine &engine, ShaderLoader &shaderFactory,
+                         std::string_view shaderName);
+
+  bool isProvoking() const override { return false; }
+
+  void amendCreateInfo(vkw::GraphicsPipelineCreateInfo &info) const override;
+};
+
 } // namespace imvk::examples
