@@ -61,9 +61,18 @@ public:
 using MatImageView =
     std::variant<Ref<MatRegularImageView>, Ref<MatSwapchainImageView>>;
 
-using MatIntegerScalar = size_t;
+template <typename T>
+class MatHostValue : public FONodeBaseImpl<imvk::fon_type::cow> {
+public:
+  MatHostValue(auto &&...args)
+      : FONodeBaseImpl<imvk::fon_type::cow>(
+            std::forward<decltype(args)>(args)...) {}
+  virtual const T &value() const = 0;
+};
 
-using MatExtents = VkExtent3D;
+using MatIntegerScalar = Ref<MatHostValue<size_t>>;
+
+using MatExtents = Ref<MatHostValue<VkExtent3D>>;
 
 class ExtentsProducer {
 public:

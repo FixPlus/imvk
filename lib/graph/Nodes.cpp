@@ -3,6 +3,89 @@
 
 namespace imvk::graph {
 
+template <typename T> class MatConstant : public MatHostValue<T> {
+public:
+  MatConstant(FramedEngine &e, T value)
+      : MatHostValue<T>(e.createObject<void>()), m_value(value) {}
+  const T &value() const final { return m_value; }
+
+  void reset(T newVal) {
+    this->destroy();
+    m_value = newVal;
+  }
+
+private:
+  FObject::Ptr constructNew(FramedEngine &engine) noexcept { return nullptr; }
+  T m_value;
+};
+
+template <typename T, typename U>
+class AttributeExtractor : public MatHostValue<T> {
+public:
+  AttributeExtractor(FramedEngine &e, U &src, auto &&extractor)
+      : MatHostValue<T>(e.createObject<void>(), FOUses{src}),
+        m_extractor(std::forward<decltype(extractor)>(extractor)) {}
+  const T &value() const final { return m_value; }
+
+private:
+  FObject::Ptr constructNew(FramedEngine &engine) noexcept {
+    m_value = m_extractor(getUse<U>(0));
+    return nullptr;
+  }
+  T m_value;
+  boost::compat::function_ref<T(const U &)> m_extractor;
+};
+
+template <typename T>
+class AttributeExtractor<T, MatImage> : public MatHostValue<T> {
+public:
+  AttributeExtractor(FramedEngine &e, const MatImage &src, auto &&extractor)
+      : MatHostValue<T>(
+            e.createObject<void>(),
+            FOUses{*std::visit(
+                [](auto &pimg) -> FONodeBase * { return &*pimg; }, src)}),
+        m_extractor(std::forward<decltype(extractor)>(extractor)),
+        m_isRegularSrc(std::holds_alternative<Ref<MatRegularImage>>(src)) {}
+  const T &value() const final { return m_value; }
+
+private:
+  FObject::Ptr constructNew(FramedEngine &engine) noexcept {
+    auto &srcInfo = m_isRegularSrc ? this->getUse<MatRegularImage>(0).info()
+                                   : this->getUse<MatSwapchainImage>(0).info();
+    m_value = m_extractor(srcInfo);
+    return nullptr;
+  }
+  T m_value;
+  boost::compat::function_ref<T(const VkImageCreateInfo &)> m_extractor;
+  bool m_isRegularSrc;
+};
+
+bool Constant<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
+  ctx.materialize<MatIntegerScalar>(
+      results().front(), ctx.engine().createNode<MatConstant<size_t>>(value));
+  return true;
+}
+bool Constant<ExtentsTy>::materialize(MaterializationContext &ctx) {
+  ctx.materialize<MatExtents>(
+      results().front(),
+      ctx.engine().createNode<MatConstant<VkExtent3D>>(value));
+  return true;
+}
+
+bool Dynamic<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
+
+  auto dynVal = ctx.engine().createNode<MatConstant<size_t>>(producer());
+  ctx.materialize<MatIntegerScalar>(results().front(), dynVal);
+  ctx.materializeNode(
+      *this, [dynVal = std::move(dynVal), this](vkw::BufferRecorder &recorder,
+                                                const imvk::Frame &frame) {
+        auto newVal = producer();
+        if (newVal != dynVal->value())
+          dynVal->reset(newVal);
+      });
+  return true;
+}
+
 class RegularImage : public vkw::Allocation<VkImage> {
 public:
   RegularImage(vkw::DeviceAllocator &allocator,
@@ -16,14 +99,26 @@ public:
 class RegularImageNode : public MatRegularImage {
 public:
   RegularImageNode(FramedEngine &engine, const MaterializationContext &ctx,
+                   const MatExtents &extents, const MatIntegerScalar &format,
+                   const MatIntegerScalar &layers,
+                   const MatIntegerScalar &levels,
                    const VkImageCreateInfo &info)
-      : MatRegularImage(), m_info(info) {}
+      : MatRegularImage(FOUses{*extents, *format, *layers, *levels}),
+        m_info(info) {}
   VkImage image(FrameID id) const final { return get(id).as<RegularImage>(); }
   VkImage useImage(const Frame &id) final { return use(id).as<RegularImage>(); }
   const VkImageCreateInfo &info() const { return m_info; }
 
 private:
+  void m_updateInfo() {
+    m_info.extent = getUse<MatHostValue<VkExtent3D>>(0).value();
+    m_info.format =
+        static_cast<VkFormat>(getUse<MatHostValue<size_t>>(1).value());
+    m_info.arrayLayers = getUse<MatHostValue<size_t>>(2).value();
+    m_info.mipLevels = getUse<MatHostValue<size_t>>(3).value();
+  }
   FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) {
+    m_updateInfo();
     vkw::AllocationCreateInfo allocInfo{.usage = VMA_MEMORY_USAGE_GPU_ONLY};
     return engine.createObject<RegularImage>(
         engine.context().getDeviceAllocator(), allocInfo, m_info);
@@ -33,6 +128,41 @@ private:
     // do nothing
   }
   VkImageCreateInfo m_info;
+};
+
+class CopyImageNode : public MatRegularImage {
+public:
+  CopyImageNode(FramedEngine &engine, const MatImage &src,
+                const VkImageCreateInfo &info)
+      : MatRegularImage(FOUses{*std::visit(
+            [](auto &pimg) -> FONodeBase * { return &*pimg; }, src)}),
+        m_info(info),
+        m_isRegularSrc(std::holds_alternative<Ref<MatRegularImage>>(src)) {}
+  VkImage image(FrameID id) const final { return get(id).as<RegularImage>(); }
+  VkImage useImage(const Frame &id) final { return use(id).as<RegularImage>(); }
+  const VkImageCreateInfo &info() const { return m_info; }
+
+private:
+  void m_updateInfo() {
+    auto &srcInfo = m_isRegularSrc ? getUse<MatRegularImage>(0).info()
+                                   : getUse<MatSwapchainImage>(0).info();
+    m_info.extent = srcInfo.extent;
+    m_info.format = srcInfo.format;
+    m_info.arrayLayers = srcInfo.arrayLayers;
+    m_info.mipLevels = srcInfo.mipLevels;
+  }
+  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) {
+    m_updateInfo();
+    vkw::AllocationCreateInfo allocInfo{.usage = VMA_MEMORY_USAGE_GPU_ONLY};
+    return engine.createObject<RegularImage>(
+        engine.context().getDeviceAllocator(), allocInfo, m_info);
+  }
+  bool keepAlive() { return false; }
+  void onUseAction(const Frame &frame, FObject &obj) final {
+    // do nothing
+  }
+  VkImageCreateInfo m_info;
+  bool m_isRegularSrc;
 };
 
 class SwapchainImageNode : public MatSwapchainImage {
@@ -85,27 +215,7 @@ const AttributesBase *RenderPass::getAttributes(
   assert(imageDefInfo.passthrough);
   return useAttributes[*imageDefInfo.passthrough];
 }
-#if 0
-const AttributesBase *GetElement::getAttributes(
-    Context &ctx, const Value &result,
-    std::span<const AttributesBase *> useAttributes) const {
-  assert(&result == results().data());
-  auto *arrayAttr = dyn_cast<Attributes<ArrayTy>>(useAttributes.front());
-  auto *indexAttr = dyn_cast<Attributes<IntegerScalarTy>>(useAttributes.back());
-  assert(arrayAttr && indexAttr);
-  if (auto index = indexAttr->value.getConstant()) {
-    return arrayAttr->elements.at(*index);
-  }
-  return result.type().getUndefined(ctx);
-}
-const AttributesBase *MakeArray::getAttributes(
-    Context &ctx, const Value &result,
-    std::span<const AttributesBase *> useAttributes) const {
-  assert(&result == results().data());
-  assert(useAttributes.size() == std::ranges::size(uses()));
-  return &ctx.attributes().get<Attributes<ArrayTy>>(useAttributes);
-}
-#endif
+
 const AttributesBase *AcquireImage::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
@@ -157,22 +267,6 @@ const AttributesBase *MakeImage::getAttributes(
   return &ctx.attributes().get<Attributes<ImageTy>>(extents, format, layers,
                                                     levels);
 }
-#if 0
-const AttributesBase *SampledImage::getAttributes(
-    Context &ctx, const Value &result,
-    std::span<const AttributesBase *> useAttributes) const {
-  assert(&result == results().data());
-  return &ctx.attributes().get<Attributes<DescriptorTy>>();
-}
-
-const AttributesBase *
-Copy::getAttributes(Context &ctx, const Value &result,
-                    std::span<const AttributesBase *> useAttributes) const {
-  assert(&result == results().data());
-  assert(useAttributes.size() == 1);
-  return useAttributes.front();
-}
-#endif
 
 Node::Def attachmentDef(const Attachment &a) {
   ImageAccessInfo info{};
@@ -223,44 +317,21 @@ const AttributesBase *Dynamic<IntegerScalarTy>::getAttributes(
       dynamic<size_t>(result));
 }
 
-void MakeImage::m_fillTemplate(VkImageCreateInfo &info,
-                               MaterializationContext &ctx) {
-  info.extent = ctx.get<MatExtents>(uses()[0].value());
-  info.format =
-      static_cast<VkFormat>(ctx.get<MatIntegerScalar>(uses()[1].value()));
-  info.arrayLayers = ctx.get<MatIntegerScalar>(uses()[2].value());
-  info.mipLevels = ctx.get<MatIntegerScalar>(uses()[3].value());
-}
-
 bool MakeImage::materialize(MaterializationContext &ctx) {
   auto &engine = ctx.engine();
   auto &value = results().front();
   if (!ctx.startsImageChain(value))
     return false;
   auto templ = ctx.chainImageTemplate(value);
-  m_fillTemplate(templ, ctx);
-  if (ctx.has<MatImage>(value)) {
-    auto &image = *std::get<Ref<MatRegularImage>>(ctx.get<MatImage>(value));
-    // TODO: implement comparison.
-#if 0
-    if (image.info() == templ)
-      return false;
-#endif
-  }
-  ctx.materializeImageChain(value,
-                            engine.createNode<RegularImageNode>(ctx, templ));
+  ctx.materializeImageChain(
+      value, engine.createNode<RegularImageNode>(
+                 ctx, ctx.get<MatExtents>(uses()[0].value()),
+                 ctx.get<MatIntegerScalar>(uses()[1].value()),
+                 ctx.get<MatIntegerScalar>(uses()[2].value()),
+                 ctx.get<MatIntegerScalar>(uses()[3].value()), templ));
   return true;
 }
-void Copy<ImageTy>::m_fillTemplate(VkImageCreateInfo &info,
-                                   MaterializationContext &ctx) {
-  auto &image = ctx.get<MatImage>(uses().front().value());
-  auto &templateInfo = std::visit(
-      [](auto pimg) -> decltype(auto) { return pimg->info(); }, image);
-  info.extent = templateInfo.extent;
-  info.format = templateInfo.format;
-  info.arrayLayers = templateInfo.arrayLayers;
-  info.mipLevels = templateInfo.mipLevels;
-}
+
 static VkImageSubresourceLayers
 completeSubresourceRangeLayers(const VkImageCreateInfo &info) {
   VkImageSubresourceLayers ret{};
@@ -292,28 +363,19 @@ bool Copy<ImageTy>::materialize(MaterializationContext &ctx) {
   if (!ctx.startsImageChain(value))
     return false;
   auto templ = ctx.chainImageTemplate(value);
-  m_fillTemplate(templ, ctx);
-  if (ctx.has<MatImage>(value)) {
-    auto &image = *std::get<Ref<MatRegularImage>>(ctx.get<MatImage>(value));
-    // TODO: implement comparison.
-#if 0
-    if (image.info() == templ)
-      return false;
-#endif
-  }
-  auto dst = engine.createNode<RegularImageNode>(ctx, templ);
   auto src = ctx.get<MatImage>(uses().front().value());
-  auto &info = dst->info();
-  auto subresource = completeSubresourceRangeLayers(info);
-  VkImageCopy region{};
-  region.extent = info.extent;
-  region.srcSubresource = subresource;
-  region.dstSubresource = subresource;
+  auto dst = engine.createNode<CopyImageNode>(src, templ);
 
   ctx.materializeImageChain(value, dst);
-  ctx.materializeNode(*this, [dst = std::move(dst), src = std::move(src),
-                              region](vkw::BufferRecorder &recorder,
-                                      const imvk::Frame &frame) {
+  ctx.materializeNode(*this, [dst = std::move(dst), src = std::move(src)](
+                                 vkw::BufferRecorder &recorder,
+                                 const imvk::Frame &frame) {
+    auto &info = dst->info();
+    auto subresource = completeSubresourceRangeLayers(info);
+    VkImageCopy region{};
+    region.extent = info.extent;
+    region.srcSubresource = subresource;
+    region.dstSubresource = subresource;
     auto transfer = recorder.beginTransferPass();
     transfer.copyImageToImage(
         std::visit([&](auto &pimg) -> VkImage { return pimg->useImage(frame); },
@@ -345,9 +407,10 @@ bool GetExtents::materialize(MaterializationContext &ctx) {
   auto &value = results().front();
   auto &use = uses().front().value();
   auto &image = ctx.get<MatImage>(use);
-  MatExtents extents =
-      std::visit([](auto pimg) { return pimg->info().extent; }, image);
-  ctx.materialize(value, extents);
+  ctx.materialize<MatExtents>(
+      value,
+      engine.createNode<AttributeExtractor<VkExtent3D, MatImage>>(
+          image, [](const VkImageCreateInfo &info) { return info.extent; }));
   return true;
 }
 

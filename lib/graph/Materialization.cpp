@@ -38,36 +38,6 @@ public:
   const VkImageViewCreateInfo &info() const final { return m_info; }
 
 private:
-  static VkImageAspectFlags m_aspectFor(VkFormat format);
-  static bool m_updateCreateInfo(VkImageViewCreateInfo &info,
-                                 const MatIntegerScalar &format,
-                                 const MatIntegerScalar &layers,
-                                 const MatIntegerScalar &levels) {
-    bool outdated = false;
-    outdated |=
-        info.format !=
-        std::exchange(info.format,
-                      static_cast<VkFormat>(static_cast<unsigned>(format)));
-    outdated |= info.subresourceRange.layerCount !=
-                std::exchange(info.subresourceRange.layerCount,
-                              static_cast<unsigned>(layers));
-    outdated |= info.subresourceRange.layerCount !=
-                std::exchange(info.subresourceRange.levelCount,
-                              static_cast<unsigned>(levels));
-    outdated |=
-        info.subresourceRange.aspectMask !=
-        std::exchange(
-            info.subresourceRange.aspectMask,
-            m_aspectFor(static_cast<VkFormat>(static_cast<unsigned>(format))));
-    if (outdated) {
-      info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-      info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-      info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-      info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-      info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-    }
-    return outdated;
-  }
   void onUseAction(const Frame &frame, FObject &obj) final {
     // do nothing
   }

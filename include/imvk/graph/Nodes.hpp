@@ -33,13 +33,7 @@ public:
   std::string_view name() const final { return "constant"; }
   void dumpAttributes(std::ostream &os) const final { os << value; }
   bool hasVisibleSideEffects() const final { return false; }
-  bool materialize(MaterializationContext &ctx) final {
-    if (ctx.has<MatIntegerScalar>(results().front()))
-      return false;
-    ctx.materialize<MatIntegerScalar>(results().front(),
-                                      MatIntegerScalar{value});
-    return true;
-  }
+  bool materialize(MaterializationContext &ctx) final;
 };
 
 template <> class Constant<ExtentsTy> : public Node {
@@ -56,12 +50,7 @@ public:
   void dumpAttributes(std::ostream &os) const final { os << value; }
   bool hasVisibleSideEffects() const final { return false; }
 
-  bool materialize(MaterializationContext &ctx) final {
-    if (ctx.has<MatExtents>(results().front()))
-      return false;
-    ctx.materialize<MatExtents>(results().front(), MatExtents{value});
-    return true;
-  }
+  bool materialize(MaterializationContext &ctx) final;
 };
 
 template <typename Ty> class Dynamic {};
@@ -80,18 +69,7 @@ public:
   std::string_view name() const final { return "dynamic"; }
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
-  bool materialize(MaterializationContext &ctx) final {
-    auto &value = results().front();
-    auto newVal = producer();
-    if (ctx.has<MatIntegerScalar>(value)) {
-      auto oldVal = ctx.get<MatIntegerScalar>(value);
-      if (oldVal == newVal)
-        return false;
-    }
-    ctx.materialize<MatIntegerScalar>(results().front(),
-                                      MatIntegerScalar{newVal});
-    return true;
-  }
+  bool materialize(MaterializationContext &ctx) final;
 };
 
 class MakeImage : public Node {
@@ -111,9 +89,6 @@ public:
   bool hasVisibleSideEffects() const final { return false; }
 
   bool materialize(MaterializationContext &ctx) final;
-
-private:
-  void m_fillTemplate(VkImageCreateInfo &info, MaterializationContext &ctx);
 };
 
 class AcquireImage : public Node {
@@ -198,9 +173,6 @@ public:
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
   bool materialize(MaterializationContext &ctx) final;
-
-private:
-  void m_fillTemplate(VkImageCreateInfo &info, MaterializationContext &ctx);
 };
 
 template <typename T> class Barrier {};
