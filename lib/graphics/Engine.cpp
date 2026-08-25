@@ -6,9 +6,7 @@
 namespace imvk {
 
 SSemaphore::SSemaphore(FramedEngine &engine, Swapchain &swapchain)
-    : Swapchained<vkw::Semaphore>(swapchain) {
-  onConstruct(engine, /* immediate */ true);
-}
+    : Swapchained<vkw::Semaphore>(swapchain) {}
 
 FObject::Ptr SSemaphore::constructOne(FramedEngine &engine, unsigned image) {
   return engine.createObject<vkw::Semaphore>(engine.context().device());
@@ -38,9 +36,10 @@ bool GraphicsEngine::m_aquireSwapchainImage(const Frame &frame) {
   if (status == vkw::SwapChain::AcquireStatus::OUT_OF_DATE ||
       status == vkw::SwapChain::AcquireStatus::SUBOPTIMAL) {
     flush();
-    if (!m_surface_minimized())
-      m_swapchain->reconstruct(*this);
-    ;
+    if (!m_surface_minimized()) {
+      m_swapchain->destroy(/* immediate*/ true);
+      m_swapchain->construct(*this);
+    }
 
     return false;
   }

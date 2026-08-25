@@ -11,9 +11,12 @@
 
 namespace imvk::examples {
 class RenderPass final
-    : public imvk::FONode<vkw::RenderPass, imvk::fon_type::cow> {
+    : public imvk::FONode<vkw::RenderPass, imvk::fon_type::mut> {
 public:
   RenderPass(imvk::GraphicsEngine &engine);
+  void onUse(const imvk::Frame &f) final {
+    // do nothing
+  }
 };
 
 class FrameBuffer final : public Swapchained<vkw::FrameBuffer> {

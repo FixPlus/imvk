@@ -3,7 +3,7 @@
 
 namespace imvk::examples {
 RenderPass::RenderPass(imvk::GraphicsEngine &engine)
-    : imvk::FONode<vkw::RenderPass, imvk::fon_type::cow>(
+    : imvk::FONode<vkw::RenderPass, imvk::fon_type::mut>(
           engine.createObject<vkw::RenderPass>(
               engine.context().device(), [&]() {
                 vkw::RenderPassCreateInfoBuilder infoBuilder{1};
@@ -38,9 +38,7 @@ RenderPass::RenderPass(imvk::GraphicsEngine &engine)
 
 FrameBuffer::FrameBuffer(imvk::GraphicsEngine &engine, SwapchainView &sv,
                          RenderPass &rp)
-    : imvk::Swapchained<vkw::FrameBuffer>(sv, FOUses{rp}) {
-  onConstruct(engine, /* immediate*/ true);
-}
+    : imvk::Swapchained<vkw::FrameBuffer>(sv, FOUses{rp}) {}
 
 FObject::Ptr FrameBuffer::constructOne(FramedEngine &engine, unsigned id) {
   auto &v = view().get(id);

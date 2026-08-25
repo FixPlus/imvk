@@ -60,6 +60,9 @@ template <typename Buf>
 class MyBuffer<Buf, imvk::fon_type::cow>
     : public imvk::FONode<Buf, imvk::fon_type::cow> {
 public:
+  imvk::FObject::Ptr constructNew(imvk::FramedEngine &) noexcept final {
+    return nullptr;
+  }
   template <typename U>
   struct CopyWorkload : public imvk::CopyEngine::Workload {
     CopyWorkload(vkw::StagingBuffer<U> &&src, Buf &dst)
@@ -120,11 +123,11 @@ public:
 };
 
 template <typename Buf>
-class MyBuffer<Buf, imvk::fon_type::swap>
-    : public imvk::FONode<Buf, imvk::fon_type::swap> {
+class MyBuffer<Buf, imvk::fon_type::swap_mut>
+    : public imvk::FONode<Buf, imvk::fon_type::swap_mut> {
 public:
   MyBuffer(imvk::FramedEngine &engine, size_t size, auto &&action)
-      : imvk::FONode<Buf, imvk::fon_type::swap>(
+      : imvk::FONode<Buf, imvk::fon_type::swap_mut>(
             engine,
             [&](imvk::FrameID id) {
               return engine.createObject<Buf>(
@@ -137,7 +140,7 @@ public:
         m_action(std::forward<decltype(action)>(action)) {}
 
   MyBuffer(imvk::FramedEngine &engine, auto &&action)
-      : imvk::FONode<Buf, imvk::fon_type::swap>(
+      : imvk::FONode<Buf, imvk::fon_type::swap_mut>(
             engine,
             [&](imvk::FrameID id) {
               return engine.createObject<Buf>(
@@ -165,7 +168,7 @@ public:
             std::forward<decltype(args)>(args)...) {}
   void descriptorWrite(imvk::FrameID frame, vkw::DescriptorSet &set,
                        unsigned binding) const final {
-    if constexpr (type == imvk::fon_type::swap) {
+    if constexpr (type == imvk::fon_type::swap_mut) {
       set.write(binding, this->get(frame));
     } else {
       set.write(binding, this->get());
@@ -192,7 +195,7 @@ struct MyUniform {
 template <imvk::fon_type PType>
 using MyVertexBuffer = MyBuffer<vkw::VertexBuffer<VertexInfo>, PType>;
 
-using MyUniformBuffer = UniBuffer<MyUniform, imvk::fon_type::swap>;
+using MyUniformBuffer = UniBuffer<MyUniform, imvk::fon_type::swap_mut>;
 
 std::array<VertexInfo, 3> getVerticesForFrame(float time, Pos2D pos,
                                               float scale) {
@@ -249,10 +252,10 @@ private:
 };
 
 class MyCommandBuffer
-    : public imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap> {
+    : public imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap_mut> {
 public:
   MyCommandBuffer(imvk::FramedEngine &engine)
-      : imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap>(
+      : imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap_mut>(
             engine, [&](imvk::FrameID id) {
               return engine.createObject<vkw::PrimaryCommandBuffer>(
                   engine.commandPool());
@@ -391,7 +394,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.
@@ -430,7 +433,7 @@ int app() try {
                                  imvk::examples::AlternateFragmentStage>{
           graphicsEngine, /* cache size*/ 10u};
   auto vertices =
-      graphicsEngine.createNode<MyVertexBuffer<imvk::fon_type::swap>>(
+      graphicsEngine.createNode<MyVertexBuffer<imvk::fon_type::swap_mut>>(
           3, [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
             std::ranges::copy(
                 getVerticesForFrame(window.clock().totalTime().count() / 1000.0,

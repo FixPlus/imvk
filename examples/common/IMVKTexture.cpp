@@ -12,8 +12,8 @@ namespace imvk::examples {
 std::filesystem::path assetsDir() { return IMVK_ASSETS_PATH; }
 SampledView::SampledView(FramedEngine &eng, Texture &texture)
     : FONode<std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
-             fon_type::cow, fon_rec::rec>(doConstructNew(eng, texture.get()),
-                                          FOUses{texture}) {}
+             fon_type::cow>(doConstructNew(eng, texture.get()),
+                            FOUses{texture}) {}
 
 void SampledView::descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                                   unsigned binding) const {

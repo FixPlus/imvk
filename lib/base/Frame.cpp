@@ -9,29 +9,17 @@ void intrusive_ptr_release(FONodeBase *p) {
     delete p;
 }
 
-void FONodeBaseImpl<fon_type::swap, fon_rec::rec>::m_objectsInit(
+void FONodeBaseImpl<fon_type::swap_mut>::m_objectsInit(
     FramedEngine &engine, ObjGen gen,
     boost::container::small_vector_base<FObject::Ptr> &out) {
   std::ranges::transform(engine.frameIds(), std::back_inserter(out), gen);
 }
 
-void FONodeBaseImpl<fon_type::swap, fon_rec::norec>::m_objectsInit(
-    FramedEngine &engine, ObjGen gen,
-    boost::container::small_vector_base<FObject::Ptr> &out) {
-  std::ranges::transform(engine.frameIds(), std::back_inserter(out), gen);
-}
-
-void FONodeBaseImpl<fon_type::swap, fon_rec::expir>::m_objectsInit(
-    FramedEngine &engine, ObjGen gen,
-    boost::container::small_vector_base<FObject::Ptr> &out) {
-  std::ranges::transform(engine.frameIds(), std::back_inserter(out), gen);
-}
-
-void FONodeRecImpl<fon_type::swap>::onConstruct(FramedEngine &engine,
-                                                bool immediate) {
+void FONodeBaseImpl<fon_type::swap>::onConstruct(FramedEngine &engine) {
+  m_objects.resize(engine.getFIFCount());
   for (auto &&id : engine.frameIds()) {
     auto optNew = constructNew(engine, id);
-    if (!keepAlive())
+    if (!keepAlive() || !m_objects[id])
       m_objects[id] = std::move(optNew);
   }
 }

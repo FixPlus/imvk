@@ -98,24 +98,20 @@ class FramedEngine;
 
 class Frame;
 
-template <fon_rec = fon_rec::rec> class DescriptorSet {};
-
 /// @brief Frame-aware descriptor set wrapper.
-template <>
-class DescriptorSet<fon_rec::rec> final
-    : public FONode<DescriptorPool::SetHandle, fon_type::swap, fon_rec::rec> {
+class DescriptorSet final
+    : public FONode<DescriptorPool::SetHandle, fon_type::swap> {
 public:
   DescriptorSet(FramedEngine &engine, DescriptorPool &pool,
                 std::span<std::pair<Descriptable *, unsigned>> descriptors);
 
   vkw::DescriptorSet &use(const Frame &frame) {
-    return *FONode<DescriptorPool::SetHandle, fon_type::swap,
-                   fon_rec::rec>::use(frame);
+    return *FONode<DescriptorPool::SetHandle, fon_type::swap>::use(frame);
   }
   DescriptorPool &pool() { return getUse<DescriptorPool &>(0); }
 
 private:
-  bool keepAlive() final { return true; }
+  bool keepAlive() final { return false; }
   void onUseAction(const Frame &frame, FObject &obj) final;
 
   FObject::Ptr constructNew(FramedEngine &engine, FrameID id) final;
@@ -124,29 +120,9 @@ private:
 
   boost::container::small_vector<std::pair<Descriptable *, unsigned>, 2u>
       m_bindings;
-  std::bitset<8> m_pendingWrites;
 };
 
-template <>
-class DescriptorSet<fon_rec::expir> final
-    : public FONode<DescriptorPool::SetHandle, fon_type::swap, fon_rec::expir> {
-public:
-  DescriptorSet(FramedEngine &engine, DescriptorPool &pool,
-                std::span<std::pair<Descriptable *, unsigned>> descriptors);
-
-  vkw::DescriptorSet &use(const Frame &frame) {
-    return *FONode<DescriptorPool::SetHandle, fon_type::swap,
-                   fon_rec::expir>::use(frame);
-  }
-  DescriptorPool &pool() { return getUse<DescriptorPool &>(0); }
-
-private:
-  void onUseAction(const Frame &frame, FObject &obj) final {
-    // do nothing.
-  }
-};
-
-template <fon_rec F = fon_rec::rec> class DescriptorSetBuilder {
+class DescriptorSetBuilder {
 public:
   DescriptorSetBuilder(FramedEngine &engine, DescriptorPool &pool)
       : m_engine(engine), m_pool(&pool){};
@@ -159,8 +135,8 @@ public:
     descriptors.emplace_back(&desc, binding);
     return std::move(*this);
   }
-  operator Ref<DescriptorSet<F>>() && {
-    return m_engine.createNode<DescriptorSet<F>>(*m_pool, descriptors);
+  operator Ref<DescriptorSet>() && {
+    return m_engine.createNode<DescriptorSet>(*m_pool, descriptors);
   }
 
 private:

@@ -23,10 +23,10 @@ struct GraphicsEngineCreateInfo {
   unsigned maxFramesInFlight;
 };
 
-class Semaphore final : public FONode<vkw::Semaphore, fon_type::swap> {
+class Semaphore final : public FONode<vkw::Semaphore, fon_type::swap_mut> {
 public:
   Semaphore(FramedEngine &engine)
-      : FONode<vkw::Semaphore, fon_type::swap>(engine, [&](auto id) {
+      : FONode<vkw::Semaphore, fon_type::swap_mut>(engine, [&](auto id) {
           return engine.createObject<vkw::Semaphore>(engine.context().device());
         }) {}
 

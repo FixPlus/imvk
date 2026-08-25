@@ -17,20 +17,18 @@ class RegularImageNode : public MatRegularImage {
 public:
   RegularImageNode(FramedEngine &engine, const MaterializationContext &ctx,
                    const VkImageCreateInfo &info)
-      : MatRegularImage(engine,
-                        [&](FrameID id) {
-                          vkw::AllocationCreateInfo allocInfo{
-                              .usage = VMA_MEMORY_USAGE_GPU_ONLY};
-                          return engine.createObject<RegularImage>(
-                              engine.context().getDeviceAllocator(), allocInfo,
-                              info);
-                        }),
-        m_info(info) {}
+      : MatRegularImage(), m_info(info) {}
   VkImage image(FrameID id) const final { return get(id).as<RegularImage>(); }
   VkImage useImage(const Frame &id) final { return use(id).as<RegularImage>(); }
   const VkImageCreateInfo &info() const { return m_info; }
 
 private:
+  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) {
+    vkw::AllocationCreateInfo allocInfo{.usage = VMA_MEMORY_USAGE_GPU_ONLY};
+    return engine.createObject<RegularImage>(
+        engine.context().getDeviceAllocator(), allocInfo, m_info);
+  }
+  bool keepAlive() { return false; }
   void onUseAction(const Frame &frame, FObject &obj) final {
     // do nothing
   }
@@ -41,19 +39,7 @@ class SwapchainImageNode : public MatSwapchainImage {
 public:
   SwapchainImageNode(GraphicsEngine &engine, const MaterializationContext &ctx,
                      const VkImageCreateInfo &info)
-      : MatSwapchainImage(
-            [&]() {
-              auto &swap =
-                  static_cast<GraphicsEngine &>(engine).swapchain().get();
-              boost::container::small_vector<FObject::Ptr, 2> images;
-              std::ranges::transform(swap.images(), std::back_inserter(images),
-                                     [&](auto &image) {
-                                       return engine.createObject<VkImage>(
-                                           image.operator VkImage());
-                                     });
-              return images;
-            }(),
-            FOUses{engine.swapchain()}) {
+      : MatSwapchainImage(FOUses{engine.swapchain()}) {
     m_fillInfo(engine.swapchain().get());
   }
   VkImage image(FrameID id) const final { return get(id).as<VkImage>(); }
@@ -69,6 +55,16 @@ private:
   }
   void onUseAction(const Frame &frame, FObject &obj) final {
     // do nothing
+  }
+  void
+  constructNew(FramedEngine &engine,
+               boost::container::small_vector_base<FObject::Ptr> &res) final {
+    auto &swap = static_cast<GraphicsEngine &>(engine).swapchain().get();
+    m_fillInfo(swap);
+    std::ranges::transform(
+        swap.images(), std::back_inserter(res), [&](auto &image) {
+          return engine.createObject<VkImage>(image.operator VkImage());
+        });
   }
 
   void m_fillInfo(const vkw::SwapChain &swapchain) {
@@ -336,7 +332,7 @@ bool AcquireImage::materialize(MaterializationContext &ctx) {
   if (ctx.has<MatImage>(value)) {
     auto &image = static_cast<SwapchainImageNode &>(
         *std::get<Ref<MatSwapchainImage>>(ctx.get<MatImage>(value)));
-    if (!image.isExpired())
+    if (!image.isDestroyed())
       return false;
   }
   ctx.materializeImageChain(value,
@@ -409,10 +405,7 @@ bool Barrier<ImageTy>::materialize(MaterializationContext &ctx) {
 bool RenderPass::materialize(MaterializationContext &ctx) {
   vkw::RenderingInfo info{};
   PassInfo pInfo{*this, ctx, m_firstDescriptor};
-  auto extents = std::visit([](auto &pimg) { return pimg->info().extent; },
-                            ctx.get<MatImage>(uses().front().value()));
-  auto drawArea = VkRect2D{{0, 0}, {extents.width, extents.height}};
-  info.setRenderArea(drawArea);
+
   boost::container::small_vector<
       std::pair<MatImageView, ImageAttachmentUseInfo::Kind>, 4>
       attachments;
@@ -443,11 +436,16 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
       break;
     }
   }
+  MatImage refImage = ctx.get<MatImage>(uses().front().value());
 
   ctx.materializeNode(*this, [info = std::move(info), pInfo = std::move(pInfo),
-                              attachments = std::move(attachments), drawArea,
+                              attachments = std::move(attachments), refImage,
                               this](vkw::BufferRecorder &recorder,
                                     const imvk::Frame &frame) mutable {
+    auto extents =
+        std::visit([](auto &pimg) { return pimg->info().extent; }, refImage);
+    auto drawArea = VkRect2D{{0, 0}, {extents.width, extents.height}};
+    info.setRenderArea(drawArea);
     auto counter = 0u;
     for (auto &&[view, kind] : attachments) {
       VkImageView handle =

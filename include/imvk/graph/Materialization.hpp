@@ -16,22 +16,20 @@ class MaterializationContext;
 using MatNode = boost::compat::move_only_function<void(
     vkw::BufferRecorder &recorder, const imvk::Frame &frame)>;
 
-class MatRegularImage
-    : public FONodeImpl<imvk::fon_type::swap, imvk::fon_rec::expir> {
+class MatRegularImage : public FONodeBaseImpl<imvk::fon_type::swap> {
 public:
   MatRegularImage(auto &&...args)
-      : FONodeImpl<imvk::fon_type::swap, imvk::fon_rec::expir>(
+      : FONodeBaseImpl<imvk::fon_type::swap>(
             std::forward<decltype(args)>(args)...) {}
   virtual VkImage image(FrameID id) const = 0;
   virtual VkImage useImage(const Frame &id) = 0;
   virtual const VkImageCreateInfo &info() const = 0;
 };
 
-class MatSwapchainImage
-    : public FONodeImpl<imvk::fon_type::ext, imvk::fon_rec::expir> {
+class MatSwapchainImage : public FONodeBaseImpl<imvk::fon_type::ext> {
 public:
   MatSwapchainImage(auto &&...args)
-      : FONodeImpl<imvk::fon_type::ext, imvk::fon_rec::expir>(
+      : FONodeBaseImpl<imvk::fon_type::ext>(
             std::forward<decltype(args)>(args)...) {}
   virtual VkImage image(FrameID id) const = 0;
   virtual VkImage useImage(const Frame &id) = 0;
@@ -40,22 +38,20 @@ public:
 
 using MatImage = std::variant<Ref<MatRegularImage>, Ref<MatSwapchainImage>>;
 
-class MatRegularImageView
-    : public FONodeImpl<imvk::fon_type::swap, imvk::fon_rec::expir> {
+class MatRegularImageView : public FONodeBaseImpl<imvk::fon_type::swap> {
 public:
   MatRegularImageView(auto &&...args)
-      : FONodeImpl<imvk::fon_type::swap, imvk::fon_rec::expir>(
+      : FONodeBaseImpl<imvk::fon_type::swap>(
             std::forward<decltype(args)>(args)...) {}
   virtual VkImageView view(FrameID id) const = 0;
   virtual VkImageView useView(const Frame &id) = 0;
   virtual const VkImageViewCreateInfo &info() const = 0;
 };
 
-class MatSwapchainImageView
-    : public FONodeImpl<imvk::fon_type::ext, imvk::fon_rec::expir> {
+class MatSwapchainImageView : public FONodeBaseImpl<imvk::fon_type::ext> {
 public:
   MatSwapchainImageView(auto &&...args)
-      : FONodeImpl<imvk::fon_type::ext, imvk::fon_rec::expir>(
+      : FONodeBaseImpl<imvk::fon_type::ext>(
             std::forward<decltype(args)>(args)...) {}
   virtual VkImageView view(FrameID id) const = 0;
   virtual VkImageView useView(const Frame &id) = 0;

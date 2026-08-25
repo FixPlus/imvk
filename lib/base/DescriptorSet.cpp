@@ -93,69 +93,35 @@ const vkw::DescriptorSetLayout &DescriptorPoolImpl::layout() {
   return m_layout;
 }
 
-void DescriptorSet<fon_rec::rec>::writeDescriptors(vkw::DescriptorSet &set,
-                                                   FrameID frame) {
+void DescriptorSet::writeDescriptors(vkw::DescriptorSet &set, FrameID frame) {
   for (auto &&[child, binding] : m_bindings) {
     child->descriptorWrite(frame, set, binding);
   }
 }
-void DescriptorSet<fon_rec::rec>::writeDescriptors(FrameID frame) {
+void DescriptorSet::writeDescriptors(FrameID frame) {
   auto &set = get(frame);
   writeDescriptors(*set, frame);
 }
 
-DescriptorSet<fon_rec::rec>::DescriptorSet(
+DescriptorSet::DescriptorSet(
     FramedEngine &engine, DescriptorPool &pool,
     std::span<std::pair<Descriptable *, unsigned>> bindings)
-    : FONode<DescriptorPool::SetHandle, fon_type::swap, fon_rec::rec>(
-          engine,
-          [&](FrameID id) {
-            return engine.createObject<DescriptorPool::SetHandle>(
-                pool.createSet());
-          },
-          FOUses(pool).addUses(
-              bindings | std::views::transform([](auto &&p) -> decltype(auto) {
-                return dynamic_cast<FONodeBase &>(*p.first);
-              }))) {
+    : FONode<DescriptorPool::SetHandle, fon_type::swap>(FOUses(pool).addUses(
+          bindings | std::views::transform([](auto &&p) -> decltype(auto) {
+            return dynamic_cast<FONodeBase &>(*p.first);
+          }))) {
   std::ranges::copy(bindings, std::back_inserter(m_bindings));
-  std::ranges::for_each(engine.frameIds(),
-                        [this](FrameID frame) { writeDescriptors(frame); });
 }
 
-DescriptorSet<fon_rec::expir>::DescriptorSet(
-    FramedEngine &engine, DescriptorPool &pool,
-    std::span<std::pair<Descriptable *, unsigned>> bindings)
-    : FONode<DescriptorPool::SetHandle, fon_type::swap, fon_rec::expir>(
-          engine,
-          [&](FrameID id) {
-            return engine.createObject<DescriptorPool::SetHandle>(
-                pool.createSet());
-          },
-          FOUses(pool).addUses(
-              bindings | std::views::transform([](auto &&p) -> decltype(auto) {
-                return dynamic_cast<FONodeBase &>(*p.first);
-              }))) {
-  std::ranges::for_each(engine.frameIds(), [this, &bindings](FrameID frame) {
-    auto &set = get(frame);
-    for (auto &&[child, binding] : bindings) {
-      child->descriptorWrite(frame, *set, binding);
-    }
-  });
+void DescriptorSet::onUseAction(const Frame &frame, FObject &obj) {
+  // nothin to do for now.
 }
+FObject::Ptr DescriptorSet::constructNew(FramedEngine &engine, FrameID id) {
 
-void DescriptorSet<fon_rec::rec>::onUseAction(const Frame &frame,
-                                              FObject &obj) {
-  auto &id = frame.id();
-  if (m_pendingWrites.test(id)) {
-    writeDescriptors(id);
-    m_pendingWrites.set(id, false);
-  }
-}
-FObject::Ptr DescriptorSet<fon_rec::rec>::constructNew(FramedEngine &engine,
-                                                       FrameID id) {
-  m_pendingWrites.set(id, true);
-
-  return nullptr;
+  auto ret = engine.createObject<DescriptorPool::SetHandle>(
+      getUse<DescriptorPool>(0).createSet());
+  writeDescriptors(*ret->as<DescriptorPool::SetHandle>(), id);
+  return ret;
 }
 
 } // namespace imvk

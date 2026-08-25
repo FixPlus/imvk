@@ -282,7 +282,7 @@ public:
     struct PassDescriptors {
       vkw::DescriptorSetLayout layout;
       Ref<DescriptorPool> pool;
-      Ref<DescriptorSet<fon_rec::expir>> set;
+      Ref<DescriptorSet> set;
       PassDescriptors(RenderPass &pass, MaterializationContext &ctx,
                       unsigned firstDescriptor);
     };

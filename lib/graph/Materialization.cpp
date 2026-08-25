@@ -28,20 +28,7 @@ public:
   RegularImageViewNode(FramedEngine &engine, const MaterializationContext &ctx,
                        MatRegularImage &image,
                        const VkImageViewCreateInfo &info)
-      : MatRegularImageView(
-            engine,
-            [&](FrameID frame) {
-              VkImageViewCreateInfo infoCopy = info;
-              infoCopy.image = image.image(frame);
-              auto &device = engine.context().device();
-              VkImageView ret{};
-              // todo check result.
-              device.core<1, 0>().vkCreateImageView(
-                  device, &infoCopy, vkw::HostAllocator::get(), &ret);
-              return engine.createObject<RegularImageView>(device, ret);
-            },
-            FOUses{image}),
-        m_info(info) {}
+      : MatRegularImageView(FOUses{image}), m_info(info) {}
   VkImageView view(FrameID id) const final {
     return get(id).as<RegularImageView>();
   }
@@ -84,6 +71,17 @@ private:
   void onUseAction(const Frame &frame, FObject &obj) final {
     // do nothing
   }
+  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) final {
+    VkImageViewCreateInfo infoCopy = m_info;
+    infoCopy.image = getUse<MatRegularImage>(0).image(frame);
+    auto &device = engine.context().device();
+    VkImageView ret{};
+    // todo check result.
+    device.core<1, 0>().vkCreateImageView(device, &infoCopy,
+                                          vkw::HostAllocator::get(), &ret);
+    return engine.createObject<RegularImageView>(device, ret);
+  }
+  bool keepAlive() final { return false; }
   VkImageViewCreateInfo m_info{};
 };
 
@@ -93,28 +91,7 @@ public:
                          const MaterializationContext &ctx,
                          MatSwapchainImage &image,
                          const VkImageViewCreateInfo &info)
-      : MatSwapchainImageView(
-            [&]() {
-              auto &swap =
-                  static_cast<GraphicsEngine &>(engine).swapchain().get();
-              boost::container::small_vector<FObject::Ptr, 2> res;
-              auto images = swap.images();
-              auto &parent = image;
-              std::ranges::transform(
-                  std::ranges::iota_view{0ul, std::ranges::size(images)},
-                  std::back_inserter(res), [&](auto index) {
-                    VkImageViewCreateInfo infoCopy = info;
-                    infoCopy.image = parent.image(index);
-                    auto &device = engine.context().device();
-                    VkImageView ret{};
-                    // todo check result.
-                    device.core<1, 0>().vkCreateImageView(
-                        device, &infoCopy, vkw::HostAllocator::get(), &ret);
-                    return engine.createObject<RegularImageView>(device, ret);
-                  });
-              return res;
-            }(),
-            FOUses{image}) {}
+      : MatSwapchainImageView(FOUses{image}), m_info(info) {}
   VkImageView view(FrameID id) const final {
     return get(id).as<RegularImageView>();
   }
@@ -132,6 +109,25 @@ private:
   }
   void onUseAction(const Frame &frame, FObject &obj) final {
     // do nothing
+  }
+  void
+  constructNew(FramedEngine &engine,
+               boost::container::small_vector_base<FObject::Ptr> &res) final {
+    auto &swap = static_cast<GraphicsEngine &>(engine).swapchain().get();
+    auto images = swap.images();
+    auto &parent = getUse<MatSwapchainImage>(0);
+    std::ranges::transform(
+        std::ranges::iota_view{0ul, std::ranges::size(images)},
+        std::back_inserter(res), [&](auto index) {
+          VkImageViewCreateInfo infoCopy = m_info;
+          infoCopy.image = parent.image(index);
+          auto &device = engine.context().device();
+          VkImageView ret{};
+          // todo check result.
+          device.core<1, 0>().vkCreateImageView(
+              device, &infoCopy, vkw::HostAllocator::get(), &ret);
+          return engine.createObject<RegularImageView>(device, ret);
+        });
   }
   VkImageViewCreateInfo m_info;
 };
