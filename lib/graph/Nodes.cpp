@@ -25,47 +25,21 @@ template <typename T, typename U>
 class AttributeExtractor : public MatHostValue<T> {
 public:
   AttributeExtractor(FramedEngine &e, U &src, auto &&extractor)
-      : MatHostValue<T>(e.createObject<void>(), FOUses{src}),
-        m_value(extractor(src)),
+      : MatHostValue<T>(FOUses{static_cast<FONodeBase &>(src)}), m_src(src),
         m_extractor(std::forward<decltype(extractor)>(extractor)) {}
-  const T &value() const final { return m_value; }
+  const T &value() const final {
+    assert(!this->isDestroyed());
+    return m_value;
+  }
 
 private:
   FObject::Ptr constructNew(FramedEngine &engine) noexcept {
-    m_value = m_extractor(getUse<U>(0));
+    m_value = m_extractor(m_src);
     return engine.createObject<void>();
   }
   T m_value;
+  U &m_src;
   boost::compat::function_ref<T(const U &)> m_extractor;
-};
-
-template <typename T>
-class AttributeExtractor<T, MatImage> : public MatHostValue<T> {
-public:
-  AttributeExtractor(FramedEngine &e, const MatImage &src, auto &&extractor)
-      : MatHostValue<T>(
-            e.createObject<void>(),
-            FOUses{*std::visit(
-                [](auto &pimg) -> FONodeBase * { return &*pimg; }, src)}),
-        m_value([&]() {
-          auto &info = std::visit(
-              [](auto &pimg) -> decltype(auto) { return pimg->info(); }, src);
-          return extractor(info);
-        }()),
-        m_extractor(std::forward<decltype(extractor)>(extractor)),
-        m_isRegularSrc(std::holds_alternative<Ref<MatRegularImage>>(src)) {}
-  const T &value() const final { return m_value; }
-
-private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept {
-    auto &srcInfo = m_isRegularSrc ? this->getUse<MatRegularImage>(0).info()
-                                   : this->getUse<MatSwapchainImage>(0).info();
-    m_value = m_extractor(srcInfo);
-    return engine.createObject<void>();
-  }
-  T m_value;
-  boost::compat::function_ref<T(const VkImageCreateInfo &)> m_extractor;
-  bool m_isRegularSrc;
 };
 
 bool Constant<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
@@ -104,18 +78,24 @@ public:
   operator VkImage() const noexcept { return handle(); }
 };
 
-class RegularImageNode : public MatRegularImage {
+class RegularImageNode : public FONode<RegularImage, fon_type::swap>,
+                         public MatImageBase {
 public:
   RegularImageNode(FramedEngine &engine, const MaterializationContext &ctx,
                    const MatExtents &extents, const MatIntegerScalar &format,
                    const MatIntegerScalar &layers,
                    const MatIntegerScalar &levels,
                    const VkImageCreateInfo &info)
-      : MatRegularImage(FOUses{*extents, *format, *layers, *levels}),
-        m_info(info) {}
-  VkImage image(FrameID id) const final { return get(id).as<RegularImage>(); }
-  VkImage useImage(const Frame &id) final { return use(id).as<RegularImage>(); }
-  const VkImageCreateInfo &info() const { return m_info; }
+      : FONode<RegularImage, fon_type::swap>(
+            FOUses{*extents, *format, *layers, *levels}),
+        MatImageBase(fon_type::swap), m_info(info) {}
+  FOReconstructible &node() override { return *this; }
+  VkImage image(FrameID id) const final { return get(id); }
+  VkImage useImage(const Frame &id) final { return use(id); }
+  const VkImageCreateInfo &info() const {
+    assert(!isDestroyed());
+    return m_info;
+  }
 
 private:
   void m_updateInfo() {
@@ -138,22 +118,35 @@ private:
   VkImageCreateInfo m_info;
 };
 
-class CopyImageNode : public MatRegularImage {
+inline void intrusive_ptr_add_ref(RegularImageNode *p) {
+  assert(p);
+  intrusive_ptr_add_ref(static_cast<FONodeBase *>(p));
+}
+inline void intrusive_ptr_release(RegularImageNode *p) {
+  assert(p);
+  intrusive_ptr_release(static_cast<FONodeBase *>(p));
+}
+
+class CopyImageNode : public FONode<RegularImage, fon_type::swap>,
+                      public MatImageBase {
 public:
   CopyImageNode(FramedEngine &engine, const MatImage &src,
                 const VkImageCreateInfo &info)
-      : MatRegularImage(FOUses{*std::visit(
-            [](auto &pimg) -> FONodeBase * { return &*pimg; }, src)}),
-        m_info(info),
-        m_isRegularSrc(std::holds_alternative<Ref<MatRegularImage>>(src)) {}
-  VkImage image(FrameID id) const final { return get(id).as<RegularImage>(); }
-  VkImage useImage(const Frame &id) final { return use(id).as<RegularImage>(); }
-  const VkImageCreateInfo &info() const { return m_info; }
+      : FONode<RegularImage, fon_type::swap>(FOUses{src->node()}),
+        MatImageBase(fon_type::swap), m_info(info) {}
+  FOReconstructible &node() override { return *this; }
+  VkImage image(FrameID id) const final { return get(id); }
+  VkImage useImage(const Frame &id) final { return use(id); }
+  const VkImageCreateInfo &info() const {
+    assert(!isDestroyed());
+    return m_info;
+  }
 
 private:
   void m_updateInfo() {
-    auto &srcInfo = m_isRegularSrc ? getUse<MatRegularImage>(0).info()
-                                   : getUse<MatSwapchainImage>(0).info();
+    auto *img = dynamic_cast<MatImageBase *>(&getUse(0));
+    assert(img);
+    auto &srcInfo = img->info();
     m_info.extent = srcInfo.extent;
     m_info.format = srcInfo.format;
     m_info.arrayLayers = srcInfo.arrayLayers;
@@ -170,19 +163,33 @@ private:
     // do nothing
   }
   VkImageCreateInfo m_info;
-  bool m_isRegularSrc;
 };
 
-class SwapchainImageNode : public MatSwapchainImage {
+inline void intrusive_ptr_add_ref(CopyImageNode *p) {
+  assert(p);
+  intrusive_ptr_add_ref(static_cast<FONodeBase *>(p));
+}
+inline void intrusive_ptr_release(CopyImageNode *p) {
+  assert(p);
+  intrusive_ptr_release(static_cast<FONodeBase *>(p));
+}
+
+class SwapchainImageNode : public FONode<VkImage, fon_type::ext>,
+                           public MatImageBase {
 public:
   SwapchainImageNode(GraphicsEngine &engine, const MaterializationContext &ctx,
                      const VkImageCreateInfo &info)
-      : MatSwapchainImage(FOUses{engine.swapchain()}) {
+      : FONode<VkImage, fon_type::ext>(FOUses{engine.swapchain()}),
+        MatImageBase(fon_type::ext) {
     m_fillInfo(engine.swapchain().get());
   }
-  VkImage image(FrameID id) const final { return get(id).as<VkImage>(); }
-  VkImage useImage(const Frame &id) final { return use(id).as<VkImage>(); }
-  const VkImageCreateInfo &info() const { return m_info; }
+  FOReconstructible &node() override { return *this; }
+  VkImage image(FrameID id) const final { return get(id); }
+  VkImage useImage(const Frame &id) final { return use(id); }
+  const VkImageCreateInfo &info() const {
+    assert(!isDestroyed());
+    return m_info;
+  }
 
 private:
   unsigned getExtIndex(const Frame &frame) const final {
@@ -213,23 +220,38 @@ private:
   VkImageCreateInfo m_info;
 };
 
+inline void intrusive_ptr_add_ref(SwapchainImageNode *p) {
+  assert(p);
+  intrusive_ptr_add_ref(static_cast<FONodeBase *>(p));
+}
+inline void intrusive_ptr_release(SwapchainImageNode *p) {
+  assert(p);
+  intrusive_ptr_release(static_cast<FONodeBase *>(p));
+}
+
 class ImageSampledAdaptor : public FONode<vkw::Sampler, fon_type::cow>,
                             public Descriptable {
 public:
-  ImageSampledAdaptor(FramedEngine &engine, MatRegularImageView &view,
+  ImageSampledAdaptor(FramedEngine &engine, const MatImageView &view,
                       VkImageLayout layout)
       : FONode<vkw::Sampler, fon_type::cow>(
             engine.createObject<vkw::Sampler>(m_createSampler(engine)),
-            FOUses{view}),
+            FOUses{view->node()}),
         m_layout(layout) {
-    if (view.isDestroyed())
-      view.construct(engine);
+    if (view->type() == fon_type::ext) {
+      throw std::runtime_error(
+          "Cannot create descriptor adaptor for external object");
+    }
+    auto &node = view->node();
+    if (node.isDestroyed())
+      node.construct(engine);
   }
 
   void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                        unsigned binding) const final {
-    set.write(binding, getUse<MatRegularImageView>(0).view(frame), m_layout,
-              get());
+    auto *view = dynamic_cast<MatImageViewBase *>(&getUse(0));
+    assert(view);
+    set.write(binding, view->view(frame), m_layout, get());
   }
 
 private:
@@ -424,26 +446,22 @@ bool Copy<ImageTy>::materialize(MaterializationContext &ctx) {
   auto src = ctx.get<MatImage>(uses().front().value());
   auto dst = ctx.get<MatImage>(uses().back().value());
 
-  ctx.materializeNode(*this, [dst = std::move(dst), src = std::move(src)](
-                                 vkw::BufferRecorder &recorder,
-                                 const imvk::Frame &frame) {
-    auto getView = [&](auto &pimg) -> VkImage { return pimg->useImage(frame); };
-    auto getInfo = [&](auto &pimg) -> const VkImageCreateInfo & {
-      return pimg->info();
-    };
-    auto viewSrc = std::visit(getView, src);
-    auto viewDst = std::visit(getView, dst);
-    auto &info = std::visit(getInfo, dst);
-    auto subresource = completeSubresourceRangeLayers(info);
-    VkImageCopy region{};
-    region.extent = info.extent;
-    region.srcSubresource = subresource;
-    region.dstSubresource = subresource;
-    auto transfer = recorder.beginTransferPass();
-    transfer.copyImageToImage(viewSrc, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                              viewDst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              std::array{region});
-  });
+  ctx.materializeNode(
+      *this, [dst = std::move(dst), src = std::move(src)](
+                 vkw::BufferRecorder &recorder, const imvk::Frame &frame) {
+        auto viewSrc = src->useImage(frame);
+        auto viewDst = dst->useImage(frame);
+        auto &info = dst->info();
+        auto subresource = completeSubresourceRangeLayers(info);
+        VkImageCopy region{};
+        region.extent = info.extent;
+        region.srcSubresource = subresource;
+        region.dstSubresource = subresource;
+        auto transfer = recorder.beginTransferPass();
+        transfer.copyImageToImage(viewSrc, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                  viewDst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                  std::array{region});
+      });
   return true;
 }
 
@@ -452,12 +470,6 @@ bool AcquireImage::materialize(MaterializationContext &ctx) {
   auto &value = results().front();
   assert(ctx.startsImageChain(value));
   auto &templ = ctx.chainImageTemplate(value);
-  if (ctx.has<MatImage>(value)) {
-    auto &image = static_cast<SwapchainImageNode &>(
-        *std::get<Ref<MatSwapchainImage>>(ctx.get<MatImage>(value)));
-    if (!image.isDestroyed())
-      return false;
-  }
   ctx.materializeImageChain(value,
                             engine.createNode<SwapchainImageNode>(ctx, templ));
   return true;
@@ -469,9 +481,8 @@ bool GetExtents::materialize(MaterializationContext &ctx) {
   auto &use = uses().front().value();
   auto &image = ctx.get<MatImage>(use);
   ctx.materialize<MatExtents>(
-      value,
-      engine.createNode<AttributeExtractor<VkExtent3D, MatImage>>(
-          image, [](const VkImageCreateInfo &info) { return info.extent; }));
+      value, engine.createNode<AttributeExtractor<VkExtent3D, MatImageBase>>(
+                 *image, [](auto &image) { return image.info().extent; }));
   return true;
 }
 
@@ -513,13 +524,11 @@ bool Barrier<ImageTy>::materialize(MaterializationContext &ctx) {
   }
   auto image = ctx.get<MatImage>(uses().front().value());
 
-  barrier.subresourceRange = completeSubresourceRange(std::visit(
-      [](auto &pimg) -> decltype(auto) { return pimg->info(); }, image));
   ctx.materializeNode(*this, [image = std::move(image), barrier, srcStage,
                               dstStage](vkw::BufferRecorder &recorder,
                                         const imvk::Frame &frame) mutable {
-    barrier.image = std::visit(
-        [&frame](auto &pimg) { return pimg->useImage(frame); }, image);
+    barrier.image = image->useImage(frame);
+    barrier.subresourceRange = completeSubresourceRange(image->info());
     auto transfer = recorder.beginTransferPass();
     transfer.imageMemoryBarrier(srcStage, dstStage, std::array{barrier});
   });
@@ -566,14 +575,12 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
                               attachments = std::move(attachments), refImage,
                               this](vkw::BufferRecorder &recorder,
                                     const imvk::Frame &frame) mutable {
-    auto extents =
-        std::visit([](auto &pimg) { return pimg->info().extent; }, refImage);
+    auto extents = refImage->info().extent;
     auto drawArea = VkRect2D{{0, 0}, {extents.width, extents.height}};
     info.setRenderArea(drawArea);
     auto counter = 0u;
     for (auto &&[view, kind] : attachments) {
-      VkImageView handle =
-          std::visit([&](auto &ping) { return ping->useView(frame); }, view);
+      VkImageView handle = view->useView(frame);
       switch (kind) {
       case ImageAttachmentUseInfo::Kind::color:
         info.setColorView(handle, counter++);
@@ -616,12 +623,8 @@ RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
         for (auto &&use : pass.uses() | std::views::drop(firstDescriptor)) {
           auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
           auto view = ctx.get<MatImageView>(use.value());
-          if (std::holds_alternative<Ref<MatSwapchainImageView>>(view))
-            throw std::runtime_error(
-                "Swapchain image views are not supported for descriptors yet");
-          auto &regularView = std::get<Ref<MatRegularImageView>>(view);
           auto combinedSampler = ctx.engine().createNode<ImageSampledAdaptor>(
-              *regularView, info.access.layout);
+              view, info.access.layout);
           descriptables.emplace_back(combinedSampler);
           descriptablesView.emplace_back(combinedSampler.get(), counter++);
         }
@@ -671,11 +674,10 @@ RenderPass::PipeHook::PipeHook(GraphicsEngine &engine, RenderPass &pass,
         for (auto &&use : pass.uses() | std::views::take(firstDescriptor)) {
           auto kind =
               static_cast<const ImageAttachmentUseInfo &>(*use.info()).kind;
-          auto format =
-              std::visit(
-                  [](auto &pimg) -> decltype(auto) { return pimg->info(); },
-                  ctx.get<MatImage>(use.value()))
-                  .format;
+          auto &img = *ctx.get<MatImage>(use.value());
+          if (img.node().isDestroyed())
+            img.node().construct(ctx.engine());
+          auto format = img.info().format;
           switch (kind) {
           case ImageAttachmentUseInfo::Kind::color:
             info.addColorAttachment(format, false);

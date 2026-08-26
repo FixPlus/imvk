@@ -16,50 +16,59 @@ class MaterializationContext;
 using MatNode = boost::compat::move_only_function<void(
     vkw::BufferRecorder &recorder, const imvk::Frame &frame)>;
 
-class MatRegularImage : public FONodeBaseImpl<imvk::fon_type::swap> {
+class MatImageBase {
 public:
-  MatRegularImage(auto &&...args)
-      : FONodeBaseImpl<imvk::fon_type::swap>(
-            std::forward<decltype(args)>(args)...) {}
+  MatImageBase(imvk::fon_type type) : m_type(type) {}
+  virtual FOReconstructible &node() = 0;
   virtual VkImage image(FrameID id) const = 0;
   virtual VkImage useImage(const Frame &id) = 0;
   virtual const VkImageCreateInfo &info() const = 0;
+  imvk::fon_type type() const { return m_type; }
+  virtual ~MatImageBase() = default;
+
+  operator FONodeBase &() { return node(); }
+
+private:
+  imvk::fon_type m_type;
 };
 
-class MatSwapchainImage : public FONodeBaseImpl<imvk::fon_type::ext> {
-public:
-  MatSwapchainImage(auto &&...args)
-      : FONodeBaseImpl<imvk::fon_type::ext>(
-            std::forward<decltype(args)>(args)...) {}
-  virtual VkImage image(FrameID id) const = 0;
-  virtual VkImage useImage(const Frame &id) = 0;
-  virtual const VkImageCreateInfo &info() const = 0;
-};
+inline void intrusive_ptr_add_ref(MatImageBase *p) {
+  assert(p);
+  intrusive_ptr_add_ref(&p->node());
+}
+inline void intrusive_ptr_release(MatImageBase *p) {
+  assert(p);
+  intrusive_ptr_release(&p->node());
+}
 
-using MatImage = std::variant<Ref<MatRegularImage>, Ref<MatSwapchainImage>>;
+using MatImage = Ref<MatImageBase>;
 
-class MatRegularImageView : public FONodeBaseImpl<imvk::fon_type::swap> {
+class MatImageViewBase {
 public:
-  MatRegularImageView(auto &&...args)
-      : FONodeBaseImpl<imvk::fon_type::swap>(
-            std::forward<decltype(args)>(args)...) {}
+  MatImageViewBase(imvk::fon_type type) : m_type(type) {}
+  virtual FOReconstructible &node() = 0;
   virtual VkImageView view(FrameID id) const = 0;
   virtual VkImageView useView(const Frame &id) = 0;
   virtual const VkImageViewCreateInfo &info() const = 0;
+  imvk::fon_type type() const { return m_type; }
+  virtual ~MatImageViewBase() = default;
+  operator FONodeBase &() { return node(); }
+
+private:
+  imvk::fon_type m_type;
 };
 
-class MatSwapchainImageView : public FONodeBaseImpl<imvk::fon_type::ext> {
-public:
-  MatSwapchainImageView(auto &&...args)
-      : FONodeBaseImpl<imvk::fon_type::ext>(
-            std::forward<decltype(args)>(args)...) {}
-  virtual VkImageView view(FrameID id) const = 0;
-  virtual VkImageView useView(const Frame &id) = 0;
-  virtual const VkImageViewCreateInfo &info() const = 0;
-};
+inline void intrusive_ptr_add_ref(MatImageViewBase *p) {
+  assert(p);
+  intrusive_ptr_add_ref(&p->node());
+}
 
-using MatImageView =
-    std::variant<Ref<MatRegularImageView>, Ref<MatSwapchainImageView>>;
+inline void intrusive_ptr_release(MatImageViewBase *p) {
+  assert(p);
+  intrusive_ptr_release(&p->node());
+}
+
+using MatImageView = Ref<MatImageViewBase>;
 
 template <typename T>
 class MatHostValue : public FONodeBaseImpl<imvk::fon_type::cow> {

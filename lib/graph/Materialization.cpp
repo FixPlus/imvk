@@ -23,19 +23,34 @@ private:
   std::unique_ptr<VkImageView_T, ViewDestructor> m_imageView;
 };
 
-class RegularImageViewNode : public MatRegularImageView {
+static void completeImageViewInfo(VkImageViewCreateInfo &info,
+                                  MatImageBase &image, FrameID id) {
+  auto &imgInfo = image.info();
+  info.image = image.image(id);
+  info.format = imgInfo.format;
+  info.subresourceRange.layerCount = imgInfo.arrayLayers;
+  info.subresourceRange.levelCount = imgInfo.mipLevels;
+  info.subresourceRange.aspectMask =
+      vkw::ImageInterface::isColorFormat(imgInfo.format)
+          ? VK_IMAGE_ASPECT_COLOR_BIT
+          : VK_IMAGE_ASPECT_DEPTH_BIT;
+}
+class RegularImageViewNode : public FONode<RegularImageView, fon_type::swap>,
+                             public MatImageViewBase {
 public:
-  RegularImageViewNode(FramedEngine &engine, const MaterializationContext &ctx,
-                       MatRegularImage &image,
+  RegularImageViewNode(FramedEngine &engine, const MatImage &image,
                        const VkImageViewCreateInfo &info)
-      : MatRegularImageView(FOUses{image}), m_info(info) {}
-  VkImageView view(FrameID id) const final {
-    return get(id).as<RegularImageView>();
+      : FONode<RegularImageView, fon_type::swap>(FOUses{image->node()}),
+        MatImageViewBase(fon_type::swap), m_info(info) {
+    assert(image->type() == fon_type::swap);
   }
-  VkImageView useView(const Frame &id) final {
-    return use(id).as<RegularImageView>();
+  FOReconstructible &node() final { return *this; }
+  VkImageView view(FrameID id) const final { return get(id); }
+  VkImageView useView(const Frame &id) final { return use(id); }
+  const VkImageViewCreateInfo &info() const final {
+    assert(!isDestroyed());
+    return m_info;
   }
-  const VkImageViewCreateInfo &info() const final { return m_info; }
 
 private:
   void onUseAction(const Frame &frame, FObject &obj) final {
@@ -43,7 +58,9 @@ private:
   }
   FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) final {
     VkImageViewCreateInfo infoCopy = m_info;
-    infoCopy.image = getUse<MatRegularImage>(0).image(frame);
+    auto *img = dynamic_cast<MatImageBase *>(&getUse(0));
+    assert(img);
+    completeImageViewInfo(infoCopy, *img, frame);
     auto &device = engine.context().device();
     VkImageView ret{};
     // todo check result.
@@ -55,20 +72,31 @@ private:
   VkImageViewCreateInfo m_info{};
 };
 
-class SwapchainImageViewNode : public MatSwapchainImageView {
+inline void intrusive_ptr_add_ref(RegularImageViewNode *p) {
+  assert(p);
+  intrusive_ptr_add_ref(static_cast<FONodeBase *>(p));
+}
+inline void intrusive_ptr_release(RegularImageViewNode *p) {
+  assert(p);
+  intrusive_ptr_release(static_cast<FONodeBase *>(p));
+}
+
+class SwapchainImageViewNode : public FONode<RegularImageView, fon_type::ext>,
+                               public MatImageViewBase {
 public:
-  SwapchainImageViewNode(FramedEngine &engine,
-                         const MaterializationContext &ctx,
-                         MatSwapchainImage &image,
+  SwapchainImageViewNode(FramedEngine &engine, const MatImage &image,
                          const VkImageViewCreateInfo &info)
-      : MatSwapchainImageView(FOUses{image}), m_info(info) {}
-  VkImageView view(FrameID id) const final {
-    return get(id).as<RegularImageView>();
+      : FONode<RegularImageView, fon_type::ext>(FOUses{image->node()}),
+        MatImageViewBase(fon_type::ext), m_info(info) {
+    assert(image->type() == fon_type::ext);
   }
-  VkImageView useView(const Frame &id) final {
-    return use(id).as<RegularImageView>();
+  FOReconstructible &node() final { return *this; }
+  VkImageView view(FrameID id) const final { return get(id); }
+  VkImageView useView(const Frame &id) final { return use(id); }
+  const VkImageViewCreateInfo &info() const final {
+    assert(!isDestroyed());
+    return m_info;
   }
-  const VkImageViewCreateInfo &info() const final { return m_info; }
 
 private:
   unsigned getExtIndex(const Frame &frame) const final {
@@ -85,12 +113,14 @@ private:
                boost::container::small_vector_base<FObject::Ptr> &res) final {
     auto &swap = static_cast<GraphicsEngine &>(engine).swapchain().get();
     auto images = swap.images();
-    auto &parent = getUse<MatSwapchainImage>(0);
+    auto *img = dynamic_cast<MatImageBase *>(&getUse(0));
+    assert(img);
+    auto &parent = *img;
     std::ranges::transform(
         std::ranges::iota_view{0ul, std::ranges::size(images)},
         std::back_inserter(res), [&](auto index) {
           VkImageViewCreateInfo infoCopy = m_info;
-          infoCopy.image = parent.image(index);
+          completeImageViewInfo(infoCopy, *img, index);
           auto &device = engine.context().device();
           VkImageView ret{};
           // todo check result.
@@ -102,14 +132,27 @@ private:
   VkImageViewCreateInfo m_info;
 };
 
+inline void intrusive_ptr_add_ref(SwapchainImageViewNode *p) {
+  assert(p);
+  intrusive_ptr_add_ref(static_cast<FONodeBase *>(p));
+}
+inline void intrusive_ptr_release(SwapchainImageViewNode *p) {
+  assert(p);
+  intrusive_ptr_release(static_cast<FONodeBase *>(p));
+}
+
 static MatImageView createImageView(const MaterializationContext &ctx,
                                     const MatImage &image,
                                     const VkImageViewCreateInfo &info) {
-  if (std::holds_alternative<Ref<MatRegularImage>>(image))
-    return ctx.engine().createNode<RegularImageViewNode>(
-        ctx, *std::get<Ref<MatRegularImage>>(image), info);
-  return ctx.engine().createNode<SwapchainImageViewNode>(
-      ctx, *std::get<Ref<MatSwapchainImage>>(image), info);
+  switch (image->type()) {
+  case fon_type::swap:
+    return ctx.engine().createNode<RegularImageViewNode>(image, info);
+  case fon_type::ext:
+    return ctx.engine().createNode<SwapchainImageViewNode>(image, info);
+  default:
+    assert(0 && "unsupported");
+    return nullptr;
+  }
 }
 
 namespace {
@@ -310,26 +353,12 @@ MaterializationContext::chainImageTemplate(Value &val) {
   return m_chains.at(&val).imageInfo;
 }
 
-static void completeImageViewInfo(VkImageViewCreateInfo &info,
-                                  MatImage &image) {
-  auto &imgInfo = std::visit(
-      [](auto &pimg) -> decltype(auto) { return pimg->info(); }, image);
-  info.format = imgInfo.format;
-  info.subresourceRange.layerCount = imgInfo.arrayLayers;
-  info.subresourceRange.levelCount = imgInfo.mipLevels;
-  info.subresourceRange.aspectMask =
-      vkw::ImageInterface::isColorFormat(imgInfo.format)
-          ? VK_IMAGE_ASPECT_COLOR_BIT
-          : VK_IMAGE_ASPECT_DEPTH_BIT;
-}
-
 void MaterializationContext::materializeImageChain(Value &val,
                                                    MatImage &&image) {
   assert(m_chains.contains(&val));
   auto &chain = m_chains.at(&val);
   assert(!chain.chain.empty());
   auto viewInfo = chain.chain.front().viewInfo;
-  completeImageViewInfo(viewInfo, image);
   auto view = createImageView(*this, image, viewInfo);
   for (auto &&c : chain.chain) {
     std::get<MatMap<MatImage>>(m_mats)[c.def] = image;

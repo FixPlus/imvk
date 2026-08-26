@@ -251,7 +251,7 @@ public:
                         [](auto &&use) -> decltype(auto) { return *use.ref; });
   }
 
-  template <typename T> T &getUse(size_t index) const {
+  template <typename T = FONodeBase> T &getUse(size_t index) const {
     return static_cast<T &>(*m_uses.at(index).ref);
   }
 
@@ -520,13 +520,10 @@ private:
 
 template <> class FONodeBaseImpl<fon_type::cow> : public FOReconstructible {
 public:
-  template <size_t n>
-  using UserVec = boost::container::small_vector<FONodeBase *, n>;
-
-  using UserVecBase = boost::container::small_vector_base<FONodeBase *>;
   FONodeBaseImpl(FObject::Ptr obj, FOUses &&uses = FOUses{})
       : FOReconstructible(false, std::move(uses)), m_current(std::move(obj)) {}
-
+  FONodeBaseImpl(FOUses &&uses = FOUses{})
+      : FOReconstructible(true, std::move(uses)), m_current(nullptr) {}
   void replace(FramedEngine &engine, FObject::Ptr obj) noexcept {
     for (auto &user : users())
       static_cast<FOReconstructible &>(user).destroy();
