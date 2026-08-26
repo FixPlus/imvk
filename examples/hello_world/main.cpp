@@ -274,11 +274,11 @@ imvk::graph::Value &createCopyExtents(imvk::graph::WorkflowBuilder &builder,
       builder.create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(1)
           ->results()
           .front();
-  auto &fmt = builder
-                  .create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(
-                      VK_FORMAT_R8G8B8A8_UNORM)
-                  ->results()
-                  .front();
+  auto &fmt =
+      builder
+          .create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(format)
+          ->results()
+          .front();
   auto &extents =
       builder.create<imvk::graph::GetExtents>(extentSource)->results().front();
   return builder
@@ -304,29 +304,6 @@ imvk::graph::Value &renderImage(imvk::graph::WorkflowBuilder &builder,
       .front();
 }
 
-void experimentalGraph(imvk::GraphicsEngine &e) {
-  imvk::graph::Context ctx;
-  imvk::graph::Workflow workflow{ctx};
-  imvk::graph::WorkflowBuilder builder{workflow, workflow.end()};
-
-  imvk::graph::Value &image =
-      builder.create<imvk::graph::AcquireImage>()->results().front();
-  imvk::graph::Value &anotherImage =
-      createCopyExtents(builder, image, VK_FORMAT_R8G8B8A8_UNORM);
-
-  imvk::graph::Value &dynamicTexture =
-      renderImage(builder, anotherImage, imvk::graph::Node::EmptyUses);
-  imvk::graph::Value &dynamicTexture2 =
-      renderImage(builder, dynamicTexture, imvk::graph::Node::EmptyUses);
-  imvk::graph::Value &readyImage = renderImage(
-      builder, image,
-      std::array{imvk::graph::combinedImageSampler(dynamicTexture),
-                 imvk::graph::combinedImageSampler(dynamicTexture2)});
-  builder.create<imvk::graph::Present>(readyImage);
-  auto mat = imvk::graph::MaterializationContext{e, workflow};
-  std::cout << workflow << std::endl;
-}
-
 imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx, auto &&passJob,
                                     auto &&offscreenPassJob) {
   imvk::graph::Workflow workflow{ctx};
@@ -335,6 +312,8 @@ imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx, auto &&passJob,
       builder.create<imvk::graph::AcquireImage>()->results().front();
   imvk::graph::Value &offscreenBuffer =
       createCopyExtents(builder, image, VK_FORMAT_R8G8B8A8_UNORM);
+  imvk::graph::Value &depthBuffer =
+      createCopyExtents(builder, image, VK_FORMAT_D32_SFLOAT);
   imvk::graph::Value &texture =
       builder
           .create<imvk::graph::RenderPass>(
@@ -346,7 +325,8 @@ imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx, auto &&passJob,
   imvk::graph::Value &renderedImage =
       builder
           .create<imvk::graph::RenderPass>(
-              std::array{imvk::graph::colorAttachment(image)},
+              std::array{imvk::graph::colorAttachment(image),
+                         imvk::graph::depthAttachment(depthBuffer)},
               std::array{imvk::graph::combinedImageSampler(texture)},
               std::forward<decltype(passJob)>(passJob))
           ->results()
@@ -425,15 +405,15 @@ int app() try {
               vkw::per_vertex<VertexInfo, 0>>>());
 
   auto fragmentStage =
-      graphicsEngine.createNode<imvk::examples::AlternateFragmentStage>(
+      graphicsEngine.createNode<imvk::examples::BasicFragmentStage>(
           shaderLoader, "hello.frag");
   auto fragmentStage2 =
-      graphicsEngine.createNode<imvk::examples::AlternateFragmentStage>(
+      graphicsEngine.createNode<imvk::examples::BasicFragmentStage>(
           shaderLoader, "hello2.frag");
   auto pipelinePool =
       imvk::GraphicsPipelinePool<imvk::graph::RenderPass::PipeHook,
                                  imvk::examples::BasicVertexStage,
-                                 imvk::examples::AlternateFragmentStage>{
+                                 imvk::examples::BasicFragmentStage>{
           graphicsEngine, /* cache size*/ 10u};
   auto vertices =
       graphicsEngine.createNode<MyVertexBuffer<imvk::fon_type::swap_mut>>(
@@ -476,12 +456,14 @@ int app() try {
                                     imvk::examples::assetsDir() / "image1"));
   auto myTextureView =
       graphicsEngine.createNode<imvk::examples::SampledView>(*myTexture);
-  auto vertexStageSet = [&]() -> imvk::Ref<imvk::StageSet> {
+  auto vertexStageSet =
+      [&]() -> imvk::Ref<imvk::StageSet<imvk::examples::BasicVertexStage>> {
     auto vsbuilder = imvk::StageSetBuilder{*vertexStage};
     vsbuilder.addDescriptorSet(1).addDescriptor(*myUniform, 0);
     return std::move(vsbuilder);
   }();
-  auto fragmentStageSet = [&]() -> imvk::Ref<imvk::StageSet> {
+  auto fragmentStageSet =
+      [&]() -> imvk::Ref<imvk::StageSet<imvk::examples::BasicFragmentStage>> {
     auto vsbuilder = imvk::StageSetBuilder{*fragmentStage};
     vsbuilder.addDescriptorSet(2).addDescriptor(*myTextureView, 0);
     return std::move(vsbuilder);
@@ -515,18 +497,13 @@ int app() try {
   auto passJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
                      vkw::RenderPassRecorder &commands,
                      const imvk::Frame &frame) {
-    imvk::Pipeline<imvk::GraphicsPipelineTraits> &pipeline =
-        pipelinePool.get(*pass.passStage, *vertexStage, *fragmentStage);
-    commands.bindPipeline(pipeline.use(frame));
-    commands.bindDescriptorSet(pipeline.layout().use(frame),
-                               VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               pass.set->getSet(0u).use(frame), 0u);
-    commands.bindDescriptorSet(pipeline.layout().use(frame),
-                               VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               vertexStageSet->getSet(1u).use(frame), 1u);
-    commands.bindDescriptorSet(pipeline.layout().use(frame),
-                               VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               fragmentStageSet->getSet(2u).use(frame), 2u);
+    imvk::GraphicsPipelineManager<imvk::graph::RenderPass::PipeHook,
+                                  imvk::examples::BasicVertexStage,
+                                  imvk::examples::BasicFragmentStage>
+        pipelineManager{pipelinePool, commands, frame};
+    pipelineManager.bind(*pass.set, *vertexStageSet, *fragmentStageSet);
+    pipelineManager.bindPipeline();
+
     auto &vertexBuffer = vertices->use(frame);
     commands.bindVertexBuffer(vertexBuffer, 0, 0);
     commands.draw(vertexBuffer.size(), 1u);

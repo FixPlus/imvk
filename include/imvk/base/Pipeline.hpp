@@ -109,9 +109,10 @@ struct StageSetView {
   const StageLayout *layout;
 };
 
+template <std::derived_from<StageLayout> T>
 class StageSet final : public FONode<StageSetView, fon_type::swap> {
 public:
-  StageSet(FramedEngine &engine, StageLayout &stage, auto &&sets)
+  StageSet(FramedEngine &engine, T &stage, auto &&sets)
       : FONode<StageSetView, fon_type::swap>([&]() {
           FOUses uses(stage);
           uses.addUses(sets |
@@ -126,7 +127,7 @@ public:
     }
   }
 
-  StageLayout &stage() const { return getUse<StageLayout>(0); }
+  T &stage() const { return getUse<T>(0); }
 
   bool hasSet(unsigned num) const { return m_setMap.contains(num); }
 
@@ -137,6 +138,20 @@ public:
   DescriptorSet &getSet(unsigned num) {
     assert(m_setMap.contains(num));
     return getUse<DescriptorSet>(m_setMap.at(num));
+  }
+
+  auto sets() {
+    return m_setMap | std::views::transform([&](auto &&p) {
+             return std::forward_as_tuple(p.first,
+                                          getUse<DescriptorSet>(p.second));
+           });
+  }
+
+  auto sets() const {
+    return m_setMap | std::views::transform([&](auto &&p) {
+             return std::forward_as_tuple(p.first,
+                                          getUse<DescriptorSet>(p.second));
+           });
   }
 
 private:
@@ -159,9 +174,9 @@ private:
   boost::container::small_flat_map<unsigned, unsigned, 2u> m_setMap;
 };
 
-class StageSetBuilder final {
+template <std::derived_from<StageLayout> T> class StageSetBuilder final {
 public:
-  StageSetBuilder(StageLayout &stage) : m_stage(&stage) {
+  StageSetBuilder(T &stage) : m_stage(&stage) {
     for (auto &&[setn, _] : stage.sets()) {
       m_setBuilders.insert({setn, nullptr});
     }
@@ -177,18 +192,18 @@ public:
     }
     return *optSet;
   }
-  operator Ref<StageSet>() && {
+  operator Ref<StageSet<T>>() && {
     boost::container::small_vector<std::pair<Ref<DescriptorSet>, unsigned>, 2u>
         sets;
     for (auto &&[binding, setBuilder] : m_setBuilders) {
       assert(setBuilder);
       sets.emplace_back(Ref<DescriptorSet>{std::move(*setBuilder)}, binding);
     }
-    return m_stage->engine().createNode<StageSet>(*m_stage, sets);
+    return m_stage->engine().createNode<StageSet<T>>(*m_stage, sets);
   }
 
 private:
-  Ref<StageLayout> m_stage;
+  Ref<T> m_stage;
   boost::container::small_flat_map<unsigned,
                                    std::unique_ptr<DescriptorSetBuilder>, 2u>
       m_setBuilders;
@@ -296,8 +311,10 @@ public:
   }
 };
 
-template <typename PipelineTraits, size_t StageCount> class PipelinePool {
+template <typename Stage1, typename... Stages> class PipelinePool {
 private:
+  using PipelineTraits = typename Stage1::PipelineTraits;
+  constexpr static auto StageCount = sizeof...(Stages) + 1;
   using StageTy = PipelineTraits::StageTy;
   using PipelineKey = std::array<StageTy *, StageCount>;
   using PipelineTy = Pipeline<PipelineTraits>;
@@ -307,16 +324,17 @@ public:
   PipelinePool(FramedEngine &engine, size_t cacheSize,
                VkPipelineLayoutCreateFlags flags = 0)
       : m_engine(engine), m_pipelineCache(cacheSize), m_flags(flags) {}
+  template <typename Arg, typename... Args>
+  PipelineTy &get(Arg &&arg, Args &&...args)
+    requires(std::is_convertible_v<Args, Stages &> && ... &&
+             std::is_convertible_v<Arg, Stage1 &>)
+  {
 
-  template <std::convertible_to<StageTy &>... Args>
-  PipelineTy &get(Args &&...stages) {
-    static_assert(sizeof...(stages) == StageCount);
-
-    PipelineKey key{&stages...};
+    PipelineKey key{&arg, &args...};
     auto &ret = m_pipelineCache.get(key, nullptr);
     if (!ret) {
       Ref<PipelineLayoutTy> layout =
-          m_engine.createNode<PipelineLayoutTy>(m_flags, stages...);
+          m_engine.createNode<PipelineLayoutTy>(m_flags, arg, args...);
       ret = m_engine.createNode<PipelineTy>(*layout);
     }
     return *ret;

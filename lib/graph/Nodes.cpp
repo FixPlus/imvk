@@ -253,7 +253,6 @@ private:
 const AttributesBase *RenderPass::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
-  assert(&result == results().data());
   // todo: safe cast
   auto &imageDefInfo = static_cast<const ImageDefInfo &>(result.info());
 
@@ -609,7 +608,7 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
 RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
                                unsigned firstDescriptor)
     : passStage(ctx.engine().createNode<PipeHook>(pass, ctx, firstDescriptor)),
-      set([&]() -> Ref<StageSet> {
+      set([&]() -> Ref<StageSet<PipeHook>> {
         boost::container::small_vector<Ref<FONodeBase>, 2> descriptables;
         boost::container::small_vector<std::pair<Descriptable *, unsigned>, 2>
             descriptablesView;
@@ -630,7 +629,7 @@ RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
           return nullptr;
         auto descriptorSet = ctx.engine().createNode<DescriptorSet>(
             passStage->getSet(0), descriptablesView);
-        return ctx.engine().createNode<StageSet>(
+        return ctx.engine().createNode<StageSet<PipeHook>>(
             *passStage, std::array{std::make_pair(descriptorSet.get(), 0)});
       }()) {}
 

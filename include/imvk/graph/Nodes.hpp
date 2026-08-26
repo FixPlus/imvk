@@ -282,7 +282,7 @@ public:
   };
   struct PassInfo {
     Ref<PipeHook> passStage;
-    Ref<StageSet> set;
+    Ref<StageSet<PipeHook>> set;
     PassInfo(RenderPass &pass, MaterializationContext &ctx,
              unsigned firstDescriptor);
   };

@@ -7,5 +7,6 @@ layout(set = 2, binding = 0) uniform sampler2D myTex;
 layout(set = 0, binding = 0) uniform sampler2D myTex2;
 
 void main() {
-  outFragColor = vec4(inColor * vec3(texture(myTex, inUV)) * vec3(texture(myTex2, inUV))), 1.0);
+  outFragColor = vec4(
+      inColor * vec3(texture(myTex, inUV)) * vec3(texture(myTex2, inUV)), 1.0);
 }
