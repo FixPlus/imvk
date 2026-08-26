@@ -119,16 +119,14 @@ public:
   /// @param object pointer to FObject instance to destroy.
   void destroyObject(FObject *object);
 
-  void run() {
-    FrameInfo *nextFrame = nullptr;
-    do {
-      nextFrame = &getNextFrame();
-      auto submitOpt = onFrame(nextFrame->frame());
-      if (submitOpt && nextFrame->status() == FrameInfo::stat::recd) {
-        submit(*std::move(submitOpt), *nextFrame);
-        postSubmit(nextFrame->frame());
-      }
-    } while (!shouldStop());
+  void submitFrame(auto &&frameRecord) {
+    auto &nextFrame = getNextFrame();
+    auto submitOpt = std::invoke(
+        std::forward<decltype(frameRecord)>(frameRecord), nextFrame.frame());
+    if (submitOpt && nextFrame.status() == FrameInfo::stat::recd) {
+      submit(*std::move(submitOpt), nextFrame);
+      postSubmit(nextFrame.frame());
+    }
   }
 
   void flush();
@@ -136,9 +134,7 @@ public:
   ~FramedEngine() override;
 
 protected:
-  virtual std::optional<vkw::SubmitInfo> onFrame(const Frame &frame) = 0;
   virtual void postSubmit(const Frame &frame) = 0;
-  virtual bool shouldStop() = 0;
 
 private:
   class GarbageCollector final {

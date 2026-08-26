@@ -1,6 +1,6 @@
 find_package(glfw3 3.3 REQUIRED)
 
-add_library(imvk_examples_lib STATIC IMVKWindow.cpp IMVKWindow.hpp IMVKDevice.cpp IMVKDevice.hpp
+add_library(imvk_examples_lib STATIC IMVKBuffers.cpp IMVKWindow.cpp IMVKWindow.hpp IMVKDevice.cpp IMVKDevice.hpp
   IMVKShaderLoader.hpp IMVKShaderLoader.cpp IMVKBasicRenderPass.hpp IMVKBasicRenderPass.cpp IMVKTexture.hpp IMVKTexture.cpp)
 
 target_compile_definitions(imvk_examples_lib PRIVATE IMVK_ASSETS_PATH=\"${IMVK_ASSETS_PATH}\")

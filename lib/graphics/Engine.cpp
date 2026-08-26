@@ -56,21 +56,10 @@ bool GraphicsEngine::m_surface_minimized() {
 
 GraphicsEngine::~GraphicsEngine() = default;
 
-std::optional<vkw::SubmitInfo> GraphicsEngine::onFrame(const Frame &frame) {
-  if (!m_aquireSwapchainImage(frame))
-    return std::nullopt;
-  auto submitInfo = frameAction(frame);
-  submitInfo.addWaitCondition(m_presentComplete->use(frame),
-                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-  submitInfo.addSignalTo(m_renderComplete->use(frame));
-  return submitInfo;
-}
-
 void GraphicsEngine::postSubmit(const Frame &frame) {
   auto presentInfo =
       vkw::PresentInfo{swapchain().use(frame), m_renderComplete->use(frame)};
   queue().acquire().get().present(presentInfo);
 }
 
-bool GraphicsEngine::shouldStop() { return !midFrameAction(); }
 } // namespace imvk

@@ -55,9 +55,6 @@ class GraphicsEngine : public FramedEngine {
 public:
   GraphicsEngine(Context &context, const GraphicsEngineCreateInfo &CI);
 
-  virtual bool midFrameAction() = 0;
-  virtual vkw::SubmitInfo frameAction(const Frame &frame) = 0;
-
   /// @brief override of similar template in FramedEngine.
   template <std::derived_from<FONodeBase> T, typename... Args>
   Ref<T> createNode(Args &&...args) {
@@ -65,13 +62,24 @@ public:
   }
   const Swapchain &swapchain() const { return *m_swapchain; }
   Swapchain &swapchain() { return *m_swapchain; }
-
+  void submitFrame(auto &&frameRecord) {
+    FramedEngine::submitFrame(
+        [&](const Frame &frame) -> std::optional<vkw::SubmitInfo> {
+          if (!m_aquireSwapchainImage(frame))
+            return std::nullopt;
+          auto submitInfo = std::invoke(
+              std::forward<decltype(frameRecord)>(frameRecord), frame);
+          submitInfo.addWaitCondition(
+              m_presentComplete->use(frame),
+              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+          submitInfo.addSignalTo(m_renderComplete->use(frame));
+          return submitInfo;
+        });
+  }
   ~GraphicsEngine() override;
 
 private:
-  std::optional<vkw::SubmitInfo> onFrame(const Frame &frame) final;
   void postSubmit(const Frame &frame) final;
-  bool shouldStop() final;
 
   bool m_aquireSwapchainImage(const Frame &frame);
   bool m_surface_minimized();
