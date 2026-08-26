@@ -215,9 +215,12 @@ std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf) {
       // create a copy of object just before this use and relink further uses to
       // new copy.
       WorkflowBuilder bldr{wf, use->user()};
-      Node *copyImage = bldr.create<Copy<ImageTy>>(val);
+      Node *cloneImage = bldr.create<Clone<ImageTy>>(val);
+      auto &cloneImageVal = cloneImage->results().front();
+      Node *copyImage = bldr.create<Copy<ImageTy>>(val, cloneImageVal);
       auto &copyImageVal = copyImage->results().front();
       aa.insertValue(&copyImageVal, &aa.getAttributesFor(val));
+      aa.insertValue(&cloneImageVal, &aa.getAttributesFor(val));
       Use *copyUse = &copyImage->uses().front();
       for (Use *u : std::span<Use *>(&use + 1, &*lastBoundUse)) {
         u->replaceBy(&copyImageVal);

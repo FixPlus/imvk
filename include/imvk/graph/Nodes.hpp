@@ -144,25 +144,56 @@ public:
 
 // Copy and barriers.
 
+template <typename T> class Clone {};
 template <typename T> class Copy {};
 
-template <> class Copy<ImageTy> : public Node {
+template <> class Clone<ImageTy> : public Node {
 public:
-  Copy(Context &ctx, Value &image)
+  Clone(Context &ctx, Value &image)
       : Node(ctx, std::array{Node::Use(&image, new ImageUseInfo{[]() {
                ImageAccessInfo info{};
-               info.layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-               info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-               info.accessFlags = VK_ACCESS_MEMORY_READ_BIT;
-               info.stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
                return info;
              }()})},
              std::array{Node::Def(&image.type(), new ImageDefInfo{[]() {
                ImageAccessInfo info{};
-               info.layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-               info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-               info.accessFlags = VK_ACCESS_MEMORY_WRITE_BIT;
-               info.stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
+               return info;
+             }()})}) {}
+
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::string_view name() const final { return "clone"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+};
+
+template <> class Copy<ImageTy> : public Node {
+public:
+  Copy(Context &ctx, Value &src, Value &dst)
+      : Node(ctx,
+             std::array{Node::Use(&src, new ImageUseInfo{[]() {
+                          ImageAccessInfo info{};
+                          info.layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                          info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+                          info.accessFlags = VK_ACCESS_MEMORY_READ_BIT;
+                          info.stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
+                          return info;
+                        }()}),
+                        Node::Use(&dst, new ImageUseInfo{[]() {
+                          ImageUseInfo info{};
+                          info.access.layout =
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                          info.passthrough = 0;
+                          return info;
+                        }()})},
+             std::array{Node::Def(&dst.type(), new ImageDefInfo{[]() {
+               ImageDefInfo info{};
+               info.access.layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+               info.access.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+               info.access.accessFlags = VK_ACCESS_MEMORY_WRITE_BIT;
+               info.access.stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
+               info.passthrough = 1;
                return info;
              }()})}) {}
 

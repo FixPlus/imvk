@@ -221,7 +221,10 @@ public:
       : FONode<vkw::Sampler, fon_type::cow>(
             engine.createObject<vkw::Sampler>(m_createSampler(engine)),
             FOUses{view}),
-        m_layout(layout) {}
+        m_layout(layout) {
+    if (view.isDestroyed())
+      view.construct(engine);
+  }
 
   void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                        unsigned binding) const final {
@@ -339,6 +342,13 @@ const AttributesBase *Copy<ImageTy>::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
   assert(&result == results().data());
+  assert(useAttributes.size() == 2);
+  return useAttributes.front();
+}
+const AttributesBase *Clone<ImageTy>::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  assert(&result == results().data());
   assert(useAttributes.size() == 1);
   return useAttributes.front();
 }
@@ -398,8 +408,7 @@ completeSubresourceRange(const VkImageCreateInfo &info) {
   ret.layerCount = info.arrayLayers;
   return ret;
 }
-
-bool Copy<ImageTy>::materialize(MaterializationContext &ctx) {
+bool Clone<ImageTy>::materialize(MaterializationContext &ctx) {
   auto &engine = ctx.engine();
   auto &value = results().front();
   if (!ctx.startsImageChain(value))
@@ -409,21 +418,32 @@ bool Copy<ImageTy>::materialize(MaterializationContext &ctx) {
   auto dst = engine.createNode<CopyImageNode>(src, templ);
 
   ctx.materializeImageChain(value, dst);
+  return true;
+}
+bool Copy<ImageTy>::materialize(MaterializationContext &ctx) {
+  auto &engine = ctx.engine();
+  auto src = ctx.get<MatImage>(uses().front().value());
+  auto dst = ctx.get<MatImage>(uses().back().value());
+
   ctx.materializeNode(*this, [dst = std::move(dst), src = std::move(src)](
                                  vkw::BufferRecorder &recorder,
                                  const imvk::Frame &frame) {
-    auto &info = dst->info();
+    auto getView = [&](auto &pimg) -> VkImage { return pimg->useImage(frame); };
+    auto getInfo = [&](auto &pimg) -> const VkImageCreateInfo & {
+      return pimg->info();
+    };
+    auto viewSrc = std::visit(getView, src);
+    auto viewDst = std::visit(getView, dst);
+    auto &info = std::visit(getInfo, dst);
     auto subresource = completeSubresourceRangeLayers(info);
     VkImageCopy region{};
     region.extent = info.extent;
     region.srcSubresource = subresource;
     region.dstSubresource = subresource;
     auto transfer = recorder.beginTransferPass();
-    transfer.copyImageToImage(
-        std::visit([&](auto &pimg) -> VkImage { return pimg->useImage(frame); },
-                   src),
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst->useImage(frame),
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, std::array{region});
+    transfer.copyImageToImage(viewSrc, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                              viewDst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              std::array{region});
   });
   return true;
 }

@@ -323,19 +323,6 @@ void experimentalGraph(imvk::GraphicsEngine &e) {
       std::array{imvk::graph::combinedImageSampler(dynamicTexture),
                  imvk::graph::combinedImageSampler(dynamicTexture2)});
   builder.create<imvk::graph::Present>(readyImage);
-#if 0
-  auto chains = imvk::graph::materializeImageValueChains(workflow);
-  std::cout << workflow;
-  std::cout << "Total chains: " << chains.size() << std::endl;
-  for (auto &&chain : chains) {
-    for (auto &&bind : chain.chain) {
-      std::cout << *bind.def << " -> ";
-    }
-    std::cout << "term\n";
-  }
-  imvk::graph::AttributesAnalysis aa{workflow};
-  aa.dump(std::cout);
-#endif
   auto mat = imvk::graph::MaterializationContext{e, workflow};
   std::cout << workflow << std::endl;
 }
@@ -567,6 +554,7 @@ int app() try {
   };
   imvk::graph::Context graphCtx{};
   auto wf = basicWorkflow(graphCtx, passJob, offscreenJob);
+  std::cout << wf << std::endl;
   imvk::graph::MaterializationContext matCtx{graphicsEngine, wf};
   std::cout << wf << std::endl;
 #if 0
