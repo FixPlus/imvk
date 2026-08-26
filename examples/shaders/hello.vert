@@ -7,7 +7,7 @@ layout(location = 2) in vec2 inUV;
 layout(location = 0) out vec3 outColor;
 layout(location = 1) out vec2 outUV;
 
-layout(set = 0, binding = 0) uniform Data { vec4 values; }
+layout(set = 1, binding = 0) uniform Data { vec4 values; }
 data;
 
 void main() {

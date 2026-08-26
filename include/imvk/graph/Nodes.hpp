@@ -251,14 +251,7 @@ public:
   };
   struct PassInfo {
     Ref<PipeHook> passStage;
-    struct PassDescriptors {
-      vkw::DescriptorSetLayout layout;
-      Ref<DescriptorPool> pool;
-      Ref<DescriptorSet> set;
-      PassDescriptors(RenderPass &pass, MaterializationContext &ctx,
-                      unsigned firstDescriptor);
-    };
-    std::optional<PassDescriptors> descriptors;
+    Ref<StageSet> set;
     PassInfo(RenderPass &pass, MaterializationContext &ctx,
              unsigned firstDescriptor);
   };

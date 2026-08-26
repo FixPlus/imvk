@@ -17,9 +17,24 @@ findStageSet(vkw::SPIRVModuleInfo const &moduleInfo, uint32_t stageSet) {
 } // namespace
 
 StageLayoutInfo::StageLayoutInfo(FramedEngine &engine,
-                                 const Description &description)
+                                 Description &&description)
     : m_engine(engine), m_stage(description.stage ? *description.stage
                                                   : VkShaderStageFlagBits{}) {
+  auto isExternal = [](auto &&set) {
+    return std::holds_alternative<Description::ExternalSet>(set);
+  };
+  auto asExternal = [](auto &&set) -> decltype(auto) {
+    return std::get<Description::ExternalSet>(set);
+  };
+  unsigned counter = 0;
+  for (auto &&[num, layout, setsPerPool] :
+       description.sets | std::views::filter(isExternal) |
+           std::views::transform(asExternal)) {
+    m_setIds.emplace(num, counter++);
+    pools.addUse(
+        engine.createNode<DescriptorPool>(std::make_unique<DescriptorPoolImpl>(
+            engine.context().device(), std::move(layout), setsPerPool)));
+  }
   if (description.shaders.empty())
     return;
   assert(description.stage);
@@ -29,8 +44,15 @@ StageLayoutInfo::StageLayoutInfo(FramedEngine &engine,
           : engine.context().linkContext().link(description.shaders,
                                                 /*link library */ true));
   auto reflectInfo = vkw::SPIRVModuleInfo{*m_module};
-  unsigned counter = 0;
-  for (auto &&[num, flags, setsPerPool] : description.sets) {
+  auto isReflected = [](auto &&set) {
+    return std::holds_alternative<Description::Set>(set);
+  };
+  auto asReflected = [](auto &&set) -> decltype(auto) {
+    return std::get<Description::Set>(set);
+  };
+  for (auto &&[num, flags, setsPerPool] :
+       description.sets | std::views::filter(isReflected) |
+           std::views::transform(asReflected)) {
     auto setInfo = findStageSet(reflectInfo, num);
     if (!setInfo)
       throw std::runtime_error(

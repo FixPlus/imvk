@@ -15,7 +15,9 @@ public:
   }
 
 private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept { return nullptr; }
+  FObject::Ptr constructNew(FramedEngine &engine) noexcept {
+    return engine.createObject<void>();
+  }
   T m_value;
 };
 
@@ -24,13 +26,14 @@ class AttributeExtractor : public MatHostValue<T> {
 public:
   AttributeExtractor(FramedEngine &e, U &src, auto &&extractor)
       : MatHostValue<T>(e.createObject<void>(), FOUses{src}),
+        m_value(extractor(src)),
         m_extractor(std::forward<decltype(extractor)>(extractor)) {}
   const T &value() const final { return m_value; }
 
 private:
   FObject::Ptr constructNew(FramedEngine &engine) noexcept {
     m_value = m_extractor(getUse<U>(0));
-    return nullptr;
+    return engine.createObject<void>();
   }
   T m_value;
   boost::compat::function_ref<T(const U &)> m_extractor;
@@ -44,6 +47,11 @@ public:
             e.createObject<void>(),
             FOUses{*std::visit(
                 [](auto &pimg) -> FONodeBase * { return &*pimg; }, src)}),
+        m_value([&]() {
+          auto &info = std::visit(
+              [](auto &pimg) -> decltype(auto) { return pimg->info(); }, src);
+          return extractor(info);
+        }()),
         m_extractor(std::forward<decltype(extractor)>(extractor)),
         m_isRegularSrc(std::holds_alternative<Ref<MatRegularImage>>(src)) {}
   const T &value() const final { return m_value; }
@@ -53,7 +61,7 @@ private:
     auto &srcInfo = m_isRegularSrc ? this->getUse<MatRegularImage>(0).info()
                                    : this->getUse<MatSwapchainImage>(0).info();
     m_value = m_extractor(srcInfo);
-    return nullptr;
+    return engine.createObject<void>();
   }
   T m_value;
   boost::compat::function_ref<T(const VkImageCreateInfo &)> m_extractor;
@@ -203,6 +211,40 @@ private:
     m_info = image.fullInfo();
   }
   VkImageCreateInfo m_info;
+};
+
+class ImageSampledAdaptor : public FONode<vkw::Sampler, fon_type::cow>,
+                            public Descriptable {
+public:
+  ImageSampledAdaptor(FramedEngine &engine, MatRegularImageView &view,
+                      VkImageLayout layout)
+      : FONode<vkw::Sampler, fon_type::cow>(
+            engine.createObject<vkw::Sampler>(m_createSampler(engine)),
+            FOUses{view}),
+        m_layout(layout) {}
+
+  void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
+                       unsigned binding) const final {
+    set.write(binding, getUse<MatRegularImageView>(0).view(frame), m_layout,
+              get());
+  }
+
+private:
+  static vkw::Sampler m_createSampler(FramedEngine &engine) {
+    VkSamplerCreateInfo info{};
+    info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.magFilter = VK_FILTER_LINEAR;
+    info.minFilter = VK_FILTER_LINEAR;
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.pNext = nullptr;
+    return vkw::Sampler{engine.context().device(), info};
+  }
+  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
+    return engine.createObject<vkw::Sampler>(m_createSampler(engine));
+  }
+  VkImageLayout m_layout;
 };
 
 const AttributesBase *RenderPass::getAttributes(
@@ -546,8 +588,31 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
 
 RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
                                unsigned firstDescriptor)
-    : passStage(ctx.engine().createNode<PipeHook>(pass, ctx, firstDescriptor)) {
-}
+    : passStage(ctx.engine().createNode<PipeHook>(pass, ctx, firstDescriptor)),
+      set([&]() -> Ref<StageSet> {
+        boost::container::small_vector<Ref<FONodeBase>, 2> descriptables;
+        boost::container::small_vector<std::pair<Descriptable *, unsigned>, 2>
+            descriptablesView;
+        unsigned counter = 0;
+        for (auto &&use : pass.uses() | std::views::drop(firstDescriptor)) {
+          auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
+          auto view = ctx.get<MatImageView>(use.value());
+          if (std::holds_alternative<Ref<MatSwapchainImageView>>(view))
+            throw std::runtime_error(
+                "Swapchain image views are not supported for descriptors yet");
+          auto &regularView = std::get<Ref<MatRegularImageView>>(view);
+          auto combinedSampler = ctx.engine().createNode<ImageSampledAdaptor>(
+              *regularView, info.access.layout);
+          descriptables.emplace_back(combinedSampler);
+          descriptablesView.emplace_back(combinedSampler.get(), counter++);
+        }
+        if (descriptablesView.empty())
+          return nullptr;
+        auto descriptorSet = ctx.engine().createNode<DescriptorSet>(
+            passStage->getSet(0), descriptablesView);
+        return ctx.engine().createNode<StageSet>(
+            *passStage, std::array{std::make_pair(descriptorSet.get(), 0)});
+      }()) {}
 
 bool Present::materialize(MaterializationContext &ctx) {
   // nothing to materialize for now.
@@ -562,11 +627,26 @@ RenderPass::PipeHook::initCreateInfo(const vkw::PipelineLayout &layout) const {
 RenderPass::PipeHook::PipeHook(GraphicsEngine &engine, RenderPass &pass,
                                MaterializationContext &ctx,
                                unsigned firstDescriptor)
-    : GraphicsPipelineStage(ctx.engine(),
-                            [&]() {
-                              StageLayout::Description ret{};
-                              return ret;
-                            }()),
+    : GraphicsPipelineStage(
+          ctx.engine(),
+          [&]() {
+            StageLayout::Description ret{};
+            boost::container::small_vector<vkw::DescriptorSetLayoutBinding, 2>
+                bindings;
+            auto counter = 0;
+            for (auto &&use : pass.uses() | std::views::drop(firstDescriptor)) {
+              auto &info =
+                  static_cast<const ImageDescriptorUseInfo &>(*use.info());
+              auto binding = info.descriptorInfo();
+              binding.binding = counter++;
+              bindings.push_back(binding);
+            }
+            ret.sets.emplace_back(StageLayout::Description::ExternalSet{
+                0,
+                vkw::DescriptorSetLayout{engine.context().device(), bindings},
+                static_cast<unsigned>(engine.getFIFCount())});
+            return ret;
+          }()),
       m_info([&]() {
         vkw::RenderingFormatInfo info;
         for (auto &&use : pass.uses() | std::views::take(firstDescriptor)) {

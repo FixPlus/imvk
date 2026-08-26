@@ -1,6 +1,7 @@
 #pragma once
 
 #include "imvk/graph/Node.hpp"
+#include <vkw/DescriptorSet.hpp>
 
 #include <boost/container_hash/hash.hpp>
 #include <unordered_set>
@@ -75,6 +76,7 @@ public:
 class ImageDescriptorUseInfo : public ImageUseInfo {
 public:
   ImageDescriptorUseInfo();
+  vkw::DescriptorSetLayoutBinding descriptorInfo() const;
 };
 
 class ImageDefInfo : public DefInfo {

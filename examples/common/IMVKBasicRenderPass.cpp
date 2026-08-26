@@ -97,8 +97,9 @@ BasicVertexStage::BasicVertexStage(
             StageLayout::Description desc{};
             desc.stage = VK_SHADER_STAGE_VERTEX_BIT;
             desc.shaders.emplace_back(*shaderFactory.getModule(shaderName));
-            desc.sets.emplace_back(/* set*/ 0, VK_SHADER_STAGE_VERTEX_BIT,
-                                   /* sets per pool*/ 1u);
+            desc.sets.emplace_back(StageLayout::Description::Set{
+                /* set*/ 1, VK_SHADER_STAGE_VERTEX_BIT,
+                /* sets per pool*/ 10u});
             return desc;
           }()),
       m_vertexState(std::move(vertexState)) {}
@@ -120,8 +121,9 @@ BasicFragmentStage::BasicFragmentStage(GraphicsEngine &engine,
             StageLayout::Description desc{};
             desc.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
             desc.shaders.emplace_back(*shaderFactory.getModule(shaderName));
-            desc.sets.emplace_back(/* set*/ 1, VK_SHADER_STAGE_FRAGMENT_BIT,
-                                   /* sets per pool*/ 1u);
+            desc.sets.emplace_back(StageLayout::Description::Set{
+                /* set*/ 2, VK_SHADER_STAGE_FRAGMENT_BIT,
+                /* sets per pool*/ 10u});
             return desc;
           }()),
       m_pass(pass) {}
@@ -132,8 +134,9 @@ AlternateFragmentStage::AlternateFragmentStage(GraphicsEngine &engine,
         StageLayout::Description desc{};
         desc.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         desc.shaders.emplace_back(*shaderFactory.getModule(shaderName));
-        desc.sets.emplace_back(/* set*/ 1, VK_SHADER_STAGE_FRAGMENT_BIT,
-                               /* sets per pool*/ 1u);
+        desc.sets.emplace_back(StageLayout::Description::Set{
+            /* set*/ 2, VK_SHADER_STAGE_FRAGMENT_BIT,
+            /* sets per pool*/ 10u});
         return desc;
       }()) {}
 void BasicFragmentStage::amendCreateInfo(

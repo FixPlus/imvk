@@ -18,7 +18,8 @@ SampledView::SampledView(FramedEngine &eng, Texture &texture)
 void SampledView::descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                                   unsigned binding) const {
   auto &&[view, sampler] = get();
-  set.write(binding, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, sampler);
+  set.write(binding, view.operator VkImageView(),
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, sampler);
 }
 FObject::Ptr SampledView::constructNew(FramedEngine &engine) noexcept {
   return doConstructNew(engine, getUse<Texture>(0).get());

@@ -8,8 +8,8 @@ namespace imvk {
 class GraphicsPipelineStage : public StageLayout {
 public:
   GraphicsPipelineStage(GraphicsEngine &engine,
-                        const StageLayout::Description &description)
-      : StageLayout(engine, description) {}
+                        StageLayout::Description &&description)
+      : StageLayout(engine, std::move(description)) {}
 
   virtual bool isProvoking() const { return false; }
 

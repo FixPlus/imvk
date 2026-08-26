@@ -62,4 +62,9 @@ ImageDescriptorUseInfo::ImageDescriptorUseInfo()
         info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
         return info;
       }()) {}
+vkw::DescriptorSetLayoutBinding ImageDescriptorUseInfo::descriptorInfo() const {
+  return vkw::DescriptorSetLayoutBinding{
+      0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+      VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT};
+}
 } // namespace imvk::graph

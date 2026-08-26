@@ -30,10 +30,15 @@ public:
       VkShaderStageFlags usedByStages;
       unsigned setsPerPool;
     };
-    boost::container::small_vector<Set, 2> sets;
+    struct ExternalSet {
+      unsigned num;
+      vkw::DescriptorSetLayout layout;
+      unsigned setsPerPool;
+    };
+    boost::container::small_vector<std::variant<Set, ExternalSet>, 2> sets;
   };
 
-  StageLayoutInfo(FramedEngine &engine, const Description &description);
+  StageLayoutInfo(FramedEngine &engine, Description &&description);
   StageLayoutInfo(FramedEngine &engine);
 
   virtual ~StageLayoutInfo() = default;
@@ -60,10 +65,10 @@ protected:
 
 class StageLayout : public StageLayoutInfo, public FONode<void, fon_type::mut> {
 public:
-  StageLayout(FramedEngine &engine, const Description &description)
-      : StageLayoutInfo(engine, description), FONode<void, fon_type::mut>(
-                                                  engine.createObject<void>(),
-                                                  std::move(pools)) {}
+  StageLayout(FramedEngine &engine, Description &&description)
+      : StageLayoutInfo(engine, std::move(description)),
+        FONode<void, fon_type::mut>(engine.createObject<void>(),
+                                    std::move(pools)) {}
   StageLayout(FramedEngine &engine)
       : StageLayoutInfo(engine), FONode<void, fon_type::mut>(
                                      engine.createObject<void>(),
@@ -104,29 +109,17 @@ struct StageSetView {
   const StageLayout *layout;
 };
 
-class StageSet final : public FONode<StageSetView, fon_type::swap_mut> {
+class StageSet final : public FONode<StageSetView, fon_type::swap> {
 public:
   StageSet(FramedEngine &engine, StageLayout &stage, auto &&sets)
-      : FONode<StageSetView, fon_type::swap_mut>(
-            engine,
-            [&](FrameID frame) {
-              auto &layout = stage;
-              StageSetView view;
-              view.layout = &layout;
-              for (auto &&[set, binding] : sets) {
-                set->construct(engine);
-                view.sets.insert({binding, &*set->get(frame)});
-              }
-              return engine.createObject<StageSetView>(std::move(view));
-            },
-            [&]() {
-              FOUses uses(stage);
-              uses.addUses(
-                  sets | std::views::transform([](auto &&p) -> decltype(auto) {
-                    return *p.first;
-                  }));
-              return uses;
-            }()) {
+      : FONode<StageSetView, fon_type::swap>([&]() {
+          FOUses uses(stage);
+          uses.addUses(sets |
+                       std::views::transform([](auto &&p) -> decltype(auto) {
+                         return *p.first;
+                       }));
+          return uses;
+        }()) {
     unsigned index = 1;
     for (auto &&[_, binding] : sets) {
       m_setMap.insert({binding, index++});
@@ -147,6 +140,18 @@ public:
   }
 
 private:
+  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) final {
+    auto &layout = stage();
+    StageSetView view;
+    view.layout = &layout;
+    for (auto &&[binding, _] : m_setMap) {
+      auto &set = getSet(binding);
+      set.construct(engine);
+      view.sets.insert({binding, &*set.get(frame)});
+    }
+    return engine.createObject<StageSetView>(std::move(view));
+  }
+  bool keepAlive() final { return false; }
   void onUseAction(const Frame &frame, FObject &obj) override {
     // no action required.
   }
