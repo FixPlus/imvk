@@ -5,8 +5,8 @@ FObject::Ptr
 GraphicsPipelineTraits::create(FramedEngine &engine,
                                PipelineLayout<GraphicsPipelineTraits> &layout) {
   auto stages = layout.stages();
-  auto checkIfProvoking = [](const GraphicsPipelineStage &pStage) {
-    return pStage.isProvoking();
+  auto checkIfProvoking = [](StageLayout<GraphicsPipelineStage> pStage) {
+    return pStage.get().isProvoking();
   };
   auto numberOfProvoking = std::ranges::count_if(stages, checkIfProvoking);
   assert(numberOfProvoking == 1u);
@@ -16,7 +16,8 @@ GraphicsPipelineTraits::create(FramedEngine &engine,
   boost::container::small_vector<const vkw::SPIRVModule *, 4>
       fragmentShaderParts;
 
-  for (const GraphicsPipelineStage &stageInfo : stages) {
+  for (StageLayout<GraphicsPipelineStage> pStageInfo : stages) {
+    auto &stageInfo = pStageInfo.get();
     if (!stageInfo.hasShader())
       continue;
     auto *pShader = &stageInfo.getShader();
@@ -47,10 +48,10 @@ GraphicsPipelineTraits::create(FramedEngine &engine,
                        std::views::transform(
                            [](auto &&ptr) -> decltype(auto) { return *ptr; }))};
 
-  auto createInfo = (*foundProvoking).initCreateInfo(layout.get());
+  auto createInfo = (*foundProvoking).get().initCreateInfo(layout->get());
 
-  for (const GraphicsPipelineStage &stage : stages) {
-    stage.amendCreateInfo(createInfo);
+  for (StageLayout<GraphicsPipelineStage> stage : stages) {
+    stage.get().amendCreateInfo(createInfo);
   }
 
   createInfo.addShader(vShader).addShader(fShader);

@@ -35,13 +35,15 @@ static void completeImageViewInfo(VkImageViewCreateInfo &info,
           ? VK_IMAGE_ASPECT_COLOR_BIT
           : VK_IMAGE_ASPECT_DEPTH_BIT;
 }
-class RegularImageViewNode : public FONode<RegularImageView, fon_type::swap>,
-                             public MatImageViewBase {
+class RegularImageViewNode final
+    : public FONode<RegularImageView, fon_type::swap, RegularImageViewNode>,
+      public MatImageViewBase {
 public:
+  using Base = FONode<RegularImageView, fon_type::swap, RegularImageViewNode>;
   RegularImageViewNode(FramedEngine &engine, const MatImage &image,
                        const VkImageViewCreateInfo &info)
-      : FONode<RegularImageView, fon_type::swap>(FOUses{image->node()}),
-        MatImageViewBase(fon_type::swap), m_info(info) {
+      : Base(FOUses{image->node()}), MatImageViewBase(fon_type::swap),
+        m_info(info) {
     assert(image->type() == fon_type::swap);
   }
   FOReconstructible &node() final { return *this; }
@@ -52,13 +54,12 @@ public:
     return m_info;
   }
 
-private:
-  void onUseAction(const Frame &frame, FObject &obj) final {
+  void onUseAction(const Frame &frame, RegularImageView &obj) {
     // do nothing
   }
-  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) final {
+  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) {
     VkImageViewCreateInfo infoCopy = m_info;
-    auto *img = dynamic_cast<MatImageBase *>(&getUse(0));
+    auto *img = dynamic_cast<MatImageBase *>(&getUseRaw(0));
     assert(img);
     completeImageViewInfo(infoCopy, *img, frame);
     auto &device = engine.context().device();
@@ -68,7 +69,6 @@ private:
                                           vkw::HostAllocator::get(), &ret);
     return engine.createObject<RegularImageView>(device, ret);
   }
-  bool keepAlive() final { return false; }
   VkImageViewCreateInfo m_info{};
 };
 
@@ -81,13 +81,15 @@ inline void intrusive_ptr_release(RegularImageViewNode *p) {
   intrusive_ptr_release(static_cast<FONodeBase *>(p));
 }
 
-class SwapchainImageViewNode : public FONode<RegularImageView, fon_type::ext>,
-                               public MatImageViewBase {
+class SwapchainImageViewNode final
+    : public FONode<RegularImageView, fon_type::ext, SwapchainImageViewNode>,
+      public MatImageViewBase {
 public:
+  using Base = FONode<RegularImageView, fon_type::ext, SwapchainImageViewNode>;
   SwapchainImageViewNode(FramedEngine &engine, const MatImage &image,
                          const VkImageViewCreateInfo &info)
-      : FONode<RegularImageView, fon_type::ext>(FOUses{image->node()}),
-        MatImageViewBase(fon_type::ext), m_info(info) {
+      : Base(FOUses{image->node()}), MatImageViewBase(fon_type::ext),
+        m_info(info) {
     assert(image->type() == fon_type::ext);
   }
   FOReconstructible &node() final { return *this; }
@@ -98,22 +100,20 @@ public:
     return m_info;
   }
 
-private:
-  unsigned getExtIndex(const Frame &frame) const final {
+  unsigned getExtIndex(const Frame &frame) const {
     return static_cast<GraphicsEngine &>(frame.engine())
         .swapchain()
         .get()
         .currentImage();
   }
-  void onUseAction(const Frame &frame, FObject &obj) final {
+  void onUseAction(const Frame &frame, RegularImageView &obj) {
     // do nothing
   }
-  void
-  constructNew(FramedEngine &engine,
-               boost::container::small_vector_base<FObject::Ptr> &res) final {
+  void constructNew(FramedEngine &engine,
+                    boost::container::small_vector_base<FObject::Ptr> &res) {
     auto &swap = static_cast<GraphicsEngine &>(engine).swapchain().get();
     auto images = swap.images();
-    auto *img = dynamic_cast<MatImageBase *>(&getUse(0));
+    auto *img = dynamic_cast<MatImageBase *>(&getUseRaw(0));
     assert(img);
     auto &parent = *img;
     std::ranges::transform(

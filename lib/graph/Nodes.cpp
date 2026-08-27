@@ -3,67 +3,27 @@
 
 namespace imvk::graph {
 
-template <typename T> class MatConstant : public MatHostValue<T> {
-public:
-  MatConstant(FramedEngine &e, T value)
-      : MatHostValue<T>(e.createObject<void>()), m_value(value) {}
-  const T &value() const final { return m_value; }
-
-  void reset(T newVal) {
-    this->destroy();
-    m_value = newVal;
-  }
-
-private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept {
-    return engine.createObject<void>();
-  }
-  T m_value;
-};
-
-template <typename T, typename U>
-class AttributeExtractor : public MatHostValue<T> {
-public:
-  AttributeExtractor(FramedEngine &e, U &src, auto &&extractor)
-      : MatHostValue<T>(FOUses{static_cast<FONodeBase &>(src)}), m_src(src),
-        m_extractor(std::forward<decltype(extractor)>(extractor)) {}
-  const T &value() const final {
-    assert(!this->isDestroyed());
-    return m_value;
-  }
-
-private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept {
-    m_value = m_extractor(m_src);
-    return engine.createObject<void>();
-  }
-  T m_value;
-  U &m_src;
-  boost::compat::function_ref<T(const U &)> m_extractor;
-};
-
 bool Constant<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
-  ctx.materialize<MatIntegerScalar>(
-      results().front(), ctx.engine().createNode<MatConstant<size_t>>(value));
+  ctx.materialize<MatIntegerScalar>(results().front(),
+                                    MatIntegerScalar(ctx.engine(), value));
   return true;
 }
 bool Constant<ExtentsTy>::materialize(MaterializationContext &ctx) {
-  ctx.materialize<MatExtents>(
-      results().front(),
-      ctx.engine().createNode<MatConstant<VkExtent3D>>(value));
+  ctx.materialize<MatExtents>(results().front(),
+                              MatExtents(ctx.engine(), value));
   return true;
 }
 
 bool Dynamic<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
 
-  auto dynVal = ctx.engine().createNode<MatConstant<size_t>>(producer());
-  ctx.materialize<MatIntegerScalar>(results().front(), dynVal);
+  auto dynVal = MatIntegerScalar(ctx.engine());
+  ctx.materialize(results().front(), dynVal);
   ctx.materializeNode(
       *this, [dynVal = std::move(dynVal), this](vkw::BufferRecorder &recorder,
                                                 const imvk::Frame &frame) {
         auto newVal = producer();
-        if (newVal != dynVal->value())
-          dynVal->reset(newVal);
+        if (newVal != dynVal->get())
+          dynVal.reset(frame.engine(), newVal);
       });
   return true;
 }
@@ -78,15 +38,16 @@ public:
   operator VkImage() const noexcept { return handle(); }
 };
 
-class RegularImageNode : public FONode<RegularImage, fon_type::swap>,
-                         public MatImageBase {
+class RegularImageNode final
+    : public FONode<RegularImage, fon_type::swap, RegularImageNode>,
+      public MatImageBase {
 public:
   RegularImageNode(FramedEngine &engine, const MaterializationContext &ctx,
                    const MatExtents &extents, const MatIntegerScalar &format,
                    const MatIntegerScalar &layers,
                    const MatIntegerScalar &levels,
                    const VkImageCreateInfo &info)
-      : FONode<RegularImage, fon_type::swap>(
+      : FONode<RegularImage, fon_type::swap, RegularImageNode>(
             FOUses{*extents, *format, *layers, *levels}),
         MatImageBase(fon_type::swap), m_info(info) {}
   FOReconstructible &node() override { return *this; }
@@ -97,13 +58,11 @@ public:
     return m_info;
   }
 
-private:
   void m_updateInfo() {
-    m_info.extent = getUse<MatHostValue<VkExtent3D>>(0).value();
-    m_info.format =
-        static_cast<VkFormat>(getUse<MatHostValue<size_t>>(1).value());
-    m_info.arrayLayers = getUse<MatHostValue<size_t>>(2).value();
-    m_info.mipLevels = getUse<MatHostValue<size_t>>(3).value();
+    m_info.extent = getUse<MatExtents>(0)->get();
+    m_info.format = static_cast<VkFormat>(getUse<MatIntegerScalar>(1)->get());
+    m_info.arrayLayers = getUse<MatIntegerScalar>(2)->get();
+    m_info.mipLevels = getUse<MatIntegerScalar>(3)->get();
   }
   FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) {
     m_updateInfo();
@@ -111,8 +70,7 @@ private:
     return engine.createObject<RegularImage>(
         engine.context().getDeviceAllocator(), allocInfo, m_info);
   }
-  bool keepAlive() { return false; }
-  void onUseAction(const Frame &frame, FObject &obj) final {
+  void onUseAction(const Frame &frame, RegularImage &obj) {
     // do nothing
   }
   VkImageCreateInfo m_info;
@@ -127,12 +85,14 @@ inline void intrusive_ptr_release(RegularImageNode *p) {
   intrusive_ptr_release(static_cast<FONodeBase *>(p));
 }
 
-class CopyImageNode : public FONode<RegularImage, fon_type::swap>,
-                      public MatImageBase {
+class CopyImageNode final
+    : public FONode<RegularImage, fon_type::swap, CopyImageNode>,
+      public MatImageBase {
 public:
   CopyImageNode(FramedEngine &engine, const MatImage &src,
                 const VkImageCreateInfo &info)
-      : FONode<RegularImage, fon_type::swap>(FOUses{src->node()}),
+      : FONode<RegularImage, fon_type::swap, CopyImageNode>(
+            FOUses{src->node()}),
         MatImageBase(fon_type::swap), m_info(info) {}
   FOReconstructible &node() override { return *this; }
   VkImage image(FrameID id) const final { return get(id); }
@@ -142,9 +102,8 @@ public:
     return m_info;
   }
 
-private:
   void m_updateInfo() {
-    auto *img = dynamic_cast<MatImageBase *>(&getUse(0));
+    auto *img = dynamic_cast<MatImageBase *>(&getUseRaw(0));
     assert(img);
     auto &srcInfo = img->info();
     m_info.extent = srcInfo.extent;
@@ -158,8 +117,7 @@ private:
     return engine.createObject<RegularImage>(
         engine.context().getDeviceAllocator(), allocInfo, m_info);
   }
-  bool keepAlive() { return false; }
-  void onUseAction(const Frame &frame, FObject &obj) final {
+  void onUseAction(const Frame &frame, RegularImage &obj) {
     // do nothing
   }
   VkImageCreateInfo m_info;
@@ -174,13 +132,14 @@ inline void intrusive_ptr_release(CopyImageNode *p) {
   intrusive_ptr_release(static_cast<FONodeBase *>(p));
 }
 
-class SwapchainImageNode : public FONode<VkImage, fon_type::ext>,
-                           public MatImageBase {
+class SwapchainImageNode final
+    : public FONode<VkImage, fon_type::ext, SwapchainImageNode>,
+      public MatImageBase {
 public:
+  using Base = FONode<VkImage, fon_type::ext, SwapchainImageNode>;
   SwapchainImageNode(GraphicsEngine &engine, const MaterializationContext &ctx,
                      const VkImageCreateInfo &info)
-      : FONode<VkImage, fon_type::ext>(FOUses{engine.swapchain()}),
-        MatImageBase(fon_type::ext) {
+      : Base(FOUses{*engine.swapchain()}), MatImageBase(fon_type::ext) {
     m_fillInfo(engine.swapchain().get());
   }
   FOReconstructible &node() override { return *this; }
@@ -191,19 +150,17 @@ public:
     return m_info;
   }
 
-private:
-  unsigned getExtIndex(const Frame &frame) const final {
+  unsigned getExtIndex(const Frame &frame) const {
     return static_cast<GraphicsEngine &>(frame.engine())
         .swapchain()
         .get()
         .currentImage();
   }
-  void onUseAction(const Frame &frame, FObject &obj) final {
+  void onUseAction(const Frame &frame, VkImage &obj) {
     // do nothing
   }
-  void
-  constructNew(FramedEngine &engine,
-               boost::container::small_vector_base<FObject::Ptr> &res) final {
+  void constructNew(FramedEngine &engine,
+                    boost::container::small_vector_base<FObject::Ptr> &res) {
     auto &swap = static_cast<GraphicsEngine &>(engine).swapchain().get();
     m_fillInfo(swap);
     std::ranges::transform(
@@ -229,15 +186,13 @@ inline void intrusive_ptr_release(SwapchainImageNode *p) {
   intrusive_ptr_release(static_cast<FONodeBase *>(p));
 }
 
-class ImageSampledAdaptor : public FONode<vkw::Sampler, fon_type::cow>,
-                            public Descriptable {
+class ImageSampledAdaptorImpl
+    : public FONode<vkw::Sampler, fon_type::cow, ImageSampledAdaptorImpl> {
 public:
-  ImageSampledAdaptor(FramedEngine &engine, const MatImageView &view,
-                      VkImageLayout layout)
-      : FONode<vkw::Sampler, fon_type::cow>(
-            engine.createObject<vkw::Sampler>(m_createSampler(engine)),
-            FOUses{view->node()}),
-        m_layout(layout) {
+  using Base = FONode<vkw::Sampler, fon_type::cow, ImageSampledAdaptorImpl>;
+  ImageSampledAdaptorImpl(FramedEngine &engine, const MatImageView &view)
+      : Base(engine.createObject<vkw::Sampler>(m_createSampler(engine)),
+             FOUses{view->node()}) {
     if (view->type() == fon_type::ext) {
       throw std::runtime_error(
           "Cannot create descriptor adaptor for external object");
@@ -247,14 +202,6 @@ public:
       node.construct(engine);
   }
 
-  void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
-                       unsigned binding) const final {
-    auto *view = dynamic_cast<MatImageViewBase *>(&getUse(0));
-    assert(view);
-    set.write(binding, view->view(frame), m_layout, get());
-  }
-
-private:
   static vkw::Sampler m_createSampler(FramedEngine &engine) {
     VkSamplerCreateInfo info{};
     info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
@@ -266,10 +213,24 @@ private:
     info.pNext = nullptr;
     return vkw::Sampler{engine.context().device(), info};
   }
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept final {
+  FObject::Ptr constructNew(FramedEngine &engine) {
     return engine.createObject<vkw::Sampler>(m_createSampler(engine));
   }
   VkImageLayout m_layout;
+};
+class ImageSampledAdaptor : public FONodeView<ImageSampledAdaptorImpl> {
+public:
+  ImageSampledAdaptor(auto &&...args)
+      : FONodeView<ImageSampledAdaptorImpl>(
+            std::forward<decltype(args)>(args)...) {}
+  static void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
+                              FONodeBase &obj, unsigned binding) {
+    auto &casted = static_cast<ImageSampledAdaptorImpl &>(obj);
+    auto *view = dynamic_cast<MatImageViewBase *>(&obj.getUseRaw(0));
+    assert(view);
+    set.write(binding, view->view(frame),
+              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, casted.get());
+  }
 };
 
 const AttributesBase *RenderPass::getAttributes(
@@ -481,8 +442,13 @@ bool GetExtents::materialize(MaterializationContext &ctx) {
   auto &use = uses().front().value();
   auto &image = ctx.get<MatImage>(use);
   ctx.materialize<MatExtents>(
-      value, engine.createNode<AttributeExtractor<VkExtent3D, MatImageBase>>(
-                 *image, [](auto &image) { return image.info().extent; }));
+      value,
+      MatExtents(
+          engine,
+          [&image = *image](FramedEngine &, MatHostValueImpl<VkExtent3D> &) {
+            return image.info().extent;
+          },
+          FOUses{image->node()}));
   return true;
 }
 
@@ -614,26 +580,21 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
 
 RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
                                unsigned firstDescriptor)
-    : passStage(ctx.engine().createNode<PipeHook>(pass, ctx, firstDescriptor)),
-      set([&]() -> Ref<StageSet<PipeHook>> {
-        boost::container::small_vector<Ref<FONodeBase>, 2> descriptables;
-        boost::container::small_vector<std::pair<Descriptable *, unsigned>, 2>
-            descriptablesView;
-        unsigned counter = 0;
-        for (auto &&use : pass.uses() | std::views::drop(firstDescriptor)) {
+    : passStage(ctx.engine(), pass, ctx, firstDescriptor),
+      set([&]() -> StageSet<PipeHook> {
+        DescriptorSetBuilder builder{ctx.engine(), passStage.getSet(0)};
+        for (auto &&[index, use] : pass.uses() |
+                                       std::views::drop(firstDescriptor) |
+                                       std::views::enumerate) {
           auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
           auto view = ctx.get<MatImageView>(use.value());
-          auto combinedSampler = ctx.engine().createNode<ImageSampledAdaptor>(
-              view, info.access.layout);
-          descriptables.emplace_back(combinedSampler);
-          descriptablesView.emplace_back(combinedSampler.get(), counter++);
+          builder.addDescriptor(ImageSampledAdaptor(ctx.engine(), view), index);
         }
-        if (descriptablesView.empty())
+        if (builder.empty())
           return nullptr;
-        auto descriptorSet = ctx.engine().createNode<DescriptorSet>(
-            passStage->getSet(0), descriptablesView);
-        return ctx.engine().createNode<StageSet<PipeHook>>(
-            *passStage, std::array{std::make_pair(descriptorSet.get(), 0)});
+        return StageSet<PipeHook>(
+            ctx.engine(), passStage,
+            std::array{std::make_pair(DescriptorSet{std::move(builder)}, 0)});
       }()) {}
 
 bool Present::materialize(MaterializationContext &ctx) {
@@ -646,13 +607,12 @@ RenderPass::PipeHook::initCreateInfo(const vkw::PipelineLayout &layout) const {
   return vkw::GraphicsPipelineCreateInfo{m_info, layout};
 }
 
-RenderPass::PipeHook::PipeHook(GraphicsEngine &engine, RenderPass &pass,
-                               MaterializationContext &ctx,
+RenderPass::PipeHook::PipeHook(RenderPass &pass, MaterializationContext &ctx,
                                unsigned firstDescriptor)
     : GraphicsPipelineStage(
           ctx.engine(),
           [&]() {
-            StageLayout::Description ret{};
+            StageLayoutDescription::Description ret{};
             boost::container::small_vector<vkw::DescriptorSetLayoutBinding, 2>
                 bindings;
             auto counter = 0;
@@ -663,10 +623,12 @@ RenderPass::PipeHook::PipeHook(GraphicsEngine &engine, RenderPass &pass,
               binding.binding = counter++;
               bindings.push_back(binding);
             }
-            ret.sets.emplace_back(StageLayout::Description::ExternalSet{
-                0,
-                vkw::DescriptorSetLayout{engine.context().device(), bindings},
-                static_cast<unsigned>(engine.getFIFCount())});
+            ret.sets.emplace_back(
+                StageLayoutDescription::Description::ExternalSet{
+                    0,
+                    vkw::DescriptorSetLayout{ctx.engine().context().device(),
+                                             bindings},
+                    static_cast<unsigned>(ctx.engine().getFIFCount())});
             return ret;
           }()),
       m_info([&]() {

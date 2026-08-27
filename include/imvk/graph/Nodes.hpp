@@ -266,8 +266,8 @@ class RenderPass : public Node {
 public:
   class PipeHook : public GraphicsPipelineStage {
   public:
-    PipeHook(GraphicsEngine &engine, RenderPass &pass,
-             MaterializationContext &ctx, unsigned firstDescriptor);
+    PipeHook(RenderPass &pass, MaterializationContext &ctx,
+             unsigned firstDescriptor);
     bool isProvoking() const override { return true; }
 
     vkw::GraphicsPipelineCreateInfo
@@ -281,8 +281,8 @@ public:
     vkw::RenderingFormatInfo m_info;
   };
   struct PassInfo {
-    Ref<PipeHook> passStage;
-    Ref<StageSet<PipeHook>> set;
+    StageLayout<PipeHook> passStage;
+    StageSet<PipeHook> set;
     PassInfo(RenderPass &pass, MaterializationContext &ctx,
              unsigned firstDescriptor);
   };

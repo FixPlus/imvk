@@ -112,7 +112,7 @@ void intrusive_ptr_release(FONodeBase *p);
 using FONodeRef = boost::intrusive_ptr<FONodeBase>;
 
 enum class fon_type { cow, swap, ext, mut, swap_mut };
-template <fon_type type> class FONodeBaseImpl {};
+template <typename T, fon_type type, typename Derived> class FONode {};
 
 class FOUses {
 public:
@@ -251,10 +251,10 @@ public:
                         [](auto &&use) -> decltype(auto) { return *use.ref; });
   }
 
-  template <typename T = FONodeBase> T &getUse(size_t index) const {
-    return static_cast<T &>(*m_uses.at(index).ref);
+  template <typename T> T getUse(size_t index) const {
+    return T{static_cast<typename T::BaseNode *>(&*m_uses.at(index).ref)};
   }
-
+  FONodeBase &getUseRaw(size_t index) const { return *m_uses.at(index).ref; }
   template <std::derived_from<FONodeBase> T = FONodeBase>
   void users_topological_traverse(bool reverse, auto &&userFilter,
                                   auto &&visitAction) {
@@ -400,8 +400,6 @@ public:
   bool isDestroyed() const { return destroyed; }
 
 protected:
-  friend class FONodeBaseImpl<fon_type::cow>;
-
   virtual void onConstruct(FramedEngine &engine) = 0;
   virtual void onDestruct(bool immediate) = 0;
 
@@ -414,18 +412,25 @@ private:
   bool destroyed = true;
 };
 
-template <> class FONodeBaseImpl<fon_type::swap> : public FOReconstructible {
-public:
-  FONodeBaseImpl(FOUses &&uses = FOUses{})
-      : FOReconstructible(true, std::move(uses)) {}
+namespace __detail {
+unsigned getFIFCount(FramedEngine &);
+}
 
-  FObject &use(const Frame &frame) {
+template <typename T, typename Derived>
+class FONode<T, fon_type::swap, Derived> : public FOReconstructible {
+public:
+  constexpr static fon_type FonType = fon_type::swap;
+  using ObjType = T;
+
+  FONode(FOUses &&uses = FOUses{}) : FOReconstructible(true, std::move(uses)) {}
+
+  T &use(const Frame &frame) {
     FONodeBase::use(frame);
-    return *m_objects[frame.id()];
+    return m_objects[frame.id()]->as<T>();
   }
-  const FObject &get(FrameID frameId) const {
+  const T &get(FrameID frameId) const {
     assert(!isDestroyed());
-    return *m_objects[frameId];
+    return m_objects[frameId]->as<T>();
   }
 
 protected:
@@ -434,11 +439,16 @@ protected:
   /// or/and read current state of object after last frame was processed.
   /// @param frame context to do action for.
   /// @param obj reference to current object to prepare.
-  virtual void onUseAction(const Frame &frame, FObject &obj) = 0;
-  virtual FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) = 0;
-  virtual bool keepAlive() = 0;
+  void onUseActionBase(const Frame &frame, T &obj) {
+    static_cast<Derived &>(*this).onUseAction(frame, obj);
+  }
+  FObject::Ptr constructNewBase(FramedEngine &engine, FrameID frame) {
+    return static_cast<Derived &>(*this).constructNew(engine, frame);
+  }
 
-  void onUse(const Frame &frame) final { onUseAction(frame, *getFor(frame)); }
+  void onUse(const Frame &frame) final {
+    onUseActionBase(frame, getFor(frame)->as<T>());
+  }
 
   bool isUsed(const Frame &frame) const final {
     return getFor(frame)->lastFrame() == frame.ordinal();
@@ -455,8 +465,6 @@ protected:
 
 private:
   void onDestruct(bool immediate) final {
-    if (keepAlive())
-      return;
     for (auto &obj : m_objects) {
       if (immediate)
         delete obj.release();
@@ -464,27 +472,36 @@ private:
         obj.reset();
     }
   }
-  void onConstruct(FramedEngine &engine) final;
+  void onConstruct(FramedEngine &engine) final {
+    m_objects.resize(__detail::getFIFCount(engine));
+    for (auto &&id :
+         std::ranges::iota_view{0u, __detail::getFIFCount(engine)}) {
+      auto optNew = constructNewBase(engine, id);
+      m_objects[id] = std::move(optNew);
+    }
+  }
   // swap's objects references are immutable. Their inner state is mutable
   // though.
   boost::container::small_vector<FObject::Ptr, 2> m_objects;
 };
 
-template <> class FONodeBaseImpl<fon_type::swap_mut> : public FONodeBase {
+template <typename T, typename Derived>
+class FONode<T, fon_type::swap_mut, Derived> : public FONodeBase {
 public:
-  FONodeBaseImpl(FramedEngine &engine, auto &&objectFactory,
-                 FOUses &&uses = FOUses{})
+  constexpr static fon_type FonType = fon_type::swap_mut;
+  using ObjType = T;
+  FONode(FramedEngine &engine, auto &&objectFactory, FOUses &&uses = FOUses{})
       : FONodeBase(std::move(uses)), m_objects([&]() {
           boost::container::small_vector<FObject::Ptr, 2> ret;
           m_objectsInit(engine, objectFactory, ret);
           return ret;
         }()) {}
 
-  FObject &use(const Frame &frame) {
+  T &use(const Frame &frame) {
     FONodeBase::use(frame);
-    return *m_objects[frame.id()];
+    return m_objects[frame.id()]->as<T>();
   }
-  const FObject &get(FrameID frameId) const { return *m_objects[frameId]; }
+  const T &get(FrameID frameId) const { return m_objects[frameId]->as<T>(); }
 
 protected:
   /// @brief an action to do if object is used in frame. The purpose of those
@@ -492,37 +509,47 @@ protected:
   /// or/and read current state of object after last frame was processed.
   /// @param frame context to do action for.
   /// @param obj reference to current object to prepare.
-  virtual void onUseAction(const Frame &frame, FObject &obj) = 0;
+  void onUseActionBase(const Frame &frame, T &obj) {
+    static_cast<Derived &>(*this).onUseAction(frame, obj);
+  }
 
-  void onUse(const Frame &frame) final { onUseAction(frame, *getFor(frame)); }
+  void onUse(const Frame &frame) final {
+    onUseActionBase(frame, getFor(frame));
+  }
 
   bool isUsed(const Frame &frame) const final {
-    return getFor(frame)->lastFrame() == frame.ordinal();
+    return getRaw(frame).lastFrame() == frame.ordinal();
   }
 
   void markUsed(const Frame &frame) final {
-    getFor(frame)->useInFrame(frame.ordinal());
+    getRaw(frame).useInFrame(frame.ordinal());
   }
 
   /// FIXME: not very safe.
-  FObject *getFor(const Frame &frame) const {
-    return m_objects[frame.id()].get();
-  }
+  T &getFor(const Frame &frame) const { return m_objects[frame.id()]->as<T>(); }
+  FObject &getRaw(const Frame &frame) const { return *m_objects[frame.id()]; }
 
 private:
-  using ObjGen = boost::compat::function_ref<FObject::Ptr(FrameID)>;
-  void m_objectsInit(FramedEngine &engine, ObjGen gen,
-                     boost::container::small_vector_base<FObject::Ptr> &out);
+  void m_objectsInit(FramedEngine &engine,
+                     boost::compat::function_ref<FObject::Ptr(FrameID)> gen,
+                     boost::container::small_vector_base<FObject::Ptr> &out) {
+    std::ranges::transform(
+        std::ranges::iota_view{0u, __detail::getFIFCount(engine)},
+        std::back_inserter(out), gen);
+  }
   // swap's objects references are immutable. Their inner state is mutable
   // though.
   boost::container::small_vector<FObject::Ptr, 2> m_objects;
 };
 
-template <> class FONodeBaseImpl<fon_type::cow> : public FOReconstructible {
+template <typename T, typename Derived>
+class FONode<T, fon_type::cow, Derived> : public FOReconstructible {
 public:
-  FONodeBaseImpl(FObject::Ptr obj, FOUses &&uses = FOUses{})
+  constexpr static fon_type FonType = fon_type::cow;
+  using ObjType = T;
+  FONode(FObject::Ptr obj, FOUses &&uses = FOUses{})
       : FOReconstructible(false, std::move(uses)), m_current(std::move(obj)) {}
-  FONodeBaseImpl(FOUses &&uses = FOUses{})
+  FONode(FOUses &&uses = FOUses{})
       : FOReconstructible(true, std::move(uses)), m_current(nullptr) {}
   void replace(FramedEngine &engine, FObject::Ptr obj) noexcept {
     for (auto &user : users())
@@ -530,31 +557,31 @@ public:
     m_current = std::move(obj);
   }
 
-  const FObject &use(const Frame &frame) {
+  const T &use(const Frame &frame) {
     FONodeBase::use(frame);
-    return *m_current;
+    return m_current->as<T>();
   }
-  const FObject &get() const {
+  const T &get() const {
     assert(!isDestroyed());
-    return *m_current;
+    return m_current->as<T>();
   }
 
 protected:
   /// @brief constructs new object using current uses as inputs. May be
   /// unimplemented(return null) for some objects but in this case those objects
   /// cannot have uses.
-  /// FIXME: this is noexcept due to replace() being noexcept for now. See upper
-  /// fixme.
   /// @note may return null if object does not contain any uses. UB if null
   /// may be returned with uses.
-  virtual FObject::Ptr constructNew(FramedEngine &engine) noexcept = 0;
+  FObject::Ptr constructNewBase(FramedEngine &engine) {
+    return static_cast<Derived &>(*this).constructNew(engine);
+  }
   void onUse(const Frame &frame) final {
     // do nothing. cow objects are immutable and do not require any per-frame
     // work.
   }
 
   bool isUsed(const Frame &frame) const final {
-    return m_current->lastFrame() == frame.id();
+    return m_current->lastFrame() == frame.ordinal();
   }
 
   void markUsed(const Frame &frame) final {
@@ -569,33 +596,43 @@ private:
       m_current.reset();
   }
   void onConstruct(FramedEngine &engine) final {
-    m_current = constructNew(engine);
+    m_current = constructNewBase(engine);
   }
   // cow's object references are mutable. The inner state of object is
   // immutable.
   FObject::Ptr m_current;
 };
 
-template <> class FONodeBaseImpl<fon_type::ext> : public FOReconstructible {
+template <typename T, typename Derived>
+class FONode<T, fon_type::ext, Derived> : public FOReconstructible {
 public:
-  FONodeBaseImpl(FOUses &&uses = FOUses{})
-      : FOReconstructible(true, std::move(uses)) {}
-  FONodeBaseImpl() = default;
+  constexpr static fon_type FonType = fon_type::ext;
+  using ObjType = T;
+  FONode(FOUses &&uses = FOUses{}) : FOReconstructible(true, std::move(uses)) {}
+  FONode() : FOReconstructible(true) {}
 
-  FObject &use(const Frame &frame) {
+  T &use(const Frame &frame) {
     FONodeBase::use(frame);
-    return *m_objects[getExtIndex(frame)];
+    return m_objects[getExtIndexBase(frame)]->as<T>();
   }
-  const FObject &get(FrameID frameId) const { return *m_objects[frameId]; }
+  const T &get(FrameID frameId) const { return m_objects[frameId]->as<T>(); }
 
 protected:
-  virtual unsigned getExtIndex(const Frame &frame) const = 0;
+  unsigned getExtIndexBase(const Frame &frame) const {
+    return static_cast<const Derived &>(*this).getExtIndex(frame);
+  }
 
-  virtual void onUseAction(const Frame &frame, FObject &obj) = 0;
-  virtual void
-  constructNew(FramedEngine &engine,
-               boost::container::small_vector_base<FObject::Ptr> &res) = 0;
-  void onUse(const Frame &frame) final { onUseAction(frame, *getFor(frame)); }
+  void onUseActionBase(const Frame &frame, T &obj) {
+    static_cast<Derived &>(*this).onUseAction(frame, obj);
+  }
+  void
+  constructNewBase(FramedEngine &engine,
+                   boost::container::small_vector_base<FObject::Ptr> &res) {
+    static_cast<Derived &>(*this).constructNew(engine, res);
+  }
+  void onUse(const Frame &frame) final {
+    onUseActionBase(frame, getFor(frame)->as<T>());
+  }
 
   bool isUsed(const Frame &frame) const final {
     return getFor(frame)->lastFrame() == frame.ordinal();
@@ -607,7 +644,7 @@ protected:
 
   /// FIXME: not very safe.
   FObject *getFor(const Frame &frame) const {
-    return m_objects[getExtIndex(frame)].get();
+    return m_objects[getExtIndexBase(frame)].get();
   }
 
 private:
@@ -619,26 +656,29 @@ private:
     m_objects.clear();
   }
   void onConstruct(FramedEngine &engine) final {
-    constructNew(engine, m_objects);
+    constructNewBase(engine, m_objects);
   }
   // ext's objects references and inner state are mutable.
   boost::container::small_vector<FObject::Ptr, 2> m_objects;
 };
 
-template <> class FONodeBaseImpl<fon_type::mut> : public FONodeBase {
+template <typename T, typename Derived>
+class FONode<T, fon_type::mut, Derived> : public FONodeBase {
 public:
-  FONodeBaseImpl(FObject::Ptr obj, FOUses &&uses = FOUses{})
+  constexpr static fon_type FonType = fon_type::mut;
+  using ObjType = T;
+  FONode(FObject::Ptr obj, FOUses &&uses = FOUses{})
       : m_current(std::move(obj)), FONodeBase(std::move(uses)) {}
 
-  FObject &use(const Frame &frame) {
+  T &use(const Frame &frame) {
     FONodeBase::use(frame);
-    return *m_current;
+    return m_current->as<T>();
   }
-  FObject &get() const { return *m_current; }
+  T &get() const { return m_current->as<T>(); }
 
 protected:
   bool isUsed(const Frame &frame) const final {
-    return m_current->lastFrame() == frame.id();
+    return m_current->lastFrame() == frame.ordinal();
   }
 
   void markUsed(const Frame &frame) final {
@@ -651,113 +691,24 @@ private:
   FObject::Ptr m_current;
 };
 
-template <typename T, fon_type type> class FONode {};
-
-template <typename T>
-class FONode<T, fon_type::swap> : public FONodeBaseImpl<fon_type::swap> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::swap>(std::forward<decltype(args)>(args)...){};
-
-  T &use(const Frame &frame) {
-    return FONodeBaseImpl<fon_type::swap>::use(frame).as<T>();
-  }
-  const T &get(FrameID frame) const {
-    return FONodeBaseImpl<fon_type::swap>::get(frame).as<T>();
-  }
-};
-
-template <typename T>
-class FONode<T, fon_type::swap_mut>
-    : public FONodeBaseImpl<fon_type::swap_mut> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::swap_mut>(
-            std::forward<decltype(args)>(args)...){};
-
-  T &use(const Frame &frame) {
-    return FONodeBaseImpl<fon_type::swap_mut>::use(frame).as<T>();
-  }
-  const T &get(FrameID frame) const {
-    return FONodeBaseImpl<fon_type::swap_mut>::get(frame).as<T>();
-  }
-};
-
-template <typename T>
-class FONode<T, fon_type::cow> : public FONodeBaseImpl<fon_type::cow> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::cow>(std::forward<decltype(args)>(args)...){};
-
-  const T &use(const Frame &frame) {
-    return FONodeBaseImpl<fon_type::cow>::use(frame).as<T>();
-  }
-  const T &get() const { return FONodeBaseImpl<fon_type::cow>::get().as<T>(); }
-};
-
-template <typename T>
-class FONode<T, fon_type::ext> : public FONodeBaseImpl<fon_type::ext> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::ext>(std::forward<decltype(args)>(args)...){};
-
-  T &use(const Frame &frame) {
-    return FONodeBaseImpl<fon_type::ext>::use(frame).as<T>();
-  }
-  const T &get(FrameID frame) const {
-    return FONodeBaseImpl<fon_type::ext>::get(frame).as<T>();
-  }
-};
-
-template <typename T>
-class FONode<T, fon_type::mut> : public FONodeBaseImpl<fon_type::mut> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::mut>(std::forward<decltype(args)>(args)...){};
-
-  T &use(const Frame &frame) {
-    return FONodeBaseImpl<fon_type::mut>::use(frame).as<T>();
-  }
-  T &get() const { return FONodeBaseImpl<fon_type::mut>::get().as<T>(); }
-};
-
-template <>
-class FONode<void, fon_type::swap> : public FONodeBaseImpl<fon_type::swap> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::swap>(std::forward<decltype(args)>(args)...){};
-};
-
-template <>
-class FONode<void, fon_type::swap_mut>
-    : public FONodeBaseImpl<fon_type::swap_mut> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::swap_mut>(
-            std::forward<decltype(args)>(args)...){};
-};
-
-template <>
-class FONode<void, fon_type::cow> : public FONodeBaseImpl<fon_type::cow> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::cow>(std::forward<decltype(args)>(args)...){};
-};
-
-template <>
-class FONode<void, fon_type::ext> : public FONodeBaseImpl<fon_type::ext> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::ext>(std::forward<decltype(args)>(args)...){};
-};
-
-template <>
-class FONode<void, fon_type::mut> : public FONodeBaseImpl<fon_type::mut> {
-public:
-  FONode(auto &&...args)
-      : FONodeBaseImpl<fon_type::mut>(std::forward<decltype(args)>(args)...){};
-};
-
 template <typename T> using Ref = boost::intrusive_ptr<T>;
+
+template <typename T, fon_type type, typename Derived>
+class FONodeViewImpl : private Ref<FONode<T, type, Derived>> {
+public:
+  using Base = Ref<FONode<T, type, Derived>>;
+  using BaseNode = FONode<T, type, Derived>;
+  FONodeViewImpl(std::derived_from<FramedEngine> auto &engine, auto &&...args)
+      : Base(engine.template createNode<Derived>(
+            std::forward<decltype(args)>(args)...)){};
+  FONodeViewImpl(BaseNode *ptr = nullptr) : Base(ptr){};
+  using Base::operator*;
+  using Base::operator->;
+  using Base::operator bool;
+};
+
+template <typename Derived>
+using FONodeView =
+    FONodeViewImpl<typename Derived::ObjType, Derived::FonType, Derived>;
 
 } // namespace imvk

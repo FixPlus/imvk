@@ -10,15 +10,14 @@
 namespace imvk::examples {
 
 template <typename T, imvk::fon_type type, typename BufHandle = vkw::Buffer<T>>
-class Buffer {};
+class BufferImpl {};
 
 template <typename T, typename Buf>
-class Buffer<T, imvk::fon_type::cow, Buf>
-    : public imvk::FONode<Buf, imvk::fon_type::cow> {
+class BufferImpl<T, imvk::fon_type::cow, Buf>
+    : public imvk::FONode<Buf, imvk::fon_type::cow,
+                          BufferImpl<T, imvk::fon_type::cow, Buf>> {
 public:
-  imvk::FObject::Ptr constructNew(imvk::FramedEngine &) noexcept final {
-    return nullptr;
-  }
+  imvk::FObject::Ptr constructNew(imvk::FramedEngine &) { return nullptr; }
   struct CopyWorkload : public imvk::CopyEngine::Workload {
     CopyWorkload(vkw::StagingBuffer<T> &&src, Buf &dst)
         : src(std::move(src)), dst(dst){};
@@ -69,66 +68,75 @@ public:
   }
 
   template <typename U>
-  Buffer(imvk::FramedEngine &engine, imvk::CopyEngine &copyEngine, U &&data)
-      : imvk::FONode<Buf, imvk::fon_type::cow>(
+  BufferImpl(imvk::FramedEngine &engine, imvk::CopyEngine &copyEngine, U &&data)
+      : imvk::FONode<Buf, imvk::fon_type::cow,
+                     BufferImpl<T, imvk::fon_type::cow, Buf>>(
             create(engine, copyEngine, std::forward<U>(data))) {}
 };
 
 template <typename T, typename Buf>
-class Buffer<T, imvk::fon_type::swap_mut, Buf>
-    : public imvk::FONode<Buf, imvk::fon_type::swap_mut> {
+class BufferImpl<T, imvk::fon_type::swap_mut, Buf>
+    : public imvk::FONode<Buf, imvk::fon_type::swap_mut,
+                          BufferImpl<T, imvk::fon_type::swap_mut, Buf>> {
 public:
-  Buffer(imvk::FramedEngine &engine, size_t size, auto &&action)
-      : imvk::FONode<Buf, imvk::fon_type::swap_mut>(
-            engine,
-            [&](imvk::FrameID id) {
-              return engine.createObject<Buf>(
-                  engine.context().getDeviceAllocator(), size,
-                  VmaAllocationCreateInfo{
-                      .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                      .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
-                      .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT});
-            }),
+  using Base = imvk::FONode<Buf, imvk::fon_type::swap_mut,
+                            BufferImpl<T, imvk::fon_type::swap_mut, Buf>>;
+  BufferImpl(imvk::FramedEngine &engine, size_t size, auto &&action)
+      : Base(engine,
+             [&](imvk::FrameID id) {
+               return engine.createObject<Buf>(
+                   engine.context().getDeviceAllocator(), size,
+                   VmaAllocationCreateInfo{
+                       .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                       .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+                       .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT});
+             }),
         m_action(std::forward<decltype(action)>(action)) {}
 
-  Buffer(imvk::FramedEngine &engine, auto &&action)
-      : imvk::FONode<Buf, imvk::fon_type::swap_mut>(
-            engine,
-            [&](imvk::FrameID id) {
-              return engine.createObject<Buf>(
-                  engine.context().getDeviceAllocator(),
-                  VmaAllocationCreateInfo{
-                      .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                      .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
-                      .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT});
-            }),
+  BufferImpl(imvk::FramedEngine &engine, auto &&action)
+      : Base(engine,
+             [&](imvk::FrameID id) {
+               return engine.createObject<Buf>(
+                   engine.context().getDeviceAllocator(),
+                   VmaAllocationCreateInfo{
+                       .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                       .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+                       .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT});
+             }),
         m_action(std::forward<decltype(action)>(action)) {}
 
-private:
-  void onUseAction(const imvk::Frame &frame, imvk::FObject &obj) override {
-    std::invoke(m_action, frame, obj.as<Buf>());
+  void onUseAction(const imvk::Frame &frame, Buf &obj) {
+    std::invoke(m_action, frame, obj);
   }
   std::function<void(const imvk::Frame &, Buf &)> m_action;
 };
 
 template <typename T, imvk::fon_type type>
-class UniformBuffer : public Buffer<T, type, vkw::UniformBuffer<T>>,
-                      public imvk::Descriptable {
+class UniformBuffer
+    : public imvk::FONodeView<BufferImpl<T, type, vkw::UniformBuffer<T>>> {
 public:
   UniformBuffer(auto &&...args)
-      : Buffer<T, type, vkw::UniformBuffer<T>>(
+      : imvk::FONodeView<BufferImpl<T, type, vkw::UniformBuffer<T>>>(
             std::forward<decltype(args)>(args)...) {}
-  void descriptorWrite(imvk::FrameID frame, vkw::DescriptorSet &set,
-                       unsigned binding) const final {
+  static void descriptorWrite(imvk::FrameID frame, vkw::DescriptorSet &set,
+                              imvk::FONodeBase &obj, unsigned binding) {
+    auto &casted =
+        static_cast<BufferImpl<T, type, vkw::UniformBuffer<T>> &>(obj);
     if constexpr (type == imvk::fon_type::swap_mut) {
-      set.write(binding, this->get(frame));
+      set.write(binding, casted.get(frame));
     } else {
-      set.write(binding, this->get());
+      set.write(binding, casted.get());
     }
   }
 };
 
 template <typename T, imvk::fon_type PType>
-using VertexBuffer = Buffer<T, PType, vkw::VertexBuffer<T>>;
+class VertexBuffer
+    : public imvk::FONodeView<BufferImpl<T, PType, vkw::VertexBuffer<T>>> {
+public:
+  VertexBuffer(auto &&...args)
+      : imvk::FONodeView<BufferImpl<T, PType, vkw::VertexBuffer<T>>>(
+            std::forward<decltype(args)>(args)...) {}
+};
 
 } // namespace imvk::examples

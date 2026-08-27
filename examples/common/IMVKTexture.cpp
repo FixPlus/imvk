@@ -10,23 +10,26 @@
 namespace imvk::examples {
 
 std::filesystem::path assetsDir() { return IMVK_ASSETS_PATH; }
-SampledView::SampledView(FramedEngine &eng, Texture &texture)
+SampledViewImpl::SampledViewImpl(FramedEngine &eng, Texture &texture)
     : FONode<std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
-             fon_type::cow>(doConstructNew(eng, texture.get()),
-                            FOUses{texture}) {}
+             fon_type::cow, SampledViewImpl>(
+          doConstructNew(eng, texture->get()), FOUses{*texture}) {}
 
 void SampledView::descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
-                                  unsigned binding) const {
-  auto &&[view, sampler] = get();
+                                  FONodeBase &obj, unsigned binding) {
+  auto &impl = static_cast<SampledViewImpl &>(obj);
+  auto &&[view, sampler] = impl.get();
   set.write(binding, view.operator VkImageView(),
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, sampler);
 }
-FObject::Ptr SampledView::constructNew(FramedEngine &engine) noexcept {
-  return doConstructNew(engine, getUse<Texture>(0).get());
+
+FObject::Ptr SampledViewImpl::constructNew(FramedEngine &engine) {
+  return doConstructNew(engine, getUse<Texture>(0)->get());
 }
+
 FObject::Ptr
-SampledView::doConstructNew(FramedEngine &engine,
-                            const vkw::Image<vkw::COLOR, vkw::I2D> &image) {
+SampledViewImpl::doConstructNew(FramedEngine &engine,
+                                const vkw::Image<vkw::COLOR, vkw::I2D> &image) {
   VkSamplerCreateInfo info{};
   info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
   info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;

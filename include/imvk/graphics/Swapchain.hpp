@@ -44,79 +44,90 @@ public:
 
 /// @brief Thin wrapper over vkw::SwapChain that creates image views for
 /// swapchain images and transits image layout to present_src.
-class Swapchain final : public FONode<vkw::SwapChain, fon_type::cow> {
+class SwapchainImpl final
+    : public FONode<vkw::SwapChain, fon_type::cow, SwapchainImpl> {
 public:
-  Swapchain(GraphicsEngine &engine);
+  SwapchainImpl(GraphicsEngine &engine);
 
-  // Although a swapchain is a cow, we may still modify its state.
-  vkw::SwapChain &get() {
-    return const_cast<vkw::SwapChain &>(
-        FONode<vkw::SwapChain, fon_type::cow>::get());
-  }
-  const vkw::SwapChain &get() const {
-    return FONode<vkw::SwapChain, fon_type::cow>::get();
-  }
-
-private:
-  FObject::Ptr constructNew(FramedEngine &engine) noexcept final;
-
-  FObject::Ptr doConstructNew(GraphicsEngine &engine);
+  FObject::Ptr constructNew(FramedEngine &engine);
 };
 
-template <typename T> class Swapchained : public FONode<T, fon_type::ext> {
+class Swapchain : public FONodeView<SwapchainImpl> {
+public:
+  Swapchain(auto &&...args)
+      : FONodeView<SwapchainImpl>(std::forward<decltype(args)>(args)...) {}
+  // Although a swapchain is a cow, we may still modify its state.
+  vkw::SwapChain &get() { return const_cast<vkw::SwapChain &>((*this)->get()); }
+};
+
+template <typename T, typename Derived>
+class Swapchained : public FONode<T, fon_type::ext, Derived> {
 public:
   Swapchained(Swapchain &swapchain, FOUses &&uses)
-      : FONode<T, fon_type::ext>(FOUses{swapchain} | uses) {}
+      : FONode<T, fon_type::ext, Derived>(FOUses{*swapchain} | uses) {}
   Swapchained(Swapchain &swapchain)
-      : FONode<T, fon_type::ext>(FOUses{swapchain}) {}
+      : FONode<T, fon_type::ext, Derived>(FOUses{*swapchain}) {}
 
   template <typename U>
     requires !
              std::convertible_to<U, Swapchain> Swapchained(U & swapchained,
                                                            FOUses &&uses)
-      : FONode<T, fon_type::ext>(
-            FOUses{swapchained.getUse<Swapchain>(0), swapchained} | uses) {}
+      : FONode<T, fon_type::ext, Derived>(
+            FOUses{*swapchained.getUse<Swapchain>(0), *swapchained} | uses) {}
   template <typename U>
     requires !
              std::convertible_to<U, Swapchain> Swapchained(U & swapchained)
-      : FONode<T, fon_type::ext>(
-            FOUses{swapchained.getUse<Swapchain>(0), swapchained}) {}
+      : FONode<T, fon_type::ext, Derived>(
+            FOUses{*swapchained.getUse<Swapchain>(0), *swapchained}) {}
 
   vkw::SwapChain &swapchain() { return this->getUse<Swapchain>(0).get(); }
   const vkw::SwapChain &swapchain() const {
     return this->getUse<Swapchain>(0).get();
   }
-
-protected:
-  virtual FObject::Ptr constructOne(FramedEngine &engine, unsigned image) = 0;
-  unsigned getExtIndex(const Frame &frame) const final {
+  unsigned getExtIndex(const Frame &frame) const {
     return swapchain().currentImage();
   }
 
-  void
-  constructNew(FramedEngine &engine,
-               boost::container::small_vector_base<FObject::Ptr> &res) final {
+  void constructNew(FramedEngine &engine,
+                    boost::container::small_vector_base<FObject::Ptr> &res) {
     for (auto id :
          std::ranges::iota_view{0ul, std::ranges::size(swapchain().images())}) {
-      res.push_back(constructOne(engine, id));
+      res.push_back(constructOneBase(engine, id));
     }
+  }
+
+  FObject::Ptr constructOneBase(FramedEngine &engine, unsigned image) {
+    return static_cast<Derived &>(*this).constructOne(engine, image);
   }
 };
 
-class SwapchainView final
-    : public Swapchained<vkw::ImageView<vkw::COLOR, vkw::V2DA>> {
+template <typename T> class SwapchainedView : public FONodeView<T> {
 public:
-  SwapchainView(GraphicsEngine &engine, Swapchain &swapchain);
-
+  SwapchainedView(auto &&...args)
+      : FONodeView<T>(std::forward<decltype(args)>(args)...) {}
   const vkw::SwapChain &swapchain() const {
-    return getUse<const Swapchain>(0).get();
+    return (*this)->getUse<Swapchain>(0).get();
   }
+};
 
-private:
-  void onUseAction(const Frame &frame, FObject &obj) final {
+class SwapchainViewImpl final
+    : public Swapchained<vkw::ImageView<vkw::COLOR, vkw::V2DA>,
+                         SwapchainViewImpl> {
+public:
+  SwapchainViewImpl(GraphicsEngine &engine, Swapchain &swapchain);
+
+  void onUseAction(const Frame &frame,
+                   vkw::ImageView<vkw::COLOR, vkw::V2DA> &obj) {
     // nothing to do.
   }
-  FObject::Ptr constructOne(FramedEngine &engine, unsigned image) final;
+  FObject::Ptr constructOne(FramedEngine &engine, unsigned image);
+};
+
+class SwapchainView : public SwapchainedView<SwapchainViewImpl> {
+public:
+  SwapchainView(auto &&...args)
+      : SwapchainedView<SwapchainViewImpl>(
+            std::forward<decltype(args)>(args)...) {}
 };
 
 } // namespace imvk

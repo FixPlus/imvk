@@ -64,20 +64,21 @@ FObject::Ptr GraphicsEngine::m_createSwapchain() {
   fence.wait();
   return ret;
 }
-Swapchain::Swapchain(GraphicsEngine &engine)
-    : FONode<vkw::SwapChain, fon_type::cow>(doConstructNew(engine)) {}
+SwapchainImpl::SwapchainImpl(GraphicsEngine &engine)
+    : FONode<vkw::SwapChain, fon_type::cow, SwapchainImpl>(
+          constructNew(engine)) {}
 
-SwapchainView::SwapchainView(GraphicsEngine &engine, Swapchain &swapchain)
-    : Swapchained<vkw::ImageView<vkw::COLOR, vkw::V2DA>>(swapchain) {}
-FObject::Ptr Swapchain::constructNew(FramedEngine &engine) noexcept {
-  return doConstructNew(static_cast<GraphicsEngine &>(engine));
+SwapchainViewImpl::SwapchainViewImpl(GraphicsEngine &engine,
+                                     Swapchain &swapchain)
+    : Swapchained<vkw::ImageView<vkw::COLOR, vkw::V2DA>, SwapchainViewImpl>(
+          swapchain) {}
+
+FObject::Ptr SwapchainImpl::constructNew(FramedEngine &engine) {
+  return static_cast<GraphicsEngine &>(engine).m_createSwapchain();
 }
 
-FObject::Ptr Swapchain::doConstructNew(GraphicsEngine &engine) {
-  return engine.m_createSwapchain();
-}
-
-FObject::Ptr SwapchainView::constructOne(FramedEngine &engine, unsigned id) {
+FObject::Ptr SwapchainViewImpl::constructOne(FramedEngine &engine,
+                                             unsigned id) {
   auto &image = swapchain().images()[id];
   VkComponentMapping mapping;
   mapping.r = VK_COMPONENT_SWIZZLE_IDENTITY;

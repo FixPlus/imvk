@@ -15,9 +15,9 @@ findStageSet(vkw::SPIRVModuleInfo const &moduleInfo, uint32_t stageSet) {
 }
 
 } // namespace
-
-StageLayoutInfo::StageLayoutInfo(FramedEngine &engine,
-                                 Description &&description)
+#if 1
+StageLayoutDescription::StageLayoutDescription(FramedEngine &engine,
+                                               Description &&description)
     : m_engine(engine), m_stage(description.stage ? *description.stage
                                                   : VkShaderStageFlagBits{}) {
   auto isExternal = [](auto &&set) {
@@ -31,9 +31,9 @@ StageLayoutInfo::StageLayoutInfo(FramedEngine &engine,
        description.sets | std::views::filter(isExternal) |
            std::views::transform(asExternal)) {
     m_setIds.emplace(num, counter++);
-    pools.addUse(
-        engine.createNode<DescriptorPool>(std::make_unique<DescriptorPoolImpl>(
-            engine.context().device(), std::move(layout), setsPerPool)));
+    pools.addUse(*DescriptorPool(engine, std::make_unique<DescriptorPoolImpl>(
+                                             engine.context().device(),
+                                             std::move(layout), setsPerPool)));
   }
   if (description.shaders.empty())
     return;
@@ -62,8 +62,9 @@ StageLayoutInfo::StageLayoutInfo(FramedEngine &engine,
     for (auto &&binding : setInfo->bindings())
       bindings.emplace_back(binding.index(), binding.descriptorType(), flags);
     m_setIds.emplace(num, counter++);
-    pools.addUse(
-        engine.createNode<DescriptorPool>(std::make_unique<DescriptorPoolImpl>(
+    pools.addUse(*DescriptorPool(
+        engine,
+        std::make_unique<DescriptorPoolImpl>(
             engine.context().device(),
             vkw::DescriptorSetLayout{engine.context().device(), bindings},
             setsPerPool)));
@@ -76,5 +77,6 @@ StageLayoutInfo::StageLayoutInfo(FramedEngine &engine,
         .size = pushC.size()});
   }
 }
+#endif
 
 } // namespace imvk

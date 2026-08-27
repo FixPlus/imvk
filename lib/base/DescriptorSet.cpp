@@ -93,30 +93,32 @@ const vkw::DescriptorSetLayout &DescriptorPoolImpl::layout() {
   return m_layout;
 }
 
-void DescriptorSet::writeDescriptors(vkw::DescriptorSet &set, FrameID frame) {
-  for (auto &&[child, binding] : m_bindings) {
-    child->descriptorWrite(frame, set, binding);
+void DescriptorSetImpl::writeDescriptors(vkw::DescriptorSet &set,
+                                         FrameID frame) {
+  for (auto &&[index, binding] : m_bindings | std::views::enumerate) {
+    auto &&[fn, num] = binding;
+    std::invoke(fn, frame, set, getUseRaw(index + 1), num);
   }
 }
-void DescriptorSet::writeDescriptors(FrameID frame) {
+void DescriptorSetImpl::writeDescriptors(FrameID frame) {
   auto &set = get(frame);
   writeDescriptors(*set, frame);
 }
 
-DescriptorSet::DescriptorSet(
-    FramedEngine &engine, DescriptorPool &pool,
-    std::span<std::pair<Descriptable *, unsigned>> bindings)
-    : FONode<DescriptorPool::SetHandle, fon_type::swap>(FOUses(pool).addUses(
-          bindings | std::views::transform([](auto &&p) -> decltype(auto) {
-            return dynamic_cast<FONodeBase &>(*p.first);
-          }))) {
-  std::ranges::copy(bindings, std::back_inserter(m_bindings));
+DescriptorSetImpl::DescriptorSetImpl(FramedEngine &engine, DescriptorPool &pool,
+                                     std::span<const Descriptor> bindings)
+    : FONode<DescriptorPool::SetHandle, fon_type::swap, DescriptorSetImpl>(
+          FOUses(*pool).addUses(
+              bindings | std::views::transform([](auto &&p) -> decltype(auto) {
+                return *std::get<0>(p);
+              }))) {
+  std::ranges::transform(
+      bindings, std::back_inserter(m_bindings), [](auto &&tpl) {
+        return std::make_pair(std::get<1>(tpl), std::get<2>(tpl));
+      });
 }
 
-void DescriptorSet::onUseAction(const Frame &frame, FObject &obj) {
-  // nothin to do for now.
-}
-FObject::Ptr DescriptorSet::constructNew(FramedEngine &engine, FrameID id) {
+FObject::Ptr DescriptorSetImpl::constructNew(FramedEngine &engine, FrameID id) {
 
   auto ret = engine.createObject<DescriptorPool::SetHandle>(
       getUse<DescriptorPool>(0).createSet());

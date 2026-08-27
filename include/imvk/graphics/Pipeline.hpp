@@ -14,12 +14,12 @@ struct GraphicsPipelineTraits {
                              PipelineLayout<GraphicsPipelineTraits> &layout);
 };
 
-class GraphicsPipelineStage : public StageLayout {
+class GraphicsPipelineStage : public StageLayoutDescription {
 public:
   using PipelineTraits = GraphicsPipelineTraits;
   GraphicsPipelineStage(GraphicsEngine &engine,
-                        StageLayout::Description &&description)
-      : StageLayout(engine, std::move(description)) {}
+                        StageLayoutDescription::Description &&description)
+      : StageLayoutDescription(engine, std::move(description)) {}
 
   virtual bool isProvoking() const { return false; }
 
@@ -42,21 +42,21 @@ public:
 template <std::derived_from<GraphicsPipelineStage>... Stages>
 class GraphicsPipelineManager final {
 private:
-  using StageKey = std::tuple<Ref<StageSet<Stages>>...>;
+  using StageKey = std::tuple<StageSet<Stages>...>;
 
 public:
   GraphicsPipelineManager(GraphicsPipelinePool<Stages...> &pool,
                           vkw::RenderPassRecorder &recorder, const Frame &frame)
       : m_pool(pool), m_recorder(recorder), m_frame(frame) {}
 
-  template <typename... Args> void bind(Args &&...sets) {
-    ((std::get<Ref<std::remove_cvref_t<Args>>>(m_sets) = &sets), ...);
+  template <typename... Args> void bind(Args... sets) {
+    ((std::get<std::remove_cvref_t<Args>>(m_sets) = std::move(sets)), ...);
   }
   void bindPipeline() {
     auto bindDescriptors = [this](auto &&stageSet, auto &&layout) {
       for (auto &&[num, set] : stageSet.sets()) {
         m_recorder.bindDescriptorSet(layout, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                     set.use(m_frame), num);
+                                     *set->use(m_frame), num);
       }
     };
     auto checkSet = [](auto &&pset) { assert(pset); };
@@ -64,11 +64,11 @@ public:
         [&](auto &&...sets) {
           (checkSet(sets), ...);
           (sets->use(m_frame), ...);
-          m_boundPipeline = &m_pool.get(sets->stage()...);
+          m_boundPipeline = m_pool.get(sets.stage()...);
           auto &pipeline = m_boundPipeline->use(m_frame);
           m_recorder.bindPipeline(pipeline);
           auto &layout = pipeline.layout();
-          (bindDescriptors(*sets, layout), ...);
+          (bindDescriptors(sets, layout), ...);
         },
         m_sets);
   }
@@ -77,7 +77,7 @@ private:
   GraphicsPipelinePool<Stages...> &m_pool;
   vkw::RenderPassRecorder &m_recorder;
   const Frame &m_frame;
-  GraphicsPipeline *m_boundPipeline = nullptr;
+  GraphicsPipeline m_boundPipeline = nullptr;
   StageKey m_sets;
 };
 

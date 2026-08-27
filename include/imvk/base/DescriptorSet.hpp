@@ -33,24 +33,31 @@ struct IDescriptorPoolState {
   virtual ~IDescriptorPoolState() = default;
 };
 
-class DescriptorPool final
-    : public FONode<std::unique_ptr<IDescriptorPoolState>, fon_type::mut> {
+class DescriptorPoolPimpl final
+    : public FONode<std::unique_ptr<IDescriptorPoolState>, fon_type::mut,
+                    DescriptorPoolPimpl> {
 public:
-  using SetHandle = IDescriptorPoolState::SetHandle;
-
-  DescriptorPool(FramedEngine &engine,
-                 std::unique_ptr<IDescriptorPoolState> state)
-      : FONode<std::unique_ptr<IDescriptorPoolState>, fon_type::mut>(
+  DescriptorPoolPimpl(FramedEngine &engine,
+                      std::unique_ptr<IDescriptorPoolState> state)
+      : FONode<std::unique_ptr<IDescriptorPoolState>, fon_type::mut,
+               DescriptorPoolPimpl>(
             engine.createObject<std::unique_ptr<IDescriptorPoolState>>(
                 std::move(state))) {}
-  const auto &descriptorLayout() const { return get()->layout(); }
 
-  SetHandle createSet() { return get()->createSet(); }
-
-private:
   void onUse(const Frame &frame) final {
     // do nothing.
   }
+};
+
+class DescriptorPool : public FONodeView<DescriptorPoolPimpl> {
+public:
+  using SetHandle = IDescriptorPoolState::SetHandle;
+  DescriptorPool(auto &&...args)
+      : FONodeView<DescriptorPoolPimpl>(std::forward<decltype(args)>(args)...) {
+  }
+  const auto &descriptorLayout() const { return (*this)->get()->layout(); }
+
+  SetHandle createSet() { return (*this)->get()->createSet(); }
 };
 
 /// @brief Wrapper over vkw::DescriptorSet implementing
@@ -87,63 +94,62 @@ private:
   std::mutex poolsMutex;
 };
 
-class Descriptable {
+class DescriptorSetImpl final
+    : public FONode<DescriptorPool::SetHandle, fon_type::swap,
+                    DescriptorSetImpl> {
 public:
-  virtual void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
-                               unsigned binding) const = 0;
-  virtual ~Descriptable() = default;
-};
+  using DescriptorFun = boost::compat::function_ref<void(
+      FrameID, vkw::DescriptorSet &, FONodeBase &, unsigned)>;
+  using Descriptor = std::tuple<FONodeRef, DescriptorFun, unsigned>;
+  DescriptorSetImpl(FramedEngine &engine, DescriptorPool &pool,
+                    std::span<const Descriptor> descriptors);
 
-class FramedEngine;
-
-class Frame;
-
-/// @brief Frame-aware descriptor set wrapper.
-class DescriptorSet final
-    : public FONode<DescriptorPool::SetHandle, fon_type::swap> {
-public:
-  DescriptorSet(FramedEngine &engine, DescriptorPool &pool,
-                std::span<std::pair<Descriptable *, unsigned>> descriptors);
-
-  vkw::DescriptorSet &use(const Frame &frame) {
-    return *FONode<DescriptorPool::SetHandle, fon_type::swap>::use(frame);
+  void onUseAction(const Frame &frame, DescriptorPool::SetHandle &obj) {
+    // nothing to do for now.
   }
-  DescriptorPool &pool() { return getUse<DescriptorPool &>(0); }
+
+  FObject::Ptr constructNew(FramedEngine &engine, FrameID id);
 
 private:
-  bool keepAlive() final { return false; }
-  void onUseAction(const Frame &frame, FObject &obj) final;
-
-  FObject::Ptr constructNew(FramedEngine &engine, FrameID id) final;
   void writeDescriptors(vkw::DescriptorSet &set, FrameID frame);
   void writeDescriptors(FrameID frame);
 
-  boost::container::small_vector<std::pair<Descriptable *, unsigned>, 2u>
+  boost::container::small_vector<std::pair<DescriptorFun, unsigned>, 2u>
       m_bindings;
+};
+
+/// @brief Frame-aware descriptor set wrapper.
+class DescriptorSet : public FONodeView<DescriptorSetImpl> {
+public:
+  DescriptorSet(auto &&...args)
+      : FONodeView<DescriptorSetImpl>(std::forward<decltype(args)>(args)...) {}
+  DescriptorPool pool() { return (*this)->getUse<DescriptorPool>(0); }
 };
 
 class DescriptorSetBuilder {
 public:
-  DescriptorSetBuilder(FramedEngine &engine, DescriptorPool &pool)
-      : m_engine(engine), m_pool(&pool){};
-  DescriptorSetBuilder &addDescriptor(Descriptable &desc, unsigned binding) & {
-    descriptors.emplace_back(&desc, binding);
+  DescriptorSetBuilder(FramedEngine &engine, DescriptorPool pool)
+      : m_engine(engine), m_pool(std::move(pool)){};
+  template <typename T>
+  DescriptorSetBuilder &addDescriptor(const T &desc, unsigned binding) & {
+    descriptors.emplace_back(&*desc, &T::descriptorWrite, binding);
     return *this;
   }
-  DescriptorSetBuilder &&addDescriptor(Descriptable &desc,
-                                       unsigned binding) && {
-    descriptors.emplace_back(&desc, binding);
+  template <typename T>
+  DescriptorSetBuilder &&addDescriptor(const T &desc, unsigned binding) && {
+    descriptors.emplace_back(&*desc, &T::descriptorWrite, binding);
     return std::move(*this);
   }
-  operator Ref<DescriptorSet>() && {
-    return m_engine.createNode<DescriptorSet>(*m_pool, descriptors);
+  operator DescriptorSet() && {
+    return DescriptorSet(m_engine, m_pool, descriptors);
   }
+
+  bool empty() const { return descriptors.empty(); }
 
 private:
   FramedEngine &m_engine;
-  Ref<DescriptorPool> m_pool;
-  boost::container::small_vector<std::pair<Descriptable *, unsigned>, 2u>
-      descriptors;
+  DescriptorPool m_pool;
+  boost::container::small_vector<DescriptorSetImpl::Descriptor, 2u> descriptors;
 };
 
 } // namespace imvk

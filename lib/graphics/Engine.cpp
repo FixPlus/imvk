@@ -5,10 +5,11 @@
 
 namespace imvk {
 
-SSemaphore::SSemaphore(FramedEngine &engine, Swapchain &swapchain)
-    : Swapchained<vkw::Semaphore>(swapchain) {}
+SSemaphoreImpl::SSemaphoreImpl(FramedEngine &engine, Swapchain &swapchain)
+    : Swapchained<vkw::Semaphore, SSemaphoreImpl>(swapchain) {}
 
-FObject::Ptr SSemaphore::constructOne(FramedEngine &engine, unsigned image) {
+FObject::Ptr SSemaphoreImpl::constructOne(FramedEngine &engine,
+                                          unsigned image) {
   return engine.createObject<vkw::Semaphore>(engine.context().device());
 }
 GraphicsEngine::GraphicsEngine(Context &context,
@@ -19,17 +20,15 @@ GraphicsEngine::GraphicsEngine(Context &context,
                                  .compute = true,
                                  .transfer = true},
                    CI.maxFramesInFlight),
-      m_swapchainFactory(*CI.swapchainFactory),
-      m_swapchain(createNode<Swapchain>()),
-      m_renderComplete(createNode<SSemaphore>(*m_swapchain)),
-      m_presentComplete(createNode<Semaphore>()) {
+      m_swapchainFactory(*CI.swapchainFactory), m_swapchain(*this),
+      m_renderComplete(*this, m_swapchain), m_presentComplete(*this) {
   assert(CI.maxFramesInFlight);
 }
 
 bool GraphicsEngine::m_aquireSwapchainImage(const Frame &frame) {
   auto status =
-      m_swapchain->get().acquireNextImage(m_presentComplete->use(frame),
-                                          /* timeout in milliseconds*/ 1000);
+      m_swapchain.get().acquireNextImage(m_presentComplete->use(frame),
+                                         /* timeout in milliseconds*/ 1000);
   if (status == vkw::SwapChain::AcquireStatus::TIMEOUT) {
     return false;
   }
@@ -58,7 +57,7 @@ GraphicsEngine::~GraphicsEngine() = default;
 
 void GraphicsEngine::postSubmit(const Frame &frame) {
   auto presentInfo =
-      vkw::PresentInfo{swapchain().use(frame), m_renderComplete->use(frame)};
+      vkw::PresentInfo{swapchain()->use(frame), m_renderComplete->use(frame)};
   queue().acquire().get().present(presentInfo);
 }
 

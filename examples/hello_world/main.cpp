@@ -128,17 +128,17 @@ private:
 };
 
 class MyCommandBuffer
-    : public imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap_mut> {
+    : public imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap_mut,
+                          MyCommandBuffer> {
 public:
   MyCommandBuffer(imvk::FramedEngine &engine)
-      : imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap_mut>(
-            engine, [&](imvk::FrameID id) {
-              return engine.createObject<vkw::PrimaryCommandBuffer>(
-                  engine.commandPool());
-            }) {}
+      : imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap_mut,
+                     MyCommandBuffer>(engine, [&](imvk::FrameID id) {
+          return engine.createObject<vkw::PrimaryCommandBuffer>(
+              engine.commandPool());
+        }) {}
 
-private:
-  void onUseAction(const imvk::Frame &frame, imvk::FObject &obj) override {
+  void onUseAction(const imvk::Frame &frame, vkw::PrimaryCommandBuffer &obj) {
     // do nothing
   }
 };
@@ -216,7 +216,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.
@@ -242,85 +242,71 @@ int app() try {
 
   auto copyEngine = imvk::CopyEngine(imvkContext, imvk::CopyEngineCreateInfo{});
 
-  auto vertexStage =
-      graphicsEngine.createNode<imvk::examples::BasicVertexStage>(
-          shaderLoader, "hello.vert",
-          std::make_unique<vkw::VertexInputStateCreateInfo<
-              vkw::per_vertex<VertexInfo, 0>>>());
+  auto vertexStage = imvk::StageLayout<imvk::examples::BasicVertexStage>(
+      graphicsEngine, graphicsEngine, shaderLoader, "hello.vert",
+      std::make_unique<
+          vkw::VertexInputStateCreateInfo<vkw::per_vertex<VertexInfo, 0>>>());
 
-  auto fragmentStage =
-      graphicsEngine.createNode<imvk::examples::BasicFragmentStage>(
-          shaderLoader, "hello.frag");
-  auto fragmentStage2 =
-      graphicsEngine.createNode<imvk::examples::BasicFragmentStage>(
-          shaderLoader, "hello2.frag");
+  auto fragmentStage = imvk::StageLayout<imvk::examples::BasicFragmentStage>(
+      graphicsEngine, graphicsEngine, shaderLoader, "hello.frag");
+  auto fragmentStage2 = imvk::StageLayout<imvk::examples::BasicFragmentStage>(
+      graphicsEngine, graphicsEngine, shaderLoader, "hello2.frag");
   auto pipelinePool =
       imvk::GraphicsPipelinePool<imvk::graph::RenderPass::PipeHook,
                                  imvk::examples::BasicVertexStage,
                                  imvk::examples::BasicFragmentStage>{
           graphicsEngine, /* cache size*/ 10u};
-  auto vertices =
-      graphicsEngine
-          .createNode<VertexBuffer<VertexInfo, imvk::fon_type::swap_mut>>(
-              3,
-              [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
-                std::ranges::copy(
-                    getVerticesForFrame(window.clock().totalTime().count() /
-                                            1000.0,
-                                        Pos2D{}, /* scale */ 0.75f),
-                    vbuf.mapped().begin());
-                vbuf.flush();
-              });
-  auto moreVertices =
-      graphicsEngine
-          .createNode<VertexBuffer<VertexInfo, imvk::fon_type::swap_mut>>(
-              3,
-              [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
-                std::ranges::copy(
-                    getVerticesForFrame(-window.clock().totalTime().count() /
-                                            1000.0,
-                                        Pos2D{}, /* scale */ 0.35f),
-                    vbuf.mapped().begin());
-                vbuf.flush();
-              });
-  auto anotherVertices =
-      graphicsEngine.createNode<VertexBuffer<VertexInfo, imvk::fon_type::cow>>(
-          copyEngine,
-          getVerticesForFrame(0.5, Pos2D{0.3, 0.3}, /* scale */ 0.2f));
-  auto myUniform =
-      graphicsEngine
-          .createNode<UniformBuffer<MyUniform, imvk::fon_type::swap_mut>>(
-              [&](const imvk::Frame &f, vkw::UniformBuffer<MyUniform> &u) {
-                MyUniform uniValue;
-                uniValue.vals[0] =
-                    std::sin(window.clock().totalTime().count() / 593.0) * 0.5 +
-                    0.5;
-                uniValue.vals[1] =
-                    std::cos(window.clock().totalTime().count() / 769.0 + 1.0) *
-                        0.5 +
-                    0.5;
-                uniValue.vals[2] =
-                    std::sin(window.clock().totalTime().count() / 947.0 + 2.0) *
-                        0.5 +
-                    0.5;
-                u.mapped().front() = uniValue;
-                u.flush();
-              });
-  auto myTexture = graphicsEngine.createNode<imvk::examples::Texture>(
+  auto vertices = VertexBuffer<VertexInfo, imvk::fon_type::swap_mut>(
+      graphicsEngine, 3,
+      [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
+        std::ranges::copy(
+            getVerticesForFrame(window.clock().totalTime().count() / 1000.0,
+                                Pos2D{}, /* scale */ 0.75f),
+            vbuf.mapped().begin());
+        vbuf.flush();
+      });
+  auto moreVertices = VertexBuffer<VertexInfo, imvk::fon_type::swap_mut>(
+      graphicsEngine, 3,
+      [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
+        std::ranges::copy(
+            getVerticesForFrame(-window.clock().totalTime().count() / 1000.0,
+                                Pos2D{}, /* scale */ 0.35f),
+            vbuf.mapped().begin());
+        vbuf.flush();
+      });
+  auto anotherVertices = VertexBuffer<VertexInfo, imvk::fon_type::cow>(
+      graphicsEngine, copyEngine,
+      getVerticesForFrame(0.5, Pos2D{0.3, 0.3}, /* scale */ 0.2f));
+  auto myUniform = UniformBuffer<MyUniform, imvk::fon_type::swap_mut>(
+      graphicsEngine,
+      [&](const imvk::Frame &f, vkw::UniformBuffer<MyUniform> &u) {
+        MyUniform uniValue;
+        uniValue.vals[0] =
+            std::sin(window.clock().totalTime().count() / 593.0) * 0.5 + 0.5;
+        uniValue.vals[1] =
+            std::cos(window.clock().totalTime().count() / 769.0 + 1.0) * 0.5 +
+            0.5;
+        uniValue.vals[2] =
+            std::sin(window.clock().totalTime().count() / 947.0 + 2.0) * 0.5 +
+            0.5;
+        u.mapped().front() = uniValue;
+        u.flush();
+      });
+  auto myTexture = imvk::examples::Texture(
+      graphicsEngine,
       imvk::examples::Texture::load(graphicsEngine, copyEngine,
                                     imvk::examples::assetsDir() / "image1"));
-  auto myTextureView =
-      graphicsEngine.createNode<imvk::examples::SampledView>(*myTexture);
+  auto myTextureView = imvk::examples::SampledView(graphicsEngine, myTexture);
   auto vertexStageSet =
-      [&]() -> imvk::Ref<imvk::StageSet<imvk::examples::BasicVertexStage>> {
-    auto vsbuilder = imvk::StageSetBuilder{*vertexStage};
-    vsbuilder.addDescriptorSet(1).addDescriptor(*myUniform, 0);
+      [&]() -> imvk::StageSet<imvk::examples::BasicVertexStage> {
+    auto vsbuilder = imvk::StageSetBuilder{graphicsEngine, vertexStage};
+    vsbuilder.addDescriptorSet(1).addDescriptor(myUniform, 0);
     return std::move(vsbuilder);
   }();
   auto fragmentStageSet =
-      [&]() -> imvk::Ref<imvk::StageSet<imvk::examples::BasicFragmentStage>> {
-    auto vsbuilder = imvk::StageSetBuilder{*fragmentStage};
-    vsbuilder.addDescriptorSet(2).addDescriptor(*myTextureView, 0);
+      [&]() -> imvk::StageSet<imvk::examples::BasicFragmentStage> {
+    auto vsbuilder = imvk::StageSetBuilder{graphicsEngine, fragmentStage};
+    vsbuilder.addDescriptorSet(2).addDescriptor(myTextureView, 0);
     return std::move(vsbuilder);
   }();
   MyUniform uniValue{};
@@ -339,10 +325,11 @@ int app() try {
     auxCount = 0;
     anotherVertices->replace(
         graphicsEngine,
-        anotherVertices->create(
-            graphicsEngine, copyEngine,
-            getVerticesForFrame(0.5, Pos2D{0.3, 0.3},
-                                /* scale */ auxEven ? 0.5f : 0.2f)));
+        imvk::examples::BufferImpl<VertexInfo, imvk::fon_type::cow,
+                                   vkw::VertexBuffer<VertexInfo>>::
+            create(graphicsEngine, copyEngine,
+                   getVerticesForFrame(0.5, Pos2D{0.3, 0.3},
+                                       /* scale */ auxEven ? 0.5f : 0.2f)));
     myTexture->replace(
         graphicsEngine,
         imvk::examples::Texture::load(graphicsEngine, copyEngine,
@@ -356,7 +343,7 @@ int app() try {
                                   imvk::examples::BasicVertexStage,
                                   imvk::examples::BasicFragmentStage>
         pipelineManager{pipelinePool, commands, frame};
-    pipelineManager.bind(*pass.set, *vertexStageSet, *fragmentStageSet);
+    pipelineManager.bind(pass.set, vertexStageSet, fragmentStageSet);
     pipelineManager.bindPipeline();
 
     auto &vertexBuffer = vertices->use(frame);
@@ -371,15 +358,15 @@ int app() try {
   auto offscreenJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
                           vkw::RenderPassRecorder &commands,
                           const imvk::Frame &frame) {
-    imvk::Pipeline<imvk::GraphicsPipelineTraits> &pipeline =
-        pipelinePool.get(*pass.passStage, *vertexStage, *fragmentStage2);
-    commands.bindPipeline(pipeline.use(frame));
-    commands.bindDescriptorSet(pipeline.layout().use(frame),
+    imvk::Pipeline<imvk::GraphicsPipelineTraits> pipeline =
+        pipelinePool.get(pass.passStage, vertexStage, fragmentStage2);
+    commands.bindPipeline(pipeline->use(frame));
+    commands.bindDescriptorSet(pipeline.layout()->use(frame),
                                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               vertexStageSet->getSet(1u).use(frame), 1u);
-    commands.bindDescriptorSet(pipeline.layout().use(frame),
+                               *vertexStageSet.getSet(1u)->use(frame), 1u);
+    commands.bindDescriptorSet(pipeline.layout()->use(frame),
                                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               fragmentStageSet->getSet(2u).use(frame), 2u);
+                               *fragmentStageSet.getSet(2u)->use(frame), 2u);
     auto &vertexBuffer = moreVertices->use(frame);
     commands.bindVertexBuffer(vertexBuffer, 0, 0);
     commands.draw(vertexBuffer.size(), 1u);

@@ -71,25 +71,47 @@ inline void intrusive_ptr_release(MatImageViewBase *p) {
 using MatImageView = Ref<MatImageViewBase>;
 
 template <typename T>
-class MatHostValue : public FONodeBaseImpl<imvk::fon_type::cow> {
+class MatHostValueImpl
+    : public FONode<T, imvk::fon_type::cow, MatHostValueImpl<T>> {
+public:
+  using CallbackFn = boost::compat::move_only_function<T(
+      FramedEngine &, MatHostValueImpl<T> &)>;
+  MatHostValueImpl(
+      FramedEngine &engine,
+      CallbackFn &&fn = [](FramedEngine &,
+                           MatHostValueImpl<T> &) { return T{}; },
+      FOUses &&uses = {})
+      : FONode<T, imvk::fon_type::cow, MatHostValueImpl<T>>(std::move(uses)),
+        fn(std::move(fn)) {}
+  MatHostValueImpl(
+      FramedEngine &engine, T value,
+      CallbackFn &&fn = [](FramedEngine &,
+                           MatHostValueImpl<T> &) { return T{}; },
+      FOUses &&uses = {})
+      : FONode<T, imvk::fon_type::cow, MatHostValueImpl<T>>(
+            engine.createObject<T>(value), std::move(uses)),
+        fn(std::move(fn)) {}
+  FObject::Ptr constructNew(FramedEngine &engine) {
+    return engine.createObject<T>(fn(engine, *this));
+  }
+  CallbackFn fn;
+};
+
+template <typename T>
+class MatHostValue : public FONodeView<MatHostValueImpl<T>> {
 public:
   MatHostValue(auto &&...args)
-      : FONodeBaseImpl<imvk::fon_type::cow>(
-            std::forward<decltype(args)>(args)...) {}
-  virtual const T &value() const = 0;
+      : FONodeView<MatHostValueImpl<T>>(std::forward<decltype(args)>(args)...) {
+  }
+
+  void reset(FramedEngine &engine, T newVal) const {
+    (*this)->replace(engine, engine.createObject<T>(newVal));
+  }
 };
 
-using MatIntegerScalar = Ref<MatHostValue<size_t>>;
+using MatIntegerScalar = MatHostValue<size_t>;
 
-using MatExtents = Ref<MatHostValue<VkExtent3D>>;
-
-class ExtentsProducer {
-public:
-  virtual std::optional<MatExtents>
-  getExtents(const MaterializationContext &ctx, Value &result) = 0;
-
-  virtual ~ExtentsProducer() = default;
-};
+using MatExtents = MatHostValue<VkExtent3D>;
 
 struct ImageValueBinding {
   VkImageViewCreateInfo viewInfo{};

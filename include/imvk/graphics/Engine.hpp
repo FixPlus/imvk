@@ -23,29 +23,42 @@ struct GraphicsEngineCreateInfo {
   unsigned maxFramesInFlight;
 };
 
-class Semaphore final : public FONode<vkw::Semaphore, fon_type::swap_mut> {
+class SemaphoreImpl final
+    : public FONode<vkw::Semaphore, fon_type::swap_mut, SemaphoreImpl> {
 public:
-  Semaphore(FramedEngine &engine)
-      : FONode<vkw::Semaphore, fon_type::swap_mut>(engine, [&](auto id) {
-          return engine.createObject<vkw::Semaphore>(engine.context().device());
-        }) {}
+  SemaphoreImpl(FramedEngine &engine)
+      : FONode<vkw::Semaphore, fon_type::swap_mut, SemaphoreImpl>(
+            engine, [&](auto id) {
+              return engine.createObject<vkw::Semaphore>(
+                  engine.context().device());
+            }) {}
 
-private:
-  void onUseAction(const Frame &frame, FObject &obj) override {
+  void onUseAction(const Frame &frame, vkw::Semaphore &obj) {
     // do nothing
   }
 };
 
-class SSemaphore final : public Swapchained<vkw::Semaphore> {
+class Semaphore : public FONodeView<SemaphoreImpl> {
 public:
-  SSemaphore(FramedEngine &engine, Swapchain &swapchain);
+  Semaphore(auto &&...args)
+      : FONodeView<SemaphoreImpl>(std::forward<decltype(args)>(args)...) {}
+};
 
-private:
-  void onUseAction(const Frame &, FObject &obj) final {
+class SSemaphoreImpl final
+    : public Swapchained<vkw::Semaphore, SSemaphoreImpl> {
+public:
+  SSemaphoreImpl(FramedEngine &engine, Swapchain &swapchain);
+
+  void onUseAction(const Frame &, vkw::Semaphore &obj) {
     // nothing to do.
   }
 
-  FObject::Ptr constructOne(FramedEngine &engine, unsigned image) final;
+  FObject::Ptr constructOne(FramedEngine &engine, unsigned image);
+};
+class SSemaphore : public FONodeView<SSemaphoreImpl> {
+public:
+  SSemaphore(auto &&...args)
+      : FONodeView<SSemaphoreImpl>(std::forward<decltype(args)>(args)...) {}
 };
 
 /// @brief Graphics engine is used to render and present images using
@@ -60,8 +73,8 @@ public:
   Ref<T> createNode(Args &&...args) {
     return new T(*this, std::forward<Args>(args)...);
   }
-  const Swapchain &swapchain() const { return *m_swapchain; }
-  Swapchain &swapchain() { return *m_swapchain; }
+  const Swapchain &swapchain() const { return m_swapchain; }
+  Swapchain &swapchain() { return m_swapchain; }
   void submitFrame(auto &&frameRecord) {
     FramedEngine::submitFrame(
         [&](const Frame &frame) -> std::optional<vkw::SubmitInfo> {
@@ -85,12 +98,12 @@ private:
   bool m_surface_minimized();
 
   FObject::Ptr m_createSwapchain();
-  friend class Swapchain;
+  friend class SwapchainImpl;
 
   SwapchainFactory &m_swapchainFactory;
-  Ref<Swapchain> m_swapchain;
-  Ref<SSemaphore> m_renderComplete;
-  Ref<Semaphore> m_presentComplete;
+  Swapchain m_swapchain;
+  SSemaphore m_renderComplete;
+  Semaphore m_presentComplete;
 };
 
 } // namespace imvk
