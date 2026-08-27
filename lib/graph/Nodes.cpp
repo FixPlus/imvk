@@ -612,7 +612,7 @@ RenderPass::PipeHook::PipeHook(RenderPass &pass, MaterializationContext &ctx,
     : GraphicsPipelineStage(
           ctx.engine(),
           [&]() {
-            StageLayoutDescription::Description ret{};
+            Stage::Description ret{};
             boost::container::small_vector<vkw::DescriptorSetLayoutBinding, 2>
                 bindings;
             auto counter = 0;
@@ -623,12 +623,11 @@ RenderPass::PipeHook::PipeHook(RenderPass &pass, MaterializationContext &ctx,
               binding.binding = counter++;
               bindings.push_back(binding);
             }
-            ret.sets.emplace_back(
-                StageLayoutDescription::Description::ExternalSet{
-                    0,
-                    vkw::DescriptorSetLayout{ctx.engine().context().device(),
-                                             bindings},
-                    static_cast<unsigned>(ctx.engine().getFIFCount())});
+            ret.sets.emplace_back(Stage::Description::ExternalSet{
+                0,
+                vkw::DescriptorSetLayout{ctx.engine().context().device(),
+                                         bindings},
+                static_cast<unsigned>(ctx.engine().getFIFCount())});
             return ret;
           }()),
       m_info([&]() {

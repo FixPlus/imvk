@@ -16,8 +16,7 @@ findStageSet(vkw::SPIRVModuleInfo const &moduleInfo, uint32_t stageSet) {
 
 } // namespace
 #if 1
-StageLayoutDescription::StageLayoutDescription(FramedEngine &engine,
-                                               Description &&description)
+Stage::Stage(FramedEngine &engine, Description &&description)
     : m_engine(engine), m_stage(description.stage ? *description.stage
                                                   : VkShaderStageFlagBits{}) {
   auto isExternal = [](auto &&set) {

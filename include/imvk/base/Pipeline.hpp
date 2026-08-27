@@ -18,7 +18,7 @@
 
 namespace imvk {
 
-class StageLayoutDescription {
+class Stage {
 public:
   struct Description {
     /// TODO: think what can be done to eliminate need to copy shader code to
@@ -38,10 +38,10 @@ public:
     boost::container::small_vector<std::variant<Set, ExternalSet>, 2> sets;
   };
 
-  StageLayoutDescription(FramedEngine &engine, Description &&description);
-  StageLayoutDescription(FramedEngine &engine);
+  Stage(FramedEngine &engine, Description &&description);
+  Stage(FramedEngine &engine);
 
-  virtual ~StageLayoutDescription() = default;
+  virtual ~Stage() = default;
   FramedEngine &engine() const { return m_engine; }
 
   VkShaderStageFlagBits stage() const { return m_stage; }
@@ -68,14 +68,12 @@ protected:
   FOUses pools;
 };
 
-class StageLayoutImpl : public FONode<std::unique_ptr<StageLayoutDescription>,
-                                      fon_type::mut, StageLayoutImpl> {
+class StageLayoutImpl
+    : public FONode<std::unique_ptr<Stage>, fon_type::mut, StageLayoutImpl> {
 public:
-  StageLayoutImpl(FramedEngine &engine, StageLayoutDescription *description)
-      : FONode<std::unique_ptr<StageLayoutDescription>, fon_type::mut,
-               StageLayoutImpl>(
-            engine.createObject<std::unique_ptr<StageLayoutDescription>>(
-                description),
+  StageLayoutImpl(FramedEngine &engine, Stage *description)
+      : FONode<std::unique_ptr<Stage>, fon_type::mut, StageLayoutImpl>(
+            engine.createObject<std::unique_ptr<Stage>>(description),
             std::move(description->pools)) {}
 
   void onUse(const Frame &frame) override {
@@ -83,7 +81,7 @@ public:
   }
 };
 
-template <std::derived_from<StageLayoutDescription> T>
+template <std::derived_from<Stage> T>
 class StageLayout : public FONodeView<StageLayoutImpl> {
 public:
   StageLayout(FramedEngine &en, auto &&...args)
@@ -135,7 +133,7 @@ public:
   }
 };
 
-template <std::derived_from<StageLayoutDescription> T>
+template <std::derived_from<Stage> T>
 class StageSet : public FONodeView<StageSetImpl> {
 public:
   StageSet(auto &&...args)
@@ -158,8 +156,7 @@ public:
   }
 };
 
-template <std::derived_from<StageLayoutDescription> T>
-class StageSetBuilder final {
+template <std::derived_from<Stage> T> class StageSetBuilder final {
 public:
   StageSetBuilder(FramedEngine &engine, StageLayout<T> &stage)
       : m_engine(engine), m_stage(stage) {

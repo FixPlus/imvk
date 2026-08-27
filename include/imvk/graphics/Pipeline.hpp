@@ -14,12 +14,12 @@ struct GraphicsPipelineTraits {
                              PipelineLayout<GraphicsPipelineTraits> &layout);
 };
 
-class GraphicsPipelineStage : public StageLayoutDescription {
+class GraphicsPipelineStage : public Stage {
 public:
   using PipelineTraits = GraphicsPipelineTraits;
   GraphicsPipelineStage(GraphicsEngine &engine,
-                        StageLayoutDescription::Description &&description)
-      : StageLayoutDescription(engine, std::move(description)) {}
+                        Stage::Description &&description)
+      : Stage(engine, std::move(description)) {}
 
   virtual bool isProvoking() const { return false; }
 
