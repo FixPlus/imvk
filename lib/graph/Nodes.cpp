@@ -140,6 +140,7 @@ public:
   SwapchainImageNode(GraphicsEngine &engine, const MaterializationContext &ctx,
                      const VkImageCreateInfo &info)
       : Base(engine, FOUses{engine.swapchain()}), MatImageBase(fon_type::ext) {
+    engine.setSwapchainUsage(info.usage);
     m_fillInfo(engine.swapchain().get());
   }
   FOReconstructible &node() override { return *this; }
@@ -510,6 +511,18 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
   boost::container::small_vector<
       std::pair<MatImageView, ImageAttachmentUseInfo::Kind>, 4>
       attachments;
+  auto getLoadOp = [](ImageAttachmentUseInfo::LoadOp loadOp) {
+    switch (loadOp) {
+    case ImageAttachmentUseInfo::LoadOp::load:
+      return VK_ATTACHMENT_LOAD_OP_LOAD;
+    case ImageAttachmentUseInfo::LoadOp::clear:
+      return VK_ATTACHMENT_LOAD_OP_CLEAR;
+    case ImageAttachmentUseInfo::LoadOp::dc:
+      return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    default:
+      return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    }
+  };
   for (auto &&use : uses() | std::views::take(m_firstDescriptor)) {
     auto &useInfo = static_cast<const ImageAttachmentUseInfo &>(*use.info());
     attachments.emplace_back(ctx.get<MatImageView>(use.value()), useInfo.kind);
@@ -518,14 +531,14 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
     a.imageLayout = useInfo.access.layout;
     switch (useInfo.kind) {
     case ImageAttachmentUseInfo::Kind::color: {
-      a.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      a.loadOp = getLoadOp(useInfo.load);
       a.clearValue = VkClearValue{.color = {0.8, 0.5, 0.2, 0.0}};
       a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       info.addColorAttachment(a, false);
       break;
     }
     case ImageAttachmentUseInfo::Kind::depth: {
-      a.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      a.loadOp = getLoadOp(useInfo.load);
       VkClearValue cv{};
       cv.depthStencil.depth = 1.0;
       a.clearValue = cv;
@@ -593,8 +606,6 @@ RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
           auto view = ctx.get<MatImageView>(use.value());
           builder.addDescriptor(ImageSampledAdaptor(ctx.engine(), view), index);
         }
-        if (builder.empty())
-          return nullptr;
         return setBuilder;
       }()) {}
 

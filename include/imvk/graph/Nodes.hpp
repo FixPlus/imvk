@@ -245,17 +245,23 @@ public:
 
 using Attachment = std::pair<Value *, ImageAttachmentUseInfo *>;
 
-inline Attachment colorAttachment(Value &image) {
+inline Attachment colorAttachment(Value &image,
+                                  ImageAttachmentUseInfo::LoadOp loadOp) {
   return std::make_pair(
-      &image, new ImageAttachmentUseInfo{ImageAttachmentUseInfo::Kind::color});
+      &image,
+      new ImageAttachmentUseInfo{ImageAttachmentUseInfo::Kind::color, loadOp});
 }
-inline Attachment depthAttachment(Value &image) {
+inline Attachment depthAttachment(Value &image,
+                                  ImageAttachmentUseInfo::LoadOp loadOp) {
   return std::make_pair(
-      &image, new ImageAttachmentUseInfo{ImageAttachmentUseInfo::Kind::depth});
+      &image,
+      new ImageAttachmentUseInfo{ImageAttachmentUseInfo::Kind::depth, loadOp});
 }
-inline Attachment inputAttachment(Value &image) {
+inline Attachment inputAttachment(Value &image,
+                                  ImageAttachmentUseInfo::LoadOp loadOp) {
   return std::make_pair(
-      &image, new ImageAttachmentUseInfo{ImageAttachmentUseInfo::Kind::input});
+      &image,
+      new ImageAttachmentUseInfo{ImageAttachmentUseInfo::Kind::input, loadOp});
 }
 
 Node::Def attachmentDef(const Attachment &);
@@ -274,7 +280,8 @@ public:
     initCreateInfo(const vkw::PipelineLayout &layout) const override;
 
     void amendCreateInfo(vkw::GraphicsPipelineCreateInfo &info) const override {
-
+      info.addDynamicState(VK_DYNAMIC_STATE_VIEWPORT);
+      info.addDynamicState(VK_DYNAMIC_STATE_SCISSOR);
     }
 
   private:

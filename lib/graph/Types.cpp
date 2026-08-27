@@ -26,7 +26,7 @@ const AttributesBase *ExtentsTy::getUndefined(Context &ctx) const {
   return &ctx.attributes().get<Attributes<ExtentsTy>>();
 }
 
-ImageAttachmentUseInfo::ImageAttachmentUseInfo(Kind k)
+ImageAttachmentUseInfo::ImageAttachmentUseInfo(Kind k, LoadOp l)
     : ImageUseInfo([&]() {
         ImageAccessInfo info{};
         switch (k) {
@@ -39,19 +39,25 @@ ImageAttachmentUseInfo::ImageAttachmentUseInfo(Kind k)
         case Kind::color:
           info.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
           info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-          info.accessFlags = 0;
-          info.stageFlags = 0;
+          info.accessFlags =
+              l == LoadOp::load ? VK_ACCESS_COLOR_ATTACHMENT_READ_BIT : 0;
+          info.stageFlags =
+              l == LoadOp::load ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : 0;
           break;
         case Kind::depth:
           info.layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
           info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-          info.accessFlags = 0;
-          info.stageFlags = 0;
+          info.accessFlags = l == LoadOp::load
+                                 ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                                 : 0;
+          info.stageFlags = l == LoadOp::load
+                                ? VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                                : 0;
           break;
         }
         return info;
       }()),
-      kind(k) {}
+      kind(k), load(l) {}
 ImageDescriptorUseInfo::ImageDescriptorUseInfo()
     : ImageUseInfo([]() {
         ImageAccessInfo info{};

@@ -5,6 +5,7 @@
 
 #include "vkw/CommandPool.hpp"
 #include "vkw/CommandRecorder.hpp"
+#include "vkw/DescriptorSet.hpp"
 #include "vkw/Fence.hpp"
 
 #include <future>
@@ -39,7 +40,8 @@ public:
       : m_context(ctx), m_queue(m_context.get().allocateQueue(queueInfo)),
         m_commandPool(ctx.device(),
                       VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-                      m_queue.get().acquire().get().family().index()){};
+                      m_queue.get().acquire().get().family().index()),
+        m_dummy(ctx.device()){};
 
   Context &context() const { return m_context; }
   auto &commandPool() { return m_commandPool; }
@@ -62,6 +64,9 @@ public:
                         submitContext.fence.wait();
                       });
   }
+  const vkw::DescriptorSetLayout &dummyDescriptorSetLayout() const {
+    return m_dummy;
+  }
 
   virtual ~EngineBase() { m_context.get().freeQueue(m_queue); }
 
@@ -74,6 +79,7 @@ private:
   std::reference_wrapper<Context> m_context;
   std::reference_wrapper<Queue> m_queue;
   vkw::CommandPool m_commandPool;
+  vkw::DescriptorSetLayout m_dummy;
 };
 
 /// @brief Implements a common interface for frame-based engines.

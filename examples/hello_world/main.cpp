@@ -1,6 +1,6 @@
-#include "IMVKBasicRenderPass.hpp"
 #include "IMVKBuffers.hpp"
 #include "IMVKDevice.hpp"
+#include "IMVKPipeline.hpp"
 #include "IMVKShaderLoader.hpp"
 #include "IMVKTexture.hpp"
 #include "IMVKWindow.hpp"
@@ -8,12 +8,9 @@
 #include "imvk/base/Context.hpp"
 #include "imvk/base/Frame.hpp"
 #include "imvk/copy/Engine.hpp"
-#include "imvk/graphics/Engine.hpp"
-#if 1
 #include "imvk/graph/Materialization.hpp"
 #include "imvk/graph/Nodes.hpp"
-
-#endif
+#include "imvk/graphics/Engine.hpp"
 
 #include <vkw/StagingBuffer.hpp>
 #include <vkw/UniformBuffer.hpp>
@@ -87,8 +84,8 @@ std::array<VertexInfo, 3> getVerticesForFrame(float time, Pos2D pos,
     auto &vertex = ret[i];
     vertex.pos[0] = pos.x + std::cos(phase + phaseOffset) * scale;
     vertex.pos[1] = pos.y + std::sin(phase + phaseOffset) * scale;
-    vertex.uv[0] = vertex.pos[0] + 0.5;
-    vertex.uv[1] = vertex.pos[1] + 0.5;
+    vertex.uv[0] = (vertex.pos[0] + 1.0) / 2.0;
+    vertex.uv[1] = (vertex.pos[1] + 1.0) / 2.0;
 
     std::copy(std::next(colorTable.begin(), i * 3),
               std::next(colorTable.begin(), (i + 1) * 3), vertex.color);
@@ -188,6 +185,7 @@ imvk::graph::Value &renderImage(imvk::graph::WorkflowBuilder &builder,
 
 imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx, auto &&passJob,
                                     auto &&offscreenPassJob) {
+  using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
   imvk::graph::Workflow workflow{ctx};
   imvk::graph::WorkflowBuilder builder{workflow, workflow.end()};
   imvk::graph::Value &image =
@@ -199,16 +197,20 @@ imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx, auto &&passJob,
   imvk::graph::Value &texture =
       builder
           .create<imvk::graph::RenderPass>(
-              std::array{imvk::graph::colorAttachment(offscreenBuffer)},
+              std::array{imvk::graph::colorAttachment(offscreenBuffer, clear)},
               imvk::graph::Node::EmptyUses,
               std::forward<decltype(offscreenPassJob)>(offscreenPassJob))
+          ->results()
+          .front();
+  imvk::graph::Value &copy =
+      builder.create<imvk::graph::Copy<imvk::graph::ImageTy>>(texture, image)
           ->results()
           .front();
   imvk::graph::Value &renderedImage =
       builder
           .create<imvk::graph::RenderPass>(
-              std::array{imvk::graph::colorAttachment(image),
-                         imvk::graph::depthAttachment(depthBuffer)},
+              std::array{imvk::graph::colorAttachment(copy, load),
+                         imvk::graph::depthAttachment(depthBuffer, clear)},
               std::array{imvk::graph::combinedImageSampler(texture)},
               std::forward<decltype(passJob)>(passJob))
           ->results()
@@ -222,7 +224,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.
@@ -248,20 +250,26 @@ int app() try {
 
   auto copyEngine = imvk::CopyEngine(imvkContext, imvk::CopyEngineCreateInfo{});
 
-  auto vertexStage = imvk::StageLayout<imvk::examples::BasicVertexStage>(
-      graphicsEngine, graphicsEngine, shaderLoader, "hello.vert",
+  auto geometryLayout = imvk::StageLayout<imvk::examples::GeometryStage>(
+      graphicsEngine, graphicsEngine, shaderLoader, "box",
       std::make_unique<
           vkw::VertexInputStateCreateInfo<vkw::per_vertex<VertexInfo, 0>>>());
+  auto projectionLayout = imvk::StageLayout<imvk::examples::ProjectionStage>(
+      graphicsEngine, graphicsEngine, shaderLoader, "identity");
+  auto materialLayout = imvk::StageLayout<imvk::examples::MaterialStage>(
+      graphicsEngine, graphicsEngine, shaderLoader, "textured",
+      vkw::RasterizationStateCreateInfo{});
+  auto materialLayout2 = imvk::StageLayout<imvk::examples::MaterialStage>(
+      graphicsEngine, graphicsEngine, shaderLoader, "textured2",
+      vkw::RasterizationStateCreateInfo{});
+  auto lightingLayout = imvk::StageLayout<imvk::examples::LightingStage>(
+      graphicsEngine, graphicsEngine, shaderLoader, "identity");
 
-  auto fragmentStage = imvk::StageLayout<imvk::examples::BasicFragmentStage>(
-      graphicsEngine, graphicsEngine, shaderLoader, "hello.frag");
-  auto fragmentStage2 = imvk::StageLayout<imvk::examples::BasicFragmentStage>(
-      graphicsEngine, graphicsEngine, shaderLoader, "hello2.frag");
-  auto pipelinePool =
-      imvk::GraphicsPipelinePool<imvk::graph::RenderPass::PipeHook,
-                                 imvk::examples::BasicVertexStage,
-                                 imvk::examples::BasicFragmentStage>{
-          graphicsEngine, /* cache size*/ 10u};
+  auto pipelinePool = imvk::GraphicsPipelinePool<
+      imvk::graph::RenderPass::PipeHook, imvk::examples::GeometryStage,
+      imvk::examples::ProjectionStage, imvk::examples::MaterialStage,
+      imvk::examples::LightingStage>{graphicsEngine, /* cache size*/ 10u};
+
   auto vertices = VertexBuffer<VertexInfo, imvk::fon_type::swap_mut>(
       graphicsEngine, 3,
       [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
@@ -276,7 +284,7 @@ int app() try {
       [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
         std::ranges::copy(
             getVerticesForFrame(-window.clock().totalTime().count() / 1000.0,
-                                Pos2D{}, /* scale */ 0.35f),
+                                Pos2D{}, /* scale */ 3.0f),
             vbuf.mapped().begin());
         vbuf.flush();
       });
@@ -302,19 +310,32 @@ int app() try {
       graphicsEngine,
       imvk::examples::Texture::load(graphicsEngine, copyEngine,
                                     imvk::examples::assetsDir() / "image1"));
+  auto myTexture2 = imvk::examples::Texture(
+      graphicsEngine,
+      imvk::examples::Texture::load(graphicsEngine, copyEngine,
+                                    imvk::examples::assetsDir() / "image2"));
   auto myTextureView = imvk::examples::SampledView(graphicsEngine, myTexture);
-  auto vertexStageSet =
-      [&]() -> imvk::StageSet<imvk::examples::BasicVertexStage> {
-    auto vsbuilder = imvk::StageSetBuilder{graphicsEngine, vertexStage};
+  auto myTextureView2 = imvk::examples::SampledView(graphicsEngine, myTexture2);
+  auto geometrySet = [&]() -> imvk::StageSet<imvk::examples::GeometryStage> {
+    auto vsbuilder = imvk::StageSetBuilder{graphicsEngine, geometryLayout};
     vsbuilder.addDescriptorSet(1).addDescriptor(myUniform, 0);
     return vsbuilder;
   }();
-  auto fragmentStageSet =
-      [&]() -> imvk::StageSet<imvk::examples::BasicFragmentStage> {
-    auto vsbuilder = imvk::StageSetBuilder{graphicsEngine, fragmentStage};
-    vsbuilder.addDescriptorSet(2).addDescriptor(myTextureView, 0);
+  imvk::StageSet<imvk::examples::ProjectionStage> projSet =
+      imvk::StageSetBuilder{graphicsEngine, projectionLayout};
+  auto materialSet = [&]() -> imvk::StageSet<imvk::examples::MaterialStage> {
+    auto vsbuilder = imvk::StageSetBuilder{graphicsEngine, materialLayout2};
+    vsbuilder.addDescriptorSet(3).addDescriptor(myTextureView, 0);
     return vsbuilder;
   }();
+  auto materialSet2 = [&]() -> imvk::StageSet<imvk::examples::MaterialStage> {
+    auto vsbuilder = imvk::StageSetBuilder{graphicsEngine, materialLayout};
+    vsbuilder.addDescriptorSet(3).addDescriptor(myTextureView2, 0);
+    return vsbuilder;
+  }();
+  imvk::StageSet<imvk::examples::LightingStage> lightingSet =
+      imvk::StageSetBuilder{graphicsEngine, lightingLayout};
+
   MyUniform uniValue{};
   uniValue.vals[0] = 0.5;
 
@@ -342,11 +363,13 @@ int app() try {
   auto passJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
                      vkw::RenderPassRecorder &commands,
                      const imvk::Frame &frame) {
-    imvk::GraphicsPipelineManager<imvk::graph::RenderPass::PipeHook,
-                                  imvk::examples::BasicVertexStage,
-                                  imvk::examples::BasicFragmentStage>
+    imvk::GraphicsPipelineManager<
+        imvk::graph::RenderPass::PipeHook, imvk::examples::GeometryStage,
+        imvk::examples::ProjectionStage, imvk::examples::MaterialStage,
+        imvk::examples::LightingStage>
         pipelineManager{pipelinePool, commands, frame};
-    pipelineManager.bind(pass.set, vertexStageSet, fragmentStageSet);
+    pipelineManager.bind(pass.set, geometrySet, projSet, materialSet,
+                         lightingSet);
     pipelineManager.bindPipeline();
 
     auto &vertexBuffer = vertices->use(frame);
@@ -361,15 +384,14 @@ int app() try {
   auto offscreenJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
                           vkw::RenderPassRecorder &commands,
                           const imvk::Frame &frame) {
-    imvk::Pipeline<imvk::GraphicsPipelineTraits> pipeline =
-        pipelinePool.get(pass.passStage, vertexStage, fragmentStage2);
-    commands.bindPipeline(pipeline->use(frame));
-    commands.bindDescriptorSet(pipeline.layout()->use(frame),
-                               VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               *vertexStageSet.getSet(1u)->use(frame), 1u);
-    commands.bindDescriptorSet(pipeline.layout()->use(frame),
-                               VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               *fragmentStageSet.getSet(2u)->use(frame), 2u);
+    imvk::GraphicsPipelineManager<
+        imvk::graph::RenderPass::PipeHook, imvk::examples::GeometryStage,
+        imvk::examples::ProjectionStage, imvk::examples::MaterialStage,
+        imvk::examples::LightingStage>
+        pipelineManager{pipelinePool, commands, frame};
+    pipelineManager.bind(pass.set, geometrySet, projSet, materialSet2,
+                         lightingSet);
+    pipelineManager.bindPipeline();
     auto &vertexBuffer = moreVertices->use(frame);
     commands.bindVertexBuffer(vertexBuffer, 0, 0);
     commands.draw(vertexBuffer.size(), 1u);

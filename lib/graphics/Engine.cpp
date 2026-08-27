@@ -18,7 +18,8 @@ GraphicsEngine::GraphicsEngine(Context &context,
                                  .compute = true,
                                  .transfer = true},
                    CI.maxFramesInFlight),
-      m_swapchainFactory(*CI.swapchainFactory), m_swapchain(*this),
+      m_swapchainFactory(*CI.swapchainFactory),
+      m_swapchainUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT), m_swapchain(*this),
       m_renderComplete(*this, m_swapchain), m_presentComplete(*this) {
   assert(CI.maxFramesInFlight);
 }

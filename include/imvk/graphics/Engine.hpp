@@ -92,6 +92,14 @@ public:
           return submitInfo;
         });
   }
+
+  void setSwapchainUsage(VkImageUsageFlags newUsage) {
+    if (m_swapchainUsage != newUsage) {
+      m_swapchainUsage = newUsage;
+      m_swapchain->destroy(true);
+      m_swapchain->construct();
+    }
+  }
   ~GraphicsEngine() override;
 
 private:
@@ -104,6 +112,7 @@ private:
   friend class SwapchainImpl;
 
   SwapchainFactory &m_swapchainFactory;
+  VkImageUsageFlags m_swapchainUsage;
   Swapchain m_swapchain;
   SSemaphore m_renderComplete;
   Semaphore m_presentComplete;

@@ -70,7 +70,8 @@ public:
 class ImageAttachmentUseInfo : public ImageUseInfo {
 public:
   enum class Kind { color, depth, input } kind;
-  ImageAttachmentUseInfo(Kind kind);
+  enum class LoadOp { load, clear, dc } load;
+  ImageAttachmentUseInfo(Kind kind, LoadOp load);
 };
 
 class ImageDescriptorUseInfo : public ImageUseInfo {

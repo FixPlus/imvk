@@ -206,16 +206,15 @@ private:
     std::ranges::sort(descriptorLayouts, [](auto &&a, auto &&b) {
       return std::get<0>(a) < std::get<0>(b);
     });
+
     boost::container::small_vector<
         std::reference_wrapper<const vkw::DescriptorSetLayout>, 4>
         descriptorLayoutsRaw;
     unsigned expectedSetNum = 0;
-
-    /// TODO: add support for descriptor 'gaps'
     for (auto &&[setNum, set] : descriptorLayouts) {
-      if (setNum != expectedSetNum++)
-        throw std::runtime_error(
-            "Pipeline declared non-contigous set number range");
+      while (setNum != expectedSetNum++) {
+        descriptorLayoutsRaw.emplace_back(engine.dummyDescriptorSetLayout());
+      }
       descriptorLayoutsRaw.emplace_back(set.get());
     }
 
