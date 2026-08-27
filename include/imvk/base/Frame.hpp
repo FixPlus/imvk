@@ -117,39 +117,32 @@ template <typename T, fon_type type, typename Derived> class FONode {};
 class FOUses {
 public:
   FOUses() = default;
-  template <typename... Args> FOUses(Args &...args) {
-    (m_uses.push_back(&args), ...);
+  template <typename... Args> FOUses(Args &&...args) {
+    (m_uses.push_back(&*args), ...);
   }
   template <std::ranges::range R> FOUses(const R &rng) {
     std::ranges::transform(rng, std::back_inserter(m_uses),
-                           [](auto &&use) { return &use; });
+                           [](auto &&use) { return &*use; });
   }
 
   std::span<FONodeRef const> get() { return m_uses; }
-  FOUses &addUse(FONodeBase &use) & {
-    m_uses.push_back(&use);
+
+  FOUses &addUse(auto &&use) & {
+    m_uses.push_back(&*use);
     return *this;
   }
-  FOUses &&addUse(FONodeBase &use) && {
-    m_uses.push_back(&use);
-    return std::move(*this);
-  }
-  FOUses &addUse(FONodeRef use) & {
-    m_uses.push_back(std::move(use));
-    return *this;
-  }
-  FOUses &&addUse(FONodeRef use) && {
-    m_uses.push_back(std::move(use));
+  FOUses &&addUse(auto &&use) && {
+    m_uses.push_back(&*use);
     return std::move(*this);
   }
   template <std::ranges::range R> FOUses &addUses(const R &uses) & {
     std::ranges::transform(uses, std::back_inserter(m_uses),
-                           [](auto &&use) { return &use; });
+                           [](auto &&use) { return &*use; });
     return *this;
   }
   template <std::ranges::range R> FOUses &&addUses(const R &uses) && {
     std::ranges::transform(uses, std::back_inserter(m_uses),
-                           [](auto &&use) { return &use; });
+                           [](auto &&use) { return &*use; });
     return std::move(*this);
   }
   FOUses operator|(const FOUses &another) const {

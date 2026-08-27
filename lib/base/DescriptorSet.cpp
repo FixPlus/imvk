@@ -105,13 +105,14 @@ void DescriptorSetImpl::writeDescriptors(FrameID frame) {
   writeDescriptors(*set, frame);
 }
 
-DescriptorSetImpl::DescriptorSetImpl(FramedEngine &engine, DescriptorPool &pool,
+DescriptorSetImpl::DescriptorSetImpl(FramedEngine &engine, DescriptorPool pool,
                                      std::span<const Descriptor> bindings)
     : FONode<DescriptorPool::SetHandle, fon_type::swap, DescriptorSetImpl>(
-          FOUses(*pool).addUses(
-              bindings | std::views::transform([](auto &&p) -> decltype(auto) {
-                return *std::get<0>(p);
-              }))) {
+          FOUses(std::move(pool))
+              .addUses(bindings |
+                       std::views::transform([](auto &&p) -> decltype(auto) {
+                         return std::get<0>(p);
+                       }))) {
   std::ranges::transform(
       bindings, std::back_inserter(m_bindings), [](auto &&tpl) {
         return std::make_pair(std::get<1>(tpl), std::get<2>(tpl));

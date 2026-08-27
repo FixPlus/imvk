@@ -5,13 +5,11 @@
 
 namespace imvk {
 
-SSemaphoreImpl::SSemaphoreImpl(FramedEngine &engine, Swapchain &swapchain)
-    : Swapchained<vkw::Semaphore, SSemaphoreImpl>(swapchain) {}
-
 FObject::Ptr SSemaphoreImpl::constructOne(FramedEngine &engine,
                                           unsigned image) {
   return engine.createObject<vkw::Semaphore>(engine.context().device());
 }
+
 GraphicsEngine::GraphicsEngine(Context &context,
                                const GraphicsEngineCreateInfo &CI)
     : FramedEngine(context,

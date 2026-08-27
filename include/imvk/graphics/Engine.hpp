@@ -47,7 +47,10 @@ public:
 class SSemaphoreImpl final
     : public Swapchained<vkw::Semaphore, SSemaphoreImpl> {
 public:
-  SSemaphoreImpl(FramedEngine &engine, Swapchain &swapchain);
+  template <std::convertible_to<Swapchain> T>
+  SSemaphoreImpl(FramedEngine &engine, T &&swapchain)
+      : Swapchained<vkw::Semaphore, SSemaphoreImpl>(
+            std::forward<T>(swapchain)) {}
 
   void onUseAction(const Frame &, vkw::Semaphore &obj) {
     // nothing to do.
@@ -55,6 +58,7 @@ public:
 
   FObject::Ptr constructOne(FramedEngine &engine, unsigned image);
 };
+
 class SSemaphore : public FONodeView<SSemaphoreImpl> {
 public:
   SSemaphore(auto &&...args)
@@ -74,7 +78,6 @@ public:
     return new T(*this, std::forward<Args>(args)...);
   }
   const Swapchain &swapchain() const { return m_swapchain; }
-  Swapchain &swapchain() { return m_swapchain; }
   void submitFrame(auto &&frameRecord) {
     FramedEngine::submitFrame(
         [&](const Frame &frame) -> std::optional<vkw::SubmitInfo> {

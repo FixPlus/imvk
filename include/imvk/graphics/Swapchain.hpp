@@ -65,22 +65,23 @@ public:
 template <typename T, typename Derived>
 class Swapchained : public FONode<T, fon_type::ext, Derived> {
 public:
-  Swapchained(Swapchain &swapchain, FOUses &&uses)
-      : FONode<T, fon_type::ext, Derived>(FOUses{*swapchain} | uses) {}
-  Swapchained(Swapchain &swapchain)
-      : FONode<T, fon_type::ext, Derived>(FOUses{*swapchain}) {}
+  Swapchained(Swapchain swapchain, FOUses &&uses)
+      : FONode<T, fon_type::ext, Derived>(FOUses{std::move(swapchain)} | uses) {
+  }
+  Swapchained(Swapchain swapchain)
+      : FONode<T, fon_type::ext, Derived>(FOUses{std::move(swapchain)}) {}
 
   template <typename U>
     requires !
-             std::convertible_to<U, Swapchain> Swapchained(U & swapchained,
+             std::convertible_to<U, Swapchain> Swapchained(U && swapchained,
                                                            FOUses &&uses)
       : FONode<T, fon_type::ext, Derived>(
-            FOUses{*swapchained.getUse<Swapchain>(0), *swapchained} | uses) {}
+            FOUses{swapchained.getUse<Swapchain>(0), swapchained} | uses) {}
   template <typename U>
     requires !
-             std::convertible_to<U, Swapchain> Swapchained(U & swapchained)
+             std::convertible_to<U, Swapchain> Swapchained(U && swapchained)
       : FONode<T, fon_type::ext, Derived>(
-            FOUses{*swapchained.getUse<Swapchain>(0), *swapchained}) {}
+            FOUses{swapchained.getUse<Swapchain>(0), swapchained}) {}
 
   vkw::SwapChain &swapchain() { return this->getUse<Swapchain>(0).get(); }
   const vkw::SwapChain &swapchain() const {
@@ -116,7 +117,10 @@ class SwapchainViewImpl final
     : public Swapchained<vkw::ImageView<vkw::COLOR, vkw::V2DA>,
                          SwapchainViewImpl> {
 public:
-  SwapchainViewImpl(GraphicsEngine &engine, Swapchain &swapchain);
+  template <std::convertible_to<Swapchain> T>
+  SwapchainViewImpl(GraphicsEngine &engine, T &&swapchain)
+      : Swapchained<vkw::ImageView<vkw::COLOR, vkw::V2DA>, SwapchainViewImpl>(
+            std::forward<T>(swapchain)) {}
 
   void onUseAction(const Frame &frame,
                    vkw::ImageView<vkw::COLOR, vkw::V2DA> &obj) {

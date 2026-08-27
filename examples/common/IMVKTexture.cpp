@@ -10,10 +10,6 @@
 namespace imvk::examples {
 
 std::filesystem::path assetsDir() { return IMVK_ASSETS_PATH; }
-SampledViewImpl::SampledViewImpl(FramedEngine &eng, Texture &texture)
-    : FONode<std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
-             fon_type::cow, SampledViewImpl>(
-          doConstructNew(eng, texture->get()), FOUses{*texture}) {}
 
 void SampledView::descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                                   FONodeBase &obj, unsigned binding) {

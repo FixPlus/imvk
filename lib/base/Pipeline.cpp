@@ -30,9 +30,9 @@ Stage::Stage(FramedEngine &engine, Description &&description)
        description.sets | std::views::filter(isExternal) |
            std::views::transform(asExternal)) {
     m_setIds.emplace(num, counter++);
-    pools.addUse(*DescriptorPool(engine, std::make_unique<DescriptorPoolImpl>(
-                                             engine.context().device(),
-                                             std::move(layout), setsPerPool)));
+    pools.addUse(DescriptorPool(engine, std::make_unique<DescriptorPoolImpl>(
+                                            engine.context().device(),
+                                            std::move(layout), setsPerPool)));
   }
   if (description.shaders.empty())
     return;
@@ -61,7 +61,7 @@ Stage::Stage(FramedEngine &engine, Description &&description)
     for (auto &&binding : setInfo->bindings())
       bindings.emplace_back(binding.index(), binding.descriptorType(), flags);
     m_setIds.emplace(num, counter++);
-    pools.addUse(*DescriptorPool(
+    pools.addUse(DescriptorPool(
         engine,
         std::make_unique<DescriptorPoolImpl>(
             engine.context().device(),

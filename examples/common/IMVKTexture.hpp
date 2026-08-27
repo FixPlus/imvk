@@ -33,7 +33,11 @@ class SampledViewImpl final
           std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
           fon_type::cow, SampledViewImpl> {
 public:
-  SampledViewImpl(FramedEngine &eng, Texture &texture);
+  template <std::convertible_to<Texture> T>
+  SampledViewImpl(FramedEngine &eng, T &&texture)
+      : FONode<std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
+               fon_type::cow, SampledViewImpl>(
+            doConstructNew(eng, texture->get()), FOUses{texture}) {}
 
   void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                        unsigned binding) const;

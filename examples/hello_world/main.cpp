@@ -223,7 +223,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.
@@ -308,13 +308,13 @@ int app() try {
       [&]() -> imvk::StageSet<imvk::examples::BasicVertexStage> {
     auto vsbuilder = imvk::StageSetBuilder{graphicsEngine, vertexStage};
     vsbuilder.addDescriptorSet(1).addDescriptor(myUniform, 0);
-    return std::move(vsbuilder);
+    return vsbuilder;
   }();
   auto fragmentStageSet =
       [&]() -> imvk::StageSet<imvk::examples::BasicFragmentStage> {
     auto vsbuilder = imvk::StageSetBuilder{graphicsEngine, fragmentStage};
     vsbuilder.addDescriptorSet(2).addDescriptor(myTextureView, 0);
-    return std::move(vsbuilder);
+    return vsbuilder;
   }();
   MyUniform uniValue{};
   uniValue.vals[0] = 0.5;

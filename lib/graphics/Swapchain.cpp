@@ -68,11 +68,6 @@ SwapchainImpl::SwapchainImpl(GraphicsEngine &engine)
     : FONode<vkw::SwapChain, fon_type::cow, SwapchainImpl>(
           constructNew(engine)) {}
 
-SwapchainViewImpl::SwapchainViewImpl(GraphicsEngine &engine,
-                                     Swapchain &swapchain)
-    : Swapchained<vkw::ImageView<vkw::COLOR, vkw::V2DA>, SwapchainViewImpl>(
-          swapchain) {}
-
 FObject::Ptr SwapchainImpl::constructNew(FramedEngine &engine) {
   return static_cast<GraphicsEngine &>(engine).m_createSwapchain();
 }

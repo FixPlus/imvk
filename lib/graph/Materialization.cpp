@@ -42,7 +42,7 @@ public:
   using Base = FONode<RegularImageView, fon_type::swap, RegularImageViewNode>;
   RegularImageViewNode(FramedEngine &engine, const MatImage &image,
                        const VkImageViewCreateInfo &info)
-      : Base(FOUses{image->node()}), MatImageViewBase(fon_type::swap),
+      : Base(FOUses{&image->node()}), MatImageViewBase(fon_type::swap),
         m_info(info) {
     assert(image->type() == fon_type::swap);
   }
@@ -88,7 +88,7 @@ public:
   using Base = FONode<RegularImageView, fon_type::ext, SwapchainImageViewNode>;
   SwapchainImageViewNode(FramedEngine &engine, const MatImage &image,
                          const VkImageViewCreateInfo &info)
-      : Base(FOUses{image->node()}), MatImageViewBase(fon_type::ext),
+      : Base(FOUses{&image->node()}), MatImageViewBase(fon_type::ext),
         m_info(info) {
     assert(image->type() == fon_type::ext);
   }

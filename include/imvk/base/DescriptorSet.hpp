@@ -101,7 +101,7 @@ public:
   using DescriptorFun = boost::compat::function_ref<void(
       FrameID, vkw::DescriptorSet &, FONodeBase &, unsigned)>;
   using Descriptor = std::tuple<FONodeRef, DescriptorFun, unsigned>;
-  DescriptorSetImpl(FramedEngine &engine, DescriptorPool &pool,
+  DescriptorSetImpl(FramedEngine &engine, DescriptorPool pool,
                     std::span<const Descriptor> descriptors);
 
   void onUseAction(const Frame &frame, DescriptorPool::SetHandle &obj) {
@@ -131,23 +131,25 @@ public:
   DescriptorSetBuilder(FramedEngine &engine, DescriptorPool pool)
       : m_engine(engine), m_pool(std::move(pool)){};
   template <typename T>
-  DescriptorSetBuilder &addDescriptor(const T &desc, unsigned binding) & {
-    descriptors.emplace_back(&*desc, &T::descriptorWrite, binding);
+  DescriptorSetBuilder &addDescriptor(T &&desc, unsigned binding) & {
+    descriptors.emplace_back(&*desc, &std::remove_cvref_t<T>::descriptorWrite,
+                             binding);
     return *this;
   }
   template <typename T>
-  DescriptorSetBuilder &&addDescriptor(const T &desc, unsigned binding) && {
-    descriptors.emplace_back(&*desc, &T::descriptorWrite, binding);
+  DescriptorSetBuilder &&addDescriptor(T &&desc, unsigned binding) && {
+    descriptors.emplace_back(&*desc, &std::remove_cvref_t<T>::descriptorWrite,
+                             binding);
     return std::move(*this);
   }
   operator DescriptorSet() && {
-    return DescriptorSet(m_engine, m_pool, descriptors);
+    return DescriptorSet(m_engine.get(), m_pool, descriptors);
   }
 
   bool empty() const { return descriptors.empty(); }
 
 private:
-  FramedEngine &m_engine;
+  std::reference_wrapper<FramedEngine> m_engine;
   DescriptorPool m_pool;
   boost::container::small_vector<DescriptorSetImpl::Descriptor, 2u> descriptors;
 };

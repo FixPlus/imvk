@@ -115,13 +115,10 @@ public:
 
 class StageSetImpl final : public FONode<char, fon_type::swap, StageSetImpl> {
 public:
-  StageSetImpl(FramedEngine &engine, auto &stage, auto &&sets)
+  StageSetImpl(FramedEngine &engine, auto &&stage, auto &&sets)
       : FONode<char, fon_type::swap, StageSetImpl>([&]() {
-          FOUses uses(*stage);
-          uses.addUses(sets |
-                       std::views::transform([](auto &&p) -> decltype(auto) {
-                         return *p.first;
-                       }));
+          FOUses uses(std::forward<decltype(stage)>(stage));
+          uses.addUses(std::forward<decltype(sets)>(sets));
           return uses;
         }()) {}
 
@@ -161,7 +158,7 @@ public:
   StageSetBuilder(FramedEngine &engine, StageLayout<T> &stage)
       : m_engine(engine), m_stage(stage) {
     for (auto &&[setn, _] : stage.sets()) {
-      m_setBuilders.insert({setn, nullptr});
+      m_setBuilders.insert({setn, std::nullopt});
     }
   };
   DescriptorSetBuilder &addDescriptorSet(unsigned binding) {
@@ -169,16 +166,15 @@ public:
     auto &optSet = m_setBuilders.at(binding);
 
     if (!optSet) {
-      optSet = std::make_unique<DescriptorSetBuilder>(m_engine.get(),
-                                                      m_stage.getSet(binding));
+      optSet.emplace(m_engine.get(), m_stage.getSet(binding));
     }
     return *optSet;
   }
   operator StageSet<T>() && {
-    boost::container::small_vector<std::pair<DescriptorSet, unsigned>, 2u> sets;
-    for (auto &&[binding, setBuilder] : m_setBuilders) {
+    boost::container::small_vector<DescriptorSet, 2u> sets;
+    for (auto &&setBuilder : m_setBuilders | std::views::elements<1>) {
       assert(setBuilder);
-      sets.emplace_back(DescriptorSet{std::move(*setBuilder)}, binding);
+      sets.emplace_back(*std::move(setBuilder));
     }
     return StageSet<T>(m_engine.get(), m_stage, sets);
   }
@@ -187,7 +183,7 @@ private:
   std::reference_wrapper<FramedEngine> m_engine;
   StageLayout<T> m_stage;
   boost::container::small_flat_map<unsigned,
-                                   std::unique_ptr<DescriptorSetBuilder>, 2u>
+                                   std::optional<DescriptorSetBuilder>, 2u>
       m_setBuilders;
 };
 
@@ -240,19 +236,14 @@ public:
   PipelineLayoutImpl(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
                      std::ranges::range auto &&stages)
       : FONode<vkw::PipelineLayout, fon_type::mut, PipelineLayoutImpl>{
-            init(engine, flags,
-                 stages |
-                     std::views::transform([](auto &&stage) -> decltype(auto) {
-                       return *stage;
-                     })),
-            FOUses{stages}} {}
+            init(engine, flags, stages), FOUses{stages}} {}
   PipelineLayoutImpl(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
                      auto &&...stages)
       : FONode<vkw::PipelineLayout, fon_type::mut, PipelineLayoutImpl>{
             init(engine, flags,
                  std::array<StageLayout<StageTy>, sizeof...(stages)>{
                      StageLayout<StageTy>{&*stages}...}),
-            FOUses{(*stages)...}} {}
+            FOUses{stages...}} {}
 
   void onUse(const Frame &frame) final {
     // do nothing.
@@ -287,9 +278,9 @@ public:
     // do nothing.
   }
 
-  PipelineImpl(FramedEngine &engine, PipelineLayout<PipelineTraits> &layout)
+  PipelineImpl(FramedEngine &engine, PipelineLayout<PipelineTraits> layout)
       : FONode<typename PipelineTraits::HandleTy, fon_type::mut, PipelineImpl>(
-            init(engine, layout), FOUses{*layout}){};
+            init(engine, layout), FOUses{layout}){};
 };
 
 template <typename PipelineTraits>
@@ -323,10 +314,12 @@ public:
   {
 
     PipelineKey key{&arg.get(), &args.get()...};
-    auto &ret = m_pipelineCache.get(key, nullptr);
+    PipelineTy &ret = m_pipelineCache.get(key, nullptr);
     if (!ret) {
-      PipelineLayoutTy layout(m_engine, m_flags, arg, args...);
-      ret = PipelineTy(m_engine, layout);
+      PipelineLayoutTy layout(m_engine, m_flags,
+                              std::forward<decltype(arg)>(arg),
+                              std::forward<decltype(args)>(args)...);
+      ret = PipelineTy(m_engine, std::move(layout));
     }
     return ret;
   }

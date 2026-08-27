@@ -48,7 +48,7 @@ public:
                    const MatIntegerScalar &levels,
                    const VkImageCreateInfo &info)
       : FONode<RegularImage, fon_type::swap, RegularImageNode>(
-            FOUses{*extents, *format, *layers, *levels}),
+            FOUses{extents, format, layers, levels}),
         MatImageBase(fon_type::swap), m_info(info) {}
   FOReconstructible &node() override { return *this; }
   VkImage image(FrameID id) const final { return get(id); }
@@ -92,7 +92,7 @@ public:
   CopyImageNode(FramedEngine &engine, const MatImage &src,
                 const VkImageCreateInfo &info)
       : FONode<RegularImage, fon_type::swap, CopyImageNode>(
-            FOUses{src->node()}),
+            FOUses{&src->node()}),
         MatImageBase(fon_type::swap), m_info(info) {}
   FOReconstructible &node() override { return *this; }
   VkImage image(FrameID id) const final { return get(id); }
@@ -139,7 +139,7 @@ public:
   using Base = FONode<VkImage, fon_type::ext, SwapchainImageNode>;
   SwapchainImageNode(GraphicsEngine &engine, const MaterializationContext &ctx,
                      const VkImageCreateInfo &info)
-      : Base(FOUses{*engine.swapchain()}), MatImageBase(fon_type::ext) {
+      : Base(FOUses{engine.swapchain()}), MatImageBase(fon_type::ext) {
     m_fillInfo(engine.swapchain().get());
   }
   FOReconstructible &node() override { return *this; }
@@ -192,7 +192,7 @@ public:
   using Base = FONode<vkw::Sampler, fon_type::cow, ImageSampledAdaptorImpl>;
   ImageSampledAdaptorImpl(FramedEngine &engine, const MatImageView &view)
       : Base(engine.createObject<vkw::Sampler>(m_createSampler(engine)),
-             FOUses{view->node()}) {
+             FOUses{&view->node()}) {
     if (view->type() == fon_type::ext) {
       throw std::runtime_error(
           "Cannot create descriptor adaptor for external object");
@@ -448,7 +448,7 @@ bool GetExtents::materialize(MaterializationContext &ctx) {
           [&image = *image](FramedEngine &, MatHostValueImpl<VkExtent3D> &) {
             return image.info().extent;
           },
-          FOUses{image->node()}));
+          FOUses{&image->node()}));
   return true;
 }
 
@@ -582,7 +582,8 @@ RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
                                unsigned firstDescriptor)
     : passStage(ctx.engine(), pass, ctx, firstDescriptor),
       set([&]() -> StageSet<PipeHook> {
-        DescriptorSetBuilder builder{ctx.engine(), passStage.getSet(0)};
+        StageSetBuilder setBuilder{ctx.engine(), passStage};
+        DescriptorSetBuilder &builder = setBuilder.addDescriptorSet(0);
         for (auto &&[index, use] : pass.uses() |
                                        std::views::drop(firstDescriptor) |
                                        std::views::enumerate) {
@@ -592,9 +593,7 @@ RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
         }
         if (builder.empty())
           return nullptr;
-        return StageSet<PipeHook>(
-            ctx.engine(), passStage,
-            std::array{std::make_pair(DescriptorSet{std::move(builder)}, 0)});
+        return setBuilder;
       }()) {}
 
 bool Present::materialize(MaterializationContext &ctx) {
