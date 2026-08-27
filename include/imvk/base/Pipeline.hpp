@@ -91,20 +91,20 @@ public:
   StageLayout(StageLayout::BaseNode *ptr) : FONodeView<StageLayoutImpl>(ptr) {}
   const T &get() const { return static_cast<const T &>(*(*this)->get()); }
 
-  bool hasSet(unsigned binding) {
+  bool hasSet(unsigned binding) const {
     auto &obj = **this;
     return obj.get()->hasSet(binding);
   }
-  bool getSetId(unsigned binding) {
+  bool getSetId(unsigned binding) const {
     auto &obj = **this;
     return obj.get()->getSetId(binding);
   }
-  DescriptorPool getSet(unsigned binding) {
+  DescriptorPool getSet(unsigned binding) const {
     auto &obj = **this;
     return obj.getUse<DescriptorPool>(obj.get()->getSetId(binding));
   }
 
-  auto sets() {
+  auto sets() const {
     auto &obj = **this;
     return obj.get()->sets() | std::views::transform([&obj](auto &&p) {
              return std::tuple<unsigned, DescriptorPool>(
@@ -138,14 +138,14 @@ class StageSet : public FONodeView<StageSetImpl> {
 public:
   StageSet(auto &&...args)
       : FONodeView<StageSetImpl>(std::forward<decltype(args)>(args)...) {}
-  StageLayout<T> stage() { return (*this)->getUse<StageLayout<T>>(0); }
+  StageLayout<T> stage() const { return (*this)->getUse<StageLayout<T>>(0); }
 
-  DescriptorSet getSet(unsigned num) {
+  DescriptorSet getSet(unsigned num) const {
     assert(stage().hasSet(num));
     return (*this)->getUse<DescriptorSet>(stage().getSetId(num) + 1);
   }
 
-  auto sets() {
+  auto sets() const {
     auto st = stage();
     auto &obj = **this;
     return st.sets() | std::views::elements<0> |
@@ -190,8 +190,7 @@ private:
                                    std::unique_ptr<DescriptorSetBuilder>, 2u>
       m_setBuilders;
 };
-// template <typename T>
-// StageSetBuilder(FramedEngine &, T &) -> StageSetBuilder<T>;
+
 template <typename PipelineTraits>
 class PipelineLayoutImpl final
     : public FONode<vkw::PipelineLayout, fon_type::mut,
@@ -299,7 +298,7 @@ public:
   Pipeline(auto &&...args)
       : FONodeView<PipelineImpl<PipelineTraits>>(
             std::forward<decltype(args)>(args)...) {}
-  PipelineLayout<PipelineTraits> layout() {
+  PipelineLayout<PipelineTraits> layout() const {
     return (*this)->getUse<PipelineLayout<PipelineTraits>>(0);
   }
 };

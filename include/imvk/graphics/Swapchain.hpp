@@ -57,7 +57,9 @@ public:
   Swapchain(auto &&...args)
       : FONodeView<SwapchainImpl>(std::forward<decltype(args)>(args)...) {}
   // Although a swapchain is a cow, we may still modify its state.
-  vkw::SwapChain &get() { return const_cast<vkw::SwapChain &>((*this)->get()); }
+  vkw::SwapChain &get() const {
+    return const_cast<vkw::SwapChain &>((*this)->get());
+  }
 };
 
 template <typename T, typename Derived>

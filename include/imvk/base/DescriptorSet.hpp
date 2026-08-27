@@ -57,7 +57,7 @@ public:
   }
   const auto &descriptorLayout() const { return (*this)->get()->layout(); }
 
-  SetHandle createSet() { return (*this)->get()->createSet(); }
+  SetHandle createSet() const { return (*this)->get()->createSet(); }
 };
 
 /// @brief Wrapper over vkw::DescriptorSet implementing
@@ -123,7 +123,7 @@ class DescriptorSet : public FONodeView<DescriptorSetImpl> {
 public:
   DescriptorSet(auto &&...args)
       : FONodeView<DescriptorSetImpl>(std::forward<decltype(args)>(args)...) {}
-  DescriptorPool pool() { return (*this)->getUse<DescriptorPool>(0); }
+  DescriptorPool pool() const { return (*this)->getUse<DescriptorPool>(0); }
 };
 
 class DescriptorSetBuilder {

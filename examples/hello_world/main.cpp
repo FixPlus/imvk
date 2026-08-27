@@ -127,13 +127,13 @@ private:
   size_t sizeAllocAcc = 0;
 };
 
-class MyCommandBuffer
+class MyCommandBufferImpl
     : public imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap_mut,
-                          MyCommandBuffer> {
+                          MyCommandBufferImpl> {
 public:
-  MyCommandBuffer(imvk::FramedEngine &engine)
+  MyCommandBufferImpl(imvk::FramedEngine &engine)
       : imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap_mut,
-                     MyCommandBuffer>(engine, [&](imvk::FrameID id) {
+                     MyCommandBufferImpl>(engine, [&](imvk::FrameID id) {
           return engine.createObject<vkw::PrimaryCommandBuffer>(
               engine.commandPool());
         }) {}
@@ -141,6 +141,13 @@ public:
   void onUseAction(const imvk::Frame &frame, vkw::PrimaryCommandBuffer &obj) {
     // do nothing
   }
+};
+
+class MyCommandBuffer : public imvk::FONodeView<MyCommandBufferImpl> {
+public:
+  MyCommandBuffer(auto &&...args)
+      : imvk::FONodeView<MyCommandBufferImpl>(
+            std::forward<decltype(args)>(args)...) {}
 };
 
 imvk::graph::Value &createCopyExtents(imvk::graph::WorkflowBuilder &builder,
@@ -378,8 +385,7 @@ int app() try {
   std::cout << wf << std::endl;
 #if 1
 
-  imvk::Ref<MyCommandBuffer> commands =
-      graphicsEngine.createNode<MyCommandBuffer>();
+  auto commands = MyCommandBuffer(graphicsEngine);
   //  Main application loop.
   while (!window.shouldClose()) {
     window.pollEvents();
