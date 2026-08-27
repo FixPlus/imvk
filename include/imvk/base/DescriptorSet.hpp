@@ -1,6 +1,7 @@
 #pragma once
 
-#include "imvk/base/EngineBase.hpp"
+#include "imvk/base/Object.hpp"
+
 #include "vkw/DescriptorSet.hpp"
 
 #include "boost/container/small_vector.hpp"
@@ -40,13 +41,7 @@ public:
   DescriptorPoolPimpl(FramedEngine &engine,
                       std::unique_ptr<IDescriptorPoolState> state)
       : FONode<std::unique_ptr<IDescriptorPoolState>, fon_type::mut,
-               DescriptorPoolPimpl>(
-            engine.createObject<std::unique_ptr<IDescriptorPoolState>>(
-                std::move(state))) {}
-
-  void onUse(const Frame &frame) final {
-    // do nothing.
-  }
+               DescriptorPoolPimpl>(engine, std::move(state)) {}
 };
 
 class DescriptorPool : public FONodeView<DescriptorPoolPimpl> {
@@ -108,7 +103,7 @@ public:
     // nothing to do for now.
   }
 
-  FObject::Ptr constructNew(FramedEngine &engine, FrameID id);
+  DescriptorPool::SetHandle constructNew(FramedEngine &engine, FrameID id);
 
 private:
   void writeDescriptors(vkw::DescriptorSet &set, FrameID frame);

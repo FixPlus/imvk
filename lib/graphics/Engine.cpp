@@ -5,9 +5,9 @@
 
 namespace imvk {
 
-FObject::Ptr SSemaphoreImpl::constructOne(FramedEngine &engine,
-                                          unsigned image) {
-  return engine.createObject<vkw::Semaphore>(engine.context().device());
+vkw::Semaphore SSemaphoreImpl::constructOne(FramedEngine &engine,
+                                            unsigned image) {
+  return vkw::Semaphore(engine.context().device());
 }
 
 GraphicsEngine::GraphicsEngine(Context &context,
@@ -35,7 +35,7 @@ bool GraphicsEngine::m_aquireSwapchainImage(const Frame &frame) {
     flush();
     if (!m_surface_minimized()) {
       m_swapchain->destroy(/* immediate*/ true);
-      m_swapchain->construct(*this);
+      m_swapchain->construct();
     }
 
     return false;

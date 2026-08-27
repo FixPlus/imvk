@@ -17,7 +17,9 @@ class BufferImpl<T, imvk::fon_type::cow, Buf>
     : public imvk::FONode<Buf, imvk::fon_type::cow,
                           BufferImpl<T, imvk::fon_type::cow, Buf>> {
 public:
-  imvk::FObject::Ptr constructNew(imvk::FramedEngine &) { return nullptr; }
+  Buf constructNew(imvk::FramedEngine &engine) {
+    return std::move(*(Buf *)(nullptr));
+  }
   struct CopyWorkload : public imvk::CopyEngine::Workload {
     CopyWorkload(vkw::StagingBuffer<T> &&src, Buf &dst)
         : src(std::move(src)), dst(dst){};
@@ -32,37 +34,33 @@ public:
 
   template <typename U>
     requires std::convertible_to<std::ranges::range_value_t<U>, T>
-  static imvk::FObject::Ptr create(imvk::FramedEngine &engine,
-                                   imvk::CopyEngine &copyEngine, U &&data) {
-    auto ret = engine.createObject<Buf>(
-        engine.context().getDeviceAllocator(), data.size(),
-        VmaAllocationCreateInfo{.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                                .usage = VMA_MEMORY_USAGE_GPU_ONLY,
-                                .requiredFlags =
-                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT},
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  static Buf create(imvk::FramedEngine &engine, imvk::CopyEngine &copyEngine,
+                    U &&data) {
+    auto ret = Buf(engine.context().getDeviceAllocator(), data.size(),
+                   VmaAllocationCreateInfo{
+                       .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                       .usage = VMA_MEMORY_USAGE_GPU_ONLY,
+                       .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT},
+                   VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     vkw::StagingBuffer<T> staging{engine.context().getDeviceAllocator(), data};
-    Buf &bufRef = ret->as<Buf>();
     auto copyFuture = copyEngine.copy(
-        std::make_unique<CopyWorkload>(std::move(staging), bufRef));
+        std::make_unique<CopyWorkload>(std::move(staging), ret));
     copyFuture.wait();
     return ret;
   }
 
   template <std::convertible_to<T> U>
-  static imvk::FObject::Ptr create(imvk::FramedEngine &engine,
-                                   imvk::CopyEngine &copyEngine, U data) {
-    auto ret = engine.createObject<Buf>(
-        engine.context().getDeviceAllocator(),
-        VmaAllocationCreateInfo{.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                                .usage = VMA_MEMORY_USAGE_GPU_ONLY,
-                                .requiredFlags =
-                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT},
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  static Buf create(imvk::FramedEngine &engine, imvk::CopyEngine &copyEngine,
+                    U data) {
+    auto ret = Buf(engine.context().getDeviceAllocator(),
+                   VmaAllocationCreateInfo{
+                       .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                       .usage = VMA_MEMORY_USAGE_GPU_ONLY,
+                       .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT},
+                   VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     vkw::StagingBuffer<T> staging{engine.context().getDeviceAllocator(), data};
-    Buf &bufRef = ret->as<Buf>();
     auto copyFuture = copyEngine.copy(
-        std::make_unique<CopyWorkload>(std::move(staging), bufRef));
+        std::make_unique<CopyWorkload>(std::move(staging), ret));
     copyFuture.wait();
     return ret;
   }
@@ -71,7 +69,7 @@ public:
   BufferImpl(imvk::FramedEngine &engine, imvk::CopyEngine &copyEngine, U &&data)
       : imvk::FONode<Buf, imvk::fon_type::cow,
                      BufferImpl<T, imvk::fon_type::cow, Buf>>(
-            create(engine, copyEngine, std::forward<U>(data))) {}
+            engine, create(engine, copyEngine, std::forward<U>(data))) {}
 };
 
 template <typename T, typename Buf>
@@ -84,7 +82,7 @@ public:
   BufferImpl(imvk::FramedEngine &engine, size_t size, auto &&action)
       : Base(engine,
              [&](imvk::FrameID id) {
-               return engine.createObject<Buf>(
+               return Buf(
                    engine.context().getDeviceAllocator(), size,
                    VmaAllocationCreateInfo{
                        .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
@@ -96,7 +94,7 @@ public:
   BufferImpl(imvk::FramedEngine &engine, auto &&action)
       : Base(engine,
              [&](imvk::FrameID id) {
-               return engine.createObject<Buf>(
+               return Buf(
                    engine.context().getDeviceAllocator(),
                    VmaAllocationCreateInfo{
                        .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
@@ -122,11 +120,16 @@ public:
                               imvk::FONodeBase &obj, unsigned binding) {
     auto &casted =
         static_cast<BufferImpl<T, type, vkw::UniformBuffer<T>> &>(obj);
+    vkw::DescriptorWrite write{binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER};
+    const vkw::UniformBuffer<T> *buf = nullptr;
     if constexpr (type == imvk::fon_type::swap_mut) {
-      set.write(binding, casted.get(frame));
+      buf = &casted.get(frame);
     } else {
-      set.write(binding, casted.get());
+      buf = &casted.get();
     }
+    assert(buf);
+    write.addBuffer(*buf, 0, buf->size());
+    set.write(write);
   }
 };
 

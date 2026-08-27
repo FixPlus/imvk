@@ -1,9 +1,10 @@
 #pragma once
 
-#include "imvk/base/Frame.hpp"
+#include "imvk/base/Object.hpp"
 #include "imvk/graph/Attributes.hpp"
 #include "imvk/graph/Context.hpp"
 #include "imvk/graphics/Engine.hpp"
+
 #include <boost/compat/function_ref.hpp>
 #include <boost/compat/move_only_function.hpp>
 
@@ -81,18 +82,19 @@ public:
       CallbackFn &&fn = [](FramedEngine &,
                            MatHostValueImpl<T> &) { return T{}; },
       FOUses &&uses = {})
-      : FONode<T, imvk::fon_type::cow, MatHostValueImpl<T>>(std::move(uses)),
+      : FONode<T, imvk::fon_type::cow, MatHostValueImpl<T>>(engine,
+                                                            std::move(uses)),
         fn(std::move(fn)) {}
   MatHostValueImpl(
       FramedEngine &engine, T value,
       CallbackFn &&fn = [](FramedEngine &,
                            MatHostValueImpl<T> &) { return T{}; },
       FOUses &&uses = {})
-      : FONode<T, imvk::fon_type::cow, MatHostValueImpl<T>>(
-            engine.createObject<T>(value), std::move(uses)),
+      : FONode<T, imvk::fon_type::cow, MatHostValueImpl<T>>(engine, value,
+                                                            std::move(uses)),
         fn(std::move(fn)) {}
-  FObject::Ptr constructNew(FramedEngine &engine) {
-    return engine.createObject<T>(fn(engine, *this));
+  T constructNew(FramedEngine &engine) {
+    return std::invoke(fn, engine, *this);
   }
   CallbackFn fn;
 };
@@ -104,9 +106,7 @@ public:
       : FONodeView<MatHostValueImpl<T>>(std::forward<decltype(args)>(args)...) {
   }
 
-  void reset(FramedEngine &engine, T newVal) const {
-    (*this)->replace(engine, engine.createObject<T>(newVal));
-  }
+  void reset(FramedEngine &engine, T newVal) const { (*this)->replace(newVal); }
 };
 
 using MatIntegerScalar = MatHostValue<size_t>;

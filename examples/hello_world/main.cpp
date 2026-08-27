@@ -134,8 +134,7 @@ public:
   MyCommandBufferImpl(imvk::FramedEngine &engine)
       : imvk::FONode<vkw::PrimaryCommandBuffer, imvk::fon_type::swap_mut,
                      MyCommandBufferImpl>(engine, [&](imvk::FrameID id) {
-          return engine.createObject<vkw::PrimaryCommandBuffer>(
-              engine.commandPool());
+          return vkw::PrimaryCommandBuffer(engine.commandPool());
         }) {}
 
   void onUseAction(const imvk::Frame &frame, vkw::PrimaryCommandBuffer &obj) {
@@ -223,7 +222,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.
@@ -331,17 +330,14 @@ int app() try {
     auxEven = !auxEven;
     auxCount = 0;
     anotherVertices->replace(
-        graphicsEngine,
         imvk::examples::BufferImpl<VertexInfo, imvk::fon_type::cow,
                                    vkw::VertexBuffer<VertexInfo>>::
             create(graphicsEngine, copyEngine,
                    getVerticesForFrame(0.5, Pos2D{0.3, 0.3},
                                        /* scale */ auxEven ? 0.5f : 0.2f)));
-    myTexture->replace(
-        graphicsEngine,
-        imvk::examples::Texture::load(graphicsEngine, copyEngine,
-                                      imvk::examples::assetsDir() /
-                                          (auxEven ? "image2" : "image1")));
+    myTexture->replace(imvk::examples::Texture::load(
+        graphicsEngine, copyEngine,
+        imvk::examples::assetsDir() / (auxEven ? "image2" : "image1")));
   };
   auto passJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
                      vkw::RenderPassRecorder &commands,
@@ -391,6 +387,7 @@ int app() try {
     window.pollEvents();
     if (window.clock().totalFrames() % 10000 == 0u) {
       std::cout << "fps: " << window.clock().fps() << std::endl;
+      std::cout << "nodes: " << graphicsEngine.totalNodeCount() << std::endl;
       allocLogger.stamp(10000);
     }
     graphicsEngine.submitFrame([&](const imvk::Frame &frame) {

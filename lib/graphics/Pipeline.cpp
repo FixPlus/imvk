@@ -1,7 +1,7 @@
 #include "imvk/graphics/Pipeline.hpp"
 
 namespace imvk {
-FObject::Ptr
+vkw::GraphicsPipeline
 GraphicsPipelineTraits::create(FramedEngine &engine,
                                PipelineLayout<GraphicsPipelineTraits> &layout) {
   auto stages = layout.stages();
@@ -55,7 +55,7 @@ GraphicsPipelineTraits::create(FramedEngine &engine,
   }
 
   createInfo.addShader(vShader).addShader(fShader);
-  return engine.createObject<vkw::GraphicsPipeline>(device, createInfo);
+  return vkw::GraphicsPipeline(device, createInfo);
 }
 
 vkw::GraphicsPipelineCreateInfo

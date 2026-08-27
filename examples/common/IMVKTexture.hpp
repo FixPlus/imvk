@@ -13,19 +13,21 @@ std::filesystem::path assetsDir();
 class TextureImpl : public FONode<vkw::Image<vkw::COLOR, vkw::I2D>,
                                   fon_type::cow, TextureImpl> {
 public:
-  TextureImpl(FramedEngine &eng, FObject::Ptr obj)
+  TextureImpl(FramedEngine &eng, vkw::Image<vkw::COLOR, vkw::I2D> &&obj)
       : FONode<vkw::Image<vkw::COLOR, vkw::I2D>, fon_type::cow, TextureImpl>(
-            std::move(obj)) {}
+            eng, std::move(obj)) {}
 
-  imvk::FObject::Ptr constructNew(imvk::FramedEngine &) { return nullptr; }
+  vkw::Image<vkw::COLOR, vkw::I2D> constructNew(imvk::FramedEngine &) {
+    return std::move(*(vkw::Image<vkw::COLOR, vkw::I2D> *)(nullptr));
+  }
 };
 
 class Texture : public FONodeView<TextureImpl> {
 public:
   Texture(auto &&...args)
       : FONodeView<TextureImpl>(std::forward<decltype(args)>(args)...) {}
-  static FObject::Ptr load(FramedEngine &engine, CopyEngine &,
-                           const std::filesystem::path &path);
+  static vkw::Image<vkw::COLOR, vkw::I2D>
+  load(FramedEngine &engine, CopyEngine &, const std::filesystem::path &path);
 };
 
 class SampledViewImpl final
@@ -37,13 +39,14 @@ public:
   SampledViewImpl(FramedEngine &eng, T &&texture)
       : FONode<std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
                fon_type::cow, SampledViewImpl>(
-            doConstructNew(eng, texture->get()), FOUses{texture}) {}
+            eng, doConstructNew(eng, texture->get()), FOUses{texture}) {}
 
   void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                        unsigned binding) const;
 
-  FObject::Ptr constructNew(FramedEngine &engine);
-  static FObject::Ptr
+  std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>
+  constructNew(FramedEngine &engine);
+  static std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>
   doConstructNew(FramedEngine &engine,
                  const vkw::Image<vkw::COLOR, vkw::I2D> &image);
 };

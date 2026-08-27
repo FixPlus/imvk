@@ -15,15 +15,19 @@ void SampledView::descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                                   FONodeBase &obj, unsigned binding) {
   auto &impl = static_cast<SampledViewImpl &>(obj);
   auto &&[view, sampler] = impl.get();
-  set.write(binding, view.operator VkImageView(),
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, sampler);
+  vkw::DescriptorWrite write{binding,
+                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
+  write.addImage(sampler, view.operator VkImageView(),
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  set.write(write);
 }
 
-FObject::Ptr SampledViewImpl::constructNew(FramedEngine &engine) {
+std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>
+SampledViewImpl::constructNew(FramedEngine &engine) {
   return doConstructNew(engine, getUse<Texture>(0)->get());
 }
 
-FObject::Ptr
+std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>
 SampledViewImpl::doConstructNew(FramedEngine &engine,
                                 const vkw::Image<vkw::COLOR, vkw::I2D> &image) {
   VkSamplerCreateInfo info{};
@@ -35,8 +39,7 @@ SampledViewImpl::doConstructNew(FramedEngine &engine,
   info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
   info.pNext = nullptr;
 
-  return engine.createObject<
-      std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>>(
+  return std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>(
       vkw::ImageView<vkw::COLOR, vkw::V2D>(engine.context().device(), image,
                                            image.format()),
       vkw::Sampler(engine.context().device(), info));
@@ -142,8 +145,9 @@ static ImageInfo readImageFile(const std::filesystem::path &path) {
   return ret;
 }
 
-FObject::Ptr Texture::load(FramedEngine &engine, CopyEngine &ce,
-                           const std::filesystem::path &path) {
+vkw::Image<vkw::COLOR, vkw::I2D>
+Texture::load(FramedEngine &engine, CopyEngine &ce,
+              const std::filesystem::path &path) {
   auto imageInfo = readImageFile(path);
   VmaAllocationCreateInfo allocInfo{};
 
@@ -153,7 +157,7 @@ FObject::Ptr Texture::load(FramedEngine &engine, CopyEngine &ce,
 
   int transferUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-  auto ret = engine.createObject<vkw::Image<vkw::COLOR, vkw::I2D>>(
+  auto ret = vkw::Image<vkw::COLOR, vkw::I2D>(
       ce.context().getDeviceAllocator(), allocInfo, VK_FORMAT_R8G8B8A8_UNORM,
       static_cast<uint32_t>(imageInfo.width),
       static_cast<uint32_t>(imageInfo.height), 1, 1, 1,
@@ -161,7 +165,7 @@ FObject::Ptr Texture::load(FramedEngine &engine, CopyEngine &ce,
   auto copyFuture = ce.copy(std::make_unique<ImageInit>(
       vkw::StagingBuffer<unsigned char>(ce.context().getDeviceAllocator(),
                                         imageInfo.data),
-      ret->as<vkw::Image<vkw::COLOR, vkw::I2D>>()));
+      ret));
   copyFuture.wait();
   return ret;
 }

@@ -1,14 +1,16 @@
 #pragma once
 
 #include "imvk/base/Context.hpp"
-
 #include "imvk/base/Frame.hpp"
+
 #include "vkw/CommandPool.hpp"
 #include "vkw/CommandRecorder.hpp"
 #include "vkw/Fence.hpp"
 
 #include <future>
 #include <queue>
+#include <typeindex>
+#include <unordered_map>
 
 namespace imvk {
 
@@ -91,6 +93,7 @@ public:
 
   auto frameIds() const { return std::ranges::iota_view{0ul, getFIFCount()}; }
 
+  auto totalNodeCount() const { return m_nodeCounter; }
   /// @brief Creates new object node of specified type T. Operations with nodes
   /// are not internally synchronized, therefore this function is not
   /// thread-safe.
@@ -99,25 +102,9 @@ public:
   /// @return a shared reference to instance of T.
   template <std::derived_from<FONodeBase> T, typename... Args>
   Ref<T> createNode(Args &&...args) {
+    ++m_nodeCounter;
     return new T(*this, std::forward<Args>(args)...);
   }
-
-  /// @brief allocates new object of specified type. This function is safe to
-  /// call from any thread. T's constructor therefore must also be internally
-  /// thread-safe.
-  /// @tparam T is a type of object implementation to create.
-  /// @param args passed to constructor of object T.
-  /// @return uniquely owned pointer to an instance of FObject.
-  template <typename T, typename... Args>
-  FObject::Ptr createObject(Args &&...args) {
-    return FObject::Ptr{new FObjectImpl<T>(std::forward<Args>(args)...), *this};
-  }
-
-  /// @brief enqueues object in free list. Objects are freed strictly in order
-  /// they were enqueued and only after last frame they were used in is retired.
-  /// This function is called by deleter of FObject::Ptr.
-  /// @param object pointer to FObject instance to destroy.
-  void destroyObject(FObject *object);
 
   void submitFrame(auto &&frameRecord) {
     auto &nextFrame = getNextFrame();
@@ -137,6 +124,70 @@ protected:
   virtual void postSubmit(const Frame &frame) = 0;
 
 private:
+  class FreeQueueBase {
+  public:
+    virtual bool empty() = 0;
+    virtual FrameID nextElementTag() = 0;
+    virtual void popNext() = 0;
+    virtual void reset() = 0;
+    virtual ~FreeQueueBase() = default;
+  };
+
+  template <typename T> class FreeQueue : public FreeQueueBase {
+  public:
+    bool empty() override { return m_current == m_list.size(); }
+    FrameID nextElementTag() override { return m_list[m_current]->second; }
+    void popNext() override { m_list[m_current++].reset(); }
+    void reset() override {
+      m_current = 0;
+      m_list.clear();
+    }
+    void destroy(FObject<T> &&obj) { m_list.emplace_back(std::move(obj)); }
+
+  private:
+    ptrdiff_t m_current = 0;
+    std::vector<std::optional<FObject<T>>> m_list;
+  };
+
+  class FreeList {
+  public:
+    template <typename T> void destroy(FObject<T> &&obj) {
+      auto &freeQueue = m_queues.try_emplace(typeid(T), nullptr).first->second;
+      if (!freeQueue)
+        freeQueue = std::make_unique<FreeQueue<T>>();
+      m_list.push_back(typeid(T));
+      static_cast<FreeQueue<T> &>(*freeQueue).destroy(std::move(obj));
+    }
+    bool empty() { return m_current == m_list.size(); }
+    FrameID nextElementTag() {
+      return m_queues[m_list[m_current]]->nextElementTag();
+    }
+    void popNext() { m_queues[m_list[m_current++]]->popNext(); }
+    void reset() {
+      m_current = 0;
+      m_list.clear();
+      for (auto &&q : m_queues | std::views::elements<1>) {
+        q->reset();
+      }
+    }
+
+  private:
+    ptrdiff_t m_current = 0;
+    std::vector<std::type_index> m_list;
+    std::unordered_map<std::type_index, std::unique_ptr<FreeQueueBase>>
+        m_queues;
+  };
+
+public:
+  /// @brief enqueues object in free list. Objects are freed strictly in order
+  /// they were enqueued and only after last frame they were used in is retired.
+  /// This function is called by deleter of FObject::Ptr.
+  /// @param object pointer to FObject instance to destroy.
+  template <typename T> void destroyObject(FObject<T> &&object) {
+    m_freeList.destroy<T>(std::move(object));
+  }
+
+private:
   class GarbageCollector final {
   public:
     GarbageCollector(FramedEngine &engine)
@@ -151,7 +202,7 @@ private:
       m_waker.notify_one();
     }
 
-    void trySubmit(std::vector<FObject *> &nextList) {
+    void trySubmit(FreeList &nextList) {
       std::unique_lock lc{m_listMutex};
       if (!m_pendingList.empty())
         return;
@@ -186,11 +237,11 @@ private:
     std::condition_variable m_idleWaker;
     bool m_idle = false;
 
-    size_t m_currentListIndex = 0;
-    std::vector<FObject *> m_currentList;
-    std::vector<FObject *> m_pendingList;
+    FreeList m_currentList;
+    FreeList m_pendingList;
     std::jthread m_thread;
   };
+
   class FrameInfo final {
   public:
     enum class stat { init, recd, subd };
@@ -295,6 +346,7 @@ private:
     vkw::Fence m_fence;
     stat m_status;
   };
+
   FrameInfo &getNextFrame();
 
   void submit(vkw::SubmitInfo &&info, FrameInfo &frame) {
@@ -303,12 +355,13 @@ private:
       m_gc.trySubmit(m_freeList);
   }
   std::vector<FrameInfo> m_frames;
-  std::vector<FObject *> m_freeList;
+  FreeList m_freeList;
   FrameID m_ordinal = 0;
   FrameID m_retiredPrivate = 0;
   std::atomic<FrameID> m_retired = 0;
   std::atomic<FrameID> m_gcWaitingFor = 0;
   GarbageCollector m_gc;
+  size_t m_nodeCounter = 0;
 };
 
 } // namespace imvk

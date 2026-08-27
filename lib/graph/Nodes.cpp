@@ -48,7 +48,7 @@ public:
                    const MatIntegerScalar &levels,
                    const VkImageCreateInfo &info)
       : FONode<RegularImage, fon_type::swap, RegularImageNode>(
-            FOUses{extents, format, layers, levels}),
+            engine, FOUses{extents, format, layers, levels}),
         MatImageBase(fon_type::swap), m_info(info) {}
   FOReconstructible &node() override { return *this; }
   VkImage image(FrameID id) const final { return get(id); }
@@ -64,11 +64,11 @@ public:
     m_info.arrayLayers = getUse<MatIntegerScalar>(2)->get();
     m_info.mipLevels = getUse<MatIntegerScalar>(3)->get();
   }
-  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) {
+  RegularImage constructNew(FramedEngine &engine, FrameID frame) {
     m_updateInfo();
     vkw::AllocationCreateInfo allocInfo{.usage = VMA_MEMORY_USAGE_GPU_ONLY};
-    return engine.createObject<RegularImage>(
-        engine.context().getDeviceAllocator(), allocInfo, m_info);
+    return RegularImage(engine.context().getDeviceAllocator(), allocInfo,
+                        m_info);
   }
   void onUseAction(const Frame &frame, RegularImage &obj) {
     // do nothing
@@ -92,7 +92,7 @@ public:
   CopyImageNode(FramedEngine &engine, const MatImage &src,
                 const VkImageCreateInfo &info)
       : FONode<RegularImage, fon_type::swap, CopyImageNode>(
-            FOUses{&src->node()}),
+            engine, FOUses{&src->node()}),
         MatImageBase(fon_type::swap), m_info(info) {}
   FOReconstructible &node() override { return *this; }
   VkImage image(FrameID id) const final { return get(id); }
@@ -111,11 +111,11 @@ public:
     m_info.arrayLayers = srcInfo.arrayLayers;
     m_info.mipLevels = srcInfo.mipLevels;
   }
-  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) {
+  RegularImage constructNew(FramedEngine &engine, FrameID frame) {
     m_updateInfo();
     vkw::AllocationCreateInfo allocInfo{.usage = VMA_MEMORY_USAGE_GPU_ONLY};
-    return engine.createObject<RegularImage>(
-        engine.context().getDeviceAllocator(), allocInfo, m_info);
+    return RegularImage(engine.context().getDeviceAllocator(), allocInfo,
+                        m_info);
   }
   void onUseAction(const Frame &frame, RegularImage &obj) {
     // do nothing
@@ -139,7 +139,7 @@ public:
   using Base = FONode<VkImage, fon_type::ext, SwapchainImageNode>;
   SwapchainImageNode(GraphicsEngine &engine, const MaterializationContext &ctx,
                      const VkImageCreateInfo &info)
-      : Base(FOUses{engine.swapchain()}), MatImageBase(fon_type::ext) {
+      : Base(engine, FOUses{engine.swapchain()}), MatImageBase(fon_type::ext) {
     m_fillInfo(engine.swapchain().get());
   }
   FOReconstructible &node() override { return *this; }
@@ -160,13 +160,12 @@ public:
     // do nothing
   }
   void constructNew(FramedEngine &engine,
-                    boost::container::small_vector_base<FObject::Ptr> &res) {
+                    boost::container::small_vector_base<VkImage> &res) {
     auto &swap = static_cast<GraphicsEngine &>(engine).swapchain().get();
     m_fillInfo(swap);
     std::ranges::transform(
-        swap.images(), std::back_inserter(res), [&](auto &image) {
-          return engine.createObject<VkImage>(image.operator VkImage());
-        });
+        swap.images(), std::back_inserter(res),
+        [&](auto &image) { return image.operator VkImage(); });
   }
 
   void m_fillInfo(const vkw::SwapChain &swapchain) {
@@ -191,7 +190,7 @@ class ImageSampledAdaptorImpl
 public:
   using Base = FONode<vkw::Sampler, fon_type::cow, ImageSampledAdaptorImpl>;
   ImageSampledAdaptorImpl(FramedEngine &engine, const MatImageView &view)
-      : Base(engine.createObject<vkw::Sampler>(m_createSampler(engine)),
+      : Base(engine, vkw::Sampler(m_createSampler(engine)),
              FOUses{&view->node()}) {
     if (view->type() == fon_type::ext) {
       throw std::runtime_error(
@@ -199,7 +198,7 @@ public:
     }
     auto &node = view->node();
     if (node.isDestroyed())
-      node.construct(engine);
+      node.construct();
   }
 
   static vkw::Sampler m_createSampler(FramedEngine &engine) {
@@ -213,8 +212,8 @@ public:
     info.pNext = nullptr;
     return vkw::Sampler{engine.context().device(), info};
   }
-  FObject::Ptr constructNew(FramedEngine &engine) {
-    return engine.createObject<vkw::Sampler>(m_createSampler(engine));
+  vkw::Sampler constructNew(FramedEngine &engine) {
+    return m_createSampler(engine);
   }
   VkImageLayout m_layout;
 };
@@ -228,8 +227,11 @@ public:
     auto &casted = static_cast<ImageSampledAdaptorImpl &>(obj);
     auto *view = dynamic_cast<MatImageViewBase *>(&obj.getUseRaw(0));
     assert(view);
-    set.write(binding, view->view(frame),
-              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, casted.get());
+    vkw::DescriptorWrite write{binding,
+                               VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
+    write.addImage(casted.get(), view->view(frame),
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    set.write(write);
   }
 };
 
@@ -636,7 +638,7 @@ RenderPass::PipeHook::PipeHook(RenderPass &pass, MaterializationContext &ctx,
               static_cast<const ImageAttachmentUseInfo &>(*use.info()).kind;
           auto &img = *ctx.get<MatImage>(use.value());
           if (img.node().isDestroyed())
-            img.node().construct(ctx.engine());
+            img.node().construct();
           auto format = img.info().format;
           switch (kind) {
           case ImageAttachmentUseInfo::Kind::color:

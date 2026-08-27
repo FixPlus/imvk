@@ -1,6 +1,7 @@
 #pragma once
 
 #include "imvk/base/EngineBase.hpp"
+#include "imvk/base/Object.hpp"
 #include "imvk/graphics/Swapchain.hpp"
 
 #include <vkw/CommandPool.hpp>
@@ -29,8 +30,7 @@ public:
   SemaphoreImpl(FramedEngine &engine)
       : FONode<vkw::Semaphore, fon_type::swap_mut, SemaphoreImpl>(
             engine, [&](auto id) {
-              return engine.createObject<vkw::Semaphore>(
-                  engine.context().device());
+              return vkw::Semaphore(engine.context().device());
             }) {}
 
   void onUseAction(const Frame &frame, vkw::Semaphore &obj) {
@@ -48,15 +48,15 @@ class SSemaphoreImpl final
     : public Swapchained<vkw::Semaphore, SSemaphoreImpl> {
 public:
   template <std::convertible_to<Swapchain> T>
-  SSemaphoreImpl(FramedEngine &engine, T &&swapchain)
+  SSemaphoreImpl(GraphicsEngine &engine, T &&swapchain)
       : Swapchained<vkw::Semaphore, SSemaphoreImpl>(
-            std::forward<T>(swapchain)) {}
+            engine, std::forward<T>(swapchain)) {}
 
   void onUseAction(const Frame &, vkw::Semaphore &obj) {
     // nothing to do.
   }
 
-  FObject::Ptr constructOne(FramedEngine &engine, unsigned image);
+  vkw::Semaphore constructOne(FramedEngine &engine, unsigned image);
 };
 
 class SSemaphore : public FONodeView<SSemaphoreImpl> {
@@ -100,7 +100,7 @@ private:
   bool m_aquireSwapchainImage(const Frame &frame);
   bool m_surface_minimized();
 
-  FObject::Ptr m_createSwapchain();
+  vkw::SwapChain m_createSwapchain();
   friend class SwapchainImpl;
 
   SwapchainFactory &m_swapchainFactory;

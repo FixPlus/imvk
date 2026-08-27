@@ -42,7 +42,7 @@ public:
   using Base = FONode<RegularImageView, fon_type::swap, RegularImageViewNode>;
   RegularImageViewNode(FramedEngine &engine, const MatImage &image,
                        const VkImageViewCreateInfo &info)
-      : Base(FOUses{&image->node()}), MatImageViewBase(fon_type::swap),
+      : Base(engine, FOUses{&image->node()}), MatImageViewBase(fon_type::swap),
         m_info(info) {
     assert(image->type() == fon_type::swap);
   }
@@ -57,7 +57,7 @@ public:
   void onUseAction(const Frame &frame, RegularImageView &obj) {
     // do nothing
   }
-  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) {
+  RegularImageView constructNew(FramedEngine &engine, FrameID frame) {
     VkImageViewCreateInfo infoCopy = m_info;
     auto *img = dynamic_cast<MatImageBase *>(&getUseRaw(0));
     assert(img);
@@ -67,7 +67,7 @@ public:
     // todo check result.
     device.core<1, 0>().vkCreateImageView(device, &infoCopy,
                                           vkw::HostAllocator::get(), &ret);
-    return engine.createObject<RegularImageView>(device, ret);
+    return RegularImageView(device, ret);
   }
   VkImageViewCreateInfo m_info{};
 };
@@ -88,7 +88,7 @@ public:
   using Base = FONode<RegularImageView, fon_type::ext, SwapchainImageViewNode>;
   SwapchainImageViewNode(FramedEngine &engine, const MatImage &image,
                          const VkImageViewCreateInfo &info)
-      : Base(FOUses{&image->node()}), MatImageViewBase(fon_type::ext),
+      : Base(engine, FOUses{&image->node()}), MatImageViewBase(fon_type::ext),
         m_info(info) {
     assert(image->type() == fon_type::ext);
   }
@@ -109,8 +109,9 @@ public:
   void onUseAction(const Frame &frame, RegularImageView &obj) {
     // do nothing
   }
-  void constructNew(FramedEngine &engine,
-                    boost::container::small_vector_base<FObject::Ptr> &res) {
+  void
+  constructNew(FramedEngine &engine,
+               boost::container::small_vector_base<RegularImageView> &res) {
     auto &swap = static_cast<GraphicsEngine &>(engine).swapchain().get();
     auto images = swap.images();
     auto *img = dynamic_cast<MatImageBase *>(&getUseRaw(0));
@@ -126,7 +127,7 @@ public:
           // todo check result.
           device.core<1, 0>().vkCreateImageView(
               device, &infoCopy, vkw::HostAllocator::get(), &ret);
-          return engine.createObject<RegularImageView>(device, ret);
+          return RegularImageView(device, ret);
         });
   }
   VkImageViewCreateInfo m_info;

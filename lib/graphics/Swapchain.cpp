@@ -7,9 +7,9 @@
 #include <array>
 
 namespace imvk {
-FObject::Ptr GraphicsEngine::m_createSwapchain() {
+vkw::SwapChain GraphicsEngine::m_createSwapchain() {
   auto &device = context().device();
-  auto ret = createObject<vkw::SwapChain>(device, [&]() {
+  auto swapchain = vkw::SwapChain(device, [&]() {
     auto CICopy = m_swapchainFactory.getCreateInfo(device);
     CICopy.pNext = nullptr;
     CICopy.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -20,7 +20,6 @@ FObject::Ptr GraphicsEngine::m_createSwapchain() {
     CICopy.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     return CICopy;
   }());
-  auto &swapchain = ret->as<vkw::SwapChain>();
   std::vector<VkImageMemoryBarrier> transitLayouts;
 
   for (auto &image : swapchain.images()) {
@@ -62,27 +61,27 @@ FObject::Ptr GraphicsEngine::m_createSwapchain() {
 
   q.get().submit(submitInfo, fence);
   fence.wait();
-  return ret;
+  return swapchain;
 }
 SwapchainImpl::SwapchainImpl(GraphicsEngine &engine)
     : FONode<vkw::SwapChain, fon_type::cow, SwapchainImpl>(
-          constructNew(engine)) {}
+          engine, constructNew(engine)) {}
 
-FObject::Ptr SwapchainImpl::constructNew(FramedEngine &engine) {
+vkw::SwapChain SwapchainImpl::constructNew(FramedEngine &engine) {
   return static_cast<GraphicsEngine &>(engine).m_createSwapchain();
 }
 
-FObject::Ptr SwapchainViewImpl::constructOne(FramedEngine &engine,
-                                             unsigned id) {
+vkw::ImageView<vkw::COLOR, vkw::V2DA>
+SwapchainViewImpl::constructOne(FramedEngine &engine, unsigned id) {
   auto &image = swapchain().images()[id];
   VkComponentMapping mapping;
   mapping.r = VK_COMPONENT_SWIZZLE_IDENTITY;
   mapping.g = VK_COMPONENT_SWIZZLE_IDENTITY;
   mapping.b = VK_COMPONENT_SWIZZLE_IDENTITY;
   mapping.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-  return engine.createObject<vkw::ImageView<vkw::COLOR, vkw::V2DA>>(
-      engine.context().device(), image, image.format(), 0u, 1u, 0u, 1u,
-      mapping);
+  return vkw::ImageView<vkw::COLOR, vkw::V2DA>(engine.context().device(), image,
+                                               image.format(), 0u, 1u, 0u, 1u,
+                                               mapping);
 }
 
 } // namespace imvk

@@ -10,8 +10,8 @@ class GraphicsPipelineStage;
 struct GraphicsPipelineTraits {
   using HandleTy = vkw::GraphicsPipeline;
   using StageTy = GraphicsPipelineStage;
-  static FObject::Ptr create(FramedEngine &engine,
-                             PipelineLayout<GraphicsPipelineTraits> &layout);
+  static vkw::GraphicsPipeline
+  create(FramedEngine &engine, PipelineLayout<GraphicsPipelineTraits> &layout);
 };
 
 class GraphicsPipelineStage : public Stage {
@@ -67,7 +67,7 @@ public:
           m_boundPipeline = m_pool.get(sets.stage()...);
           auto &pipeline = m_boundPipeline->use(m_frame);
           m_recorder.bindPipeline(pipeline);
-          auto &layout = pipeline.layout();
+          auto &layout = m_boundPipeline.layout()->use(m_frame);
           (bindDescriptors(sets, layout), ...);
         },
         m_sets);

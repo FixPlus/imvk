@@ -59,16 +59,11 @@ FramedEngine::FrameInfo &FramedEngine::getNextFrame() {
   return ret;
 }
 
-void FramedEngine::destroyObject(FObject *object) {
-  m_freeList.push_back(object);
-}
-
 void FramedEngine::GarbageCollector::gcLoop(std::stop_token token) {
   FrameID lastRetired = 0;
   while (!token.stop_requested()) {
-    if (m_currentListIndex == m_currentList.size()) {
-      m_currentListIndex = 0;
-      m_currentList.clear();
+    if (m_currentList.empty()) {
+      m_currentList.reset();
       std::unique_lock lc{m_listMutex};
       if (!m_pendingList.empty()) {
         std::swap(m_pendingList, m_currentList);
@@ -87,9 +82,8 @@ void FramedEngine::GarbageCollector::gcLoop(std::stop_token token) {
         continue;
       }
     }
-    while (m_currentListIndex != m_currentList.size()) {
-      auto &next = m_currentList[m_currentListIndex];
-      auto nextFrame = next->lastFrame();
+    while (!m_currentList.empty()) {
+      auto nextFrame = m_currentList.nextElementTag();
       if (nextFrame > lastRetired) {
         std::unique_lock lc{m_listMutex};
         lastRetired = m_engine.m_retired.load(std::memory_order::acquire);
@@ -109,15 +103,14 @@ void FramedEngine::GarbageCollector::gcLoop(std::stop_token token) {
         });
         continue;
       }
-      delete next;
-      ++m_currentListIndex;
+      m_currentList.popNext();
     }
   }
-  for (auto *obj : m_currentList)
-    delete obj;
+  while (!m_currentList.empty())
+    m_currentList.popNext();
   std::unique_lock lc{m_listMutex};
-  for (auto *obj : m_pendingList)
-    delete obj;
+  while (!m_pendingList.empty())
+    m_pendingList.popNext();
 }
 
 } // namespace imvk

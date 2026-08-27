@@ -1,8 +1,7 @@
 #pragma once
 
 #include "imvk/base/DescriptorSet.hpp"
-#include "imvk/base/EngineBase.hpp"
-#include "imvk/base/Frame.hpp"
+#include "imvk/base/Object.hpp"
 #include "imvk/base/Utils.hpp"
 
 #include "vkw/Pipeline.hpp"
@@ -71,14 +70,9 @@ protected:
 class StageLayoutImpl
     : public FONode<std::unique_ptr<Stage>, fon_type::mut, StageLayoutImpl> {
 public:
-  StageLayoutImpl(FramedEngine &engine, Stage *description)
+  StageLayoutImpl(FramedEngine &engine, std::unique_ptr<Stage> &&description)
       : FONode<std::unique_ptr<Stage>, fon_type::mut, StageLayoutImpl>(
-            engine.createObject<std::unique_ptr<Stage>>(description),
-            std::move(description->pools)) {}
-
-  void onUse(const Frame &frame) override {
-    // do nothing.
-  }
+            engine, std::move(description), std::move(description->pools)) {}
 };
 
 template <std::derived_from<Stage> T>
@@ -86,7 +80,7 @@ class StageLayout : public FONodeView<StageLayoutImpl> {
 public:
   StageLayout(FramedEngine &en, auto &&...args)
       : FONodeView<StageLayoutImpl>(
-            en, new T{std::forward<decltype(args)>(args)...}) {}
+            en, std::make_unique<T>(std::forward<decltype(args)>(args)...)) {}
 
   StageLayout(StageLayout::BaseNode *ptr) : FONodeView<StageLayoutImpl>(ptr) {}
   const T &get() const { return static_cast<const T &>(*(*this)->get()); }
@@ -116,15 +110,13 @@ public:
 class StageSetImpl final : public FONode<char, fon_type::swap, StageSetImpl> {
 public:
   StageSetImpl(FramedEngine &engine, auto &&stage, auto &&sets)
-      : FONode<char, fon_type::swap, StageSetImpl>([&]() {
+      : FONode<char, fon_type::swap, StageSetImpl>(engine, [&]() {
           FOUses uses(std::forward<decltype(stage)>(stage));
           uses.addUses(std::forward<decltype(sets)>(sets));
           return uses;
         }()) {}
 
-  FObject::Ptr constructNew(FramedEngine &engine, FrameID frame) {
-    return engine.createObject<char>();
-  }
+  char constructNew(FramedEngine &engine, FrameID frame) { return 0; }
   void onUseAction(const Frame &frame, char &obj) {
     // no action required.
   }
@@ -193,8 +185,8 @@ class PipelineLayoutImpl final
                     PipelineLayoutImpl<PipelineTraits>> {
 private:
   using StageTy = PipelineTraits::StageTy;
-  FObject::Ptr init(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
-                    auto &&stages) {
+  vkw::PipelineLayout init(FramedEngine &engine,
+                           VkPipelineLayoutCreateFlags flags, auto &&stages) {
     boost::container::small_vector<
         std::pair<unsigned,
                   std::reference_wrapper<const vkw::DescriptorSetLayout>>,
@@ -228,26 +220,23 @@ private:
     }
 
     /// TODO: add merging push constants.
-    return engine.createObject<vkw::PipelineLayout>(
-        engine.context().device(), descriptorLayoutsRaw, pushConstants, flags);
+    return vkw::PipelineLayout(engine.context().device(), descriptorLayoutsRaw,
+                               pushConstants, flags);
   }
 
 public:
   PipelineLayoutImpl(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
                      std::ranges::range auto &&stages)
       : FONode<vkw::PipelineLayout, fon_type::mut, PipelineLayoutImpl>{
-            init(engine, flags, stages), FOUses{stages}} {}
+            engine, init(engine, flags, stages), FOUses{stages}} {}
   PipelineLayoutImpl(FramedEngine &engine, VkPipelineLayoutCreateFlags flags,
                      auto &&...stages)
       : FONode<vkw::PipelineLayout, fon_type::mut, PipelineLayoutImpl>{
+            engine,
             init(engine, flags,
                  std::array<StageLayout<StageTy>, sizeof...(stages)>{
                      StageLayout<StageTy>{&*stages}...}),
             FOUses{stages...}} {}
-
-  void onUse(const Frame &frame) final {
-    // do nothing.
-  }
 };
 template <typename PipelineTraits>
 class PipelineLayout : public FONodeView<PipelineLayoutImpl<PipelineTraits>> {
@@ -270,17 +259,14 @@ class PipelineImpl final
     : public FONode<typename PipelineTraits::HandleTy, fon_type::mut,
                     PipelineImpl<PipelineTraits>> {
 public:
-  FObject::Ptr init(FramedEngine &engine,
-                    PipelineLayout<PipelineTraits> &layout) {
+  PipelineTraits::HandleTy init(FramedEngine &engine,
+                                PipelineLayout<PipelineTraits> &layout) {
     return PipelineTraits::create(engine, layout);
-  }
-  void onUse(const Frame &frame) final {
-    // do nothing.
   }
 
   PipelineImpl(FramedEngine &engine, PipelineLayout<PipelineTraits> layout)
       : FONode<typename PipelineTraits::HandleTy, fon_type::mut, PipelineImpl>(
-            init(engine, layout), FOUses{layout}){};
+            engine, init(engine, layout), FOUses{layout}){};
 };
 
 template <typename PipelineTraits>
