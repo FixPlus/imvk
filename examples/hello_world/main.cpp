@@ -202,14 +202,10 @@ imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx, auto &&passJob,
               std::forward<decltype(offscreenPassJob)>(offscreenPassJob))
           ->results()
           .front();
-  imvk::graph::Value &copy =
-      builder.create<imvk::graph::Copy<imvk::graph::ImageTy>>(texture, image)
-          ->results()
-          .front();
   imvk::graph::Value &renderedImage =
       builder
           .create<imvk::graph::RenderPass>(
-              std::array{imvk::graph::colorAttachment(copy, load),
+              std::array{imvk::graph::colorAttachment(image, load),
                          imvk::graph::depthAttachment(depthBuffer, clear)},
               std::array{imvk::graph::combinedImageSampler(texture)},
               std::forward<decltype(passJob)>(passJob))
@@ -224,7 +220,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.
@@ -378,7 +374,7 @@ int app() try {
     auto &anotherBuffer = anotherVertices->use(frame);
     commands.bindVertexBuffer(anotherBuffer, 0, 0);
     commands.draw(anotherBuffer.size(), 1u);
-    // updateCowVertices();
+    updateCowVertices();
   };
   auto offscreenJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
                           vkw::RenderPassRecorder &commands,
@@ -397,8 +393,10 @@ int app() try {
   };
   imvk::graph::Context graphCtx{};
   auto wf = basicWorkflow(graphCtx, passJob, offscreenJob);
+  std::cout << "Pre-materialization workflow:" << std::endl;
   std::cout << wf << std::endl;
   imvk::graph::MaterializationContext matCtx{graphicsEngine, wf};
+  std::cout << "Post-materialization workflow:" << std::endl;
   std::cout << wf << std::endl;
 #if 1
 

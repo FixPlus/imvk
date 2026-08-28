@@ -187,7 +187,6 @@ private:
 public:
   /// @brief enqueues object in free list. Objects are freed strictly in order
   /// they were enqueued and only after last frame they were used in is retired.
-  /// This function is called by deleter of FObject::Ptr.
   /// @param object pointer to FObject instance to destroy.
   template <typename T> void destroyObject(FObject<T> &&object) {
     m_freeList.destroy<T>(std::move(object));

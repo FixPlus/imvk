@@ -13,8 +13,8 @@ layout(set = 0, binding = 0) uniform sampler2D myTex2;
 
 SurfaceInfo Material() {
   SurfaceInfo ret;
-  ret.albedo = inColor * vec4(texture(myTex, inUVW.rg)) *
-               vec4(texture(myTex2, inUVW.rg / 2));
+  ret.albedo = inColor * 0.2 + vec4(texture(myTex, inUVW.rg)) * 0.4 +
+               vec4(texture(myTex2, inUVW.rg / 2)) * 0.4;
   ret.cameraOffset = inViewPos;
   ret.normal = inWorldNormal;
   return ret;

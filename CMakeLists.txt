@@ -4,7 +4,7 @@ project(imvk)
 
 set(CMAKE_CXX_STANDARD 23)
 
-find_package(vkw 0.0.2 REQUIRED)
+find_package(vkw 0.0.3 REQUIRED)
 
 add_subdirectory(lib)
 set(IMVK_ASSETS_PATH ${CMAKE_CURRENT_SOURCE_DIR}/assets)
