@@ -17,12 +17,24 @@
 
 namespace imvk {
 
+class ShaderFragmentImpl
+    : public FONode<vkw::SPIRVModule, fon_type::mut, ShaderFragmentImpl> {
+public:
+  ShaderFragmentImpl(FramedEngine &engine, auto &&module)
+      : FONode<vkw::SPIRVModule, fon_type::mut, ShaderFragmentImpl>(
+            engine, std::forward<decltype(module)>(module)) {}
+};
+
+class ShaderFragment : public FONodeView<ShaderFragmentImpl> {
+public:
+  ShaderFragment(auto &&...args)
+      : FONodeView<ShaderFragmentImpl>(std::forward<decltype(args)>(args)...) {}
+};
+
 class Stage {
 public:
   struct Description {
-    /// TODO: think what can be done to eliminate need to copy shader code to
-    /// create stage.
-    boost::container::small_vector<vkw::SPIRVModule, 2> shaders;
+    boost::container::small_vector<ShaderFragment, 2> shaders;
     std::optional<VkShaderStageFlagBits> stage;
     struct Set {
       unsigned num;

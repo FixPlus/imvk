@@ -6,11 +6,16 @@
 
 namespace imvk::examples {
 
-ShaderLoader::ShaderLoader(const ShaderLoaderCreateInfo &CI)
-    : m_shaderDir(CI.shaderDirectory) {}
+ShaderLoader::ShaderLoader(FramedEngine &engine,
+                           const ShaderLoaderCreateInfo &CI)
+    : m_engine(engine), m_shaderDir(CI.shaderDirectory), m_shaderCache(20) {}
 
-std::shared_ptr<vkw::SPIRVModule>
-ShaderLoader::getModule(std::string_view name) {
+imvk::ShaderFragment ShaderLoader::getModule(std::string_view name) {
+  auto key = std::string(name);
+  auto &ret = m_shaderCache.get(key, nullptr);
+  if (ret) {
+    return ret;
+  }
   auto shaderPath = m_shaderDir / (std::string(name) + ".spv");
 
   if (!std::filesystem::exists(shaderPath))
@@ -57,6 +62,7 @@ ShaderLoader::getModule(std::string_view name) {
       return ss.str();
     }());
 
-  return std::make_shared<vkw::SPIRVModule>(code);
+  ret = imvk::ShaderFragment(m_engine, vkw::SPIRVModule{code});
+  return ret;
 }
 } // namespace imvk::examples

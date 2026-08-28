@@ -43,7 +43,7 @@ Stage::Stage(FramedEngine &engine, Description &&description)
   for (auto &shader : description.shaders) {
     std::optional<vkw::SPIRVModuleInfo> reflectInfoOpt;
     try {
-      reflectInfoOpt.emplace(shader);
+      reflectInfoOpt.emplace(shader->get());
     } catch (vkw::SPIRVReflectError &e) {
       std::cerr << "warning: failed to parse spirv module:" << std::endl;
       std::cerr << e.what() << std::endl;
@@ -88,9 +88,14 @@ Stage::Stage(FramedEngine &engine, Description &&description)
   }
   m_module.emplace(
       description.shaders.size() == 1
-          ? description.shaders.front()
-          : engine.context().linkContext().link(description.shaders,
-                                                /*link library */ true));
+          ? description.shaders.front()->get()
+          : engine.context().linkContext().link(
+                description.shaders |
+                    std::views::transform(
+                        [](auto &&shader) -> const vkw::SPIRVModule & {
+                          return shader->get();
+                        }),
+                /*link library */ true));
 }
 
 } // namespace imvk

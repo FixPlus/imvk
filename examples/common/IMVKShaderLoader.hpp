@@ -2,6 +2,9 @@
 
 #include <vkw/SPIRVModule.hpp>
 
+#include "imvk/base/Pipeline.hpp"
+#include "imvk/base/Utils.hpp"
+
 #include <filesystem>
 
 namespace imvk::examples {
@@ -14,11 +17,14 @@ struct ShaderLoaderCreateInfo {
 // cache them currently.
 class ShaderLoader final {
 public:
-  ShaderLoader(const ShaderLoaderCreateInfo &CI);
+  ShaderLoader(FramedEngine &engine, const ShaderLoaderCreateInfo &CI);
 
-  std::shared_ptr<vkw::SPIRVModule> getModule(std::string_view name);
+  imvk::ShaderFragment getModule(std::string_view name);
 
 private:
+  FramedEngine &m_engine;
+  imvk::Cache<std::string, imvk::ShaderFragment, CachePolicy::LRU>
+      m_shaderCache;
   std::filesystem::path m_shaderDir;
 };
 

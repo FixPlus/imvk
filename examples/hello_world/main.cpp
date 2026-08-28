@@ -224,18 +224,13 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.
   imvk::examples::WindowSettings windowSettings{
       .title = "Hello world", .width = 800, .height = 600};
   imvk::examples::Window window{windowSettings, imvkDevice.get().parent()};
-
-  // Create shader loader
-  imvk::examples::ShaderLoaderCreateInfo shaderLoaderCI{.shaderDirectory =
-                                                            "assets/shaders"};
-  imvk::examples::ShaderLoader shaderLoader{shaderLoaderCI};
 
   // Create instance of imvk context.
   imvk::ContextCreateInfo imvkCCI{};
@@ -248,6 +243,10 @@ int app() try {
                                      .maxFramesInFlight = 2};
   auto graphicsEngine = imvk::GraphicsEngine(imvkContext, eCi);
 
+  // Create shader loader
+  imvk::examples::ShaderLoaderCreateInfo shaderLoaderCI{.shaderDirectory =
+                                                            "assets/shaders"};
+  imvk::examples::ShaderLoader shaderLoader{graphicsEngine, shaderLoaderCI};
   auto copyEngine = imvk::CopyEngine(imvkContext, imvk::CopyEngineCreateInfo{});
 
   auto geometryLayout = imvk::StageLayout<imvk::examples::GeometryStage>(
@@ -379,7 +378,7 @@ int app() try {
     auto &anotherBuffer = anotherVertices->use(frame);
     commands.bindVertexBuffer(anotherBuffer, 0, 0);
     commands.draw(anotherBuffer.size(), 1u);
-    updateCowVertices();
+    // updateCowVertices();
   };
   auto offscreenJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
                           vkw::RenderPassRecorder &commands,
