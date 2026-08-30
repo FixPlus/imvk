@@ -619,7 +619,8 @@ RenderPass::PipeHook::initCreateInfo(const vkw::PipelineLayout &layout) const {
   return vkw::GraphicsPipelineCreateInfo{m_info, layout};
 }
 
-RenderPass::PipeHook::PipeHook(RenderPass &pass, MaterializationContext &ctx,
+RenderPass::PipeHook::PipeHook(FramedEngine &e, RenderPass &pass,
+                               MaterializationContext &ctx,
                                unsigned firstDescriptor)
     : GraphicsPipelineStage(
           ctx.engine(),

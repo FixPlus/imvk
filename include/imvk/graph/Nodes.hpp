@@ -272,7 +272,7 @@ class RenderPass : public Node {
 public:
   class PipeHook : public GraphicsPipelineStage {
   public:
-    PipeHook(RenderPass &pass, MaterializationContext &ctx,
+    PipeHook(FramedEngine &e, RenderPass &pass, MaterializationContext &ctx,
              unsigned firstDescriptor);
     bool isProvoking() const override { return true; }
 

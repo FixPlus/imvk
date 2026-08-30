@@ -12,6 +12,8 @@
 
 using namespace std::chrono_literals;
 
+struct ImGuiContext;
+
 namespace imvk::examples {
 
 struct WindowSettings {
@@ -137,6 +139,8 @@ public:
   void setRecreateCallback(RecreateCallbackType callback) noexcept override {
     m_recreateCallback = callback;
   }
+
+  GLFWwindow *rawHandle() const { return m_handle.get(); }
 
   virtual ~Window() = default;
 

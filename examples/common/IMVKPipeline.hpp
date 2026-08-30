@@ -1,4 +1,5 @@
 #pragma once
+#include "imvk/graph/Nodes.hpp"
 #include "imvk/graphics/Engine.hpp"
 #include "imvk/graphics/Pipeline.hpp"
 
@@ -8,7 +9,7 @@ namespace imvk::examples {
 
 class GeometryStage : public imvk::GraphicsPipelineStage {
 public:
-  GeometryStage(GraphicsEngine &engine, ShaderLoader &shaderFactory,
+  GeometryStage(FramedEngine &engine, ShaderLoader &shaderFactory,
                 std::string_view shaderName,
                 std::unique_ptr<vkw::VertexInputStateCreateInfoBase>
                     vertexState = nullptr);
@@ -21,7 +22,7 @@ private:
 
 class ProjectionStage : public imvk::GraphicsPipelineStage {
 public:
-  ProjectionStage(GraphicsEngine &engine, ShaderLoader &shaderFactory,
+  ProjectionStage(FramedEngine &engine, ShaderLoader &shaderFactory,
                   std::string_view shaderName);
 
   void amendCreateInfo(vkw::GraphicsPipelineCreateInfo &info) const override {}
@@ -30,7 +31,7 @@ public:
 class MaterialStage : public imvk::GraphicsPipelineStage {
 public:
   MaterialStage(
-      GraphicsEngine &engine, ShaderLoader &shaderFactory,
+      FramedEngine &engine, ShaderLoader &shaderFactory,
       std::string_view shaderName,
       vkw::RasterizationStateCreateInfo rasterization,
       std::optional<vkw::DepthTestStateCreateInfo> depthTest = std::nullopt);
@@ -44,7 +45,7 @@ private:
 
 class LightingStage : public imvk::GraphicsPipelineStage {
 public:
-  LightingStage(GraphicsEngine &engine, ShaderLoader &shaderFactory,
+  LightingStage(FramedEngine &engine, ShaderLoader &shaderFactory,
                 std::string_view shaderName,
                 std::span<const VkPipelineColorBlendAttachmentState> = {});
 
@@ -54,5 +55,14 @@ private:
   boost::container::small_vector<VkPipelineColorBlendAttachmentState, 2>
       m_blends;
 };
+
+using PipelinePool = imvk::GraphicsPipelinePool<
+    imvk::graph::RenderPass::PipeHook, imvk::examples::GeometryStage,
+    imvk::examples::ProjectionStage, imvk::examples::MaterialStage,
+    imvk::examples::LightingStage>;
+using PipelineManager = imvk::GraphicsPipelineManager<
+    imvk::graph::RenderPass::PipeHook, imvk::examples::GeometryStage,
+    imvk::examples::ProjectionStage, imvk::examples::MaterialStage,
+    imvk::examples::LightingStage>;
 
 } // namespace imvk::examples

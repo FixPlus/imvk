@@ -92,7 +92,8 @@ class StageLayout : public FONodeView<StageLayoutImpl> {
 public:
   StageLayout(FramedEngine &en, auto &&...args)
       : FONodeView<StageLayoutImpl>(
-            en, std::make_unique<T>(std::forward<decltype(args)>(args)...)) {}
+            en,
+            std::make_unique<T>(en, std::forward<decltype(args)>(args)...)) {}
 
   StageLayout(StageLayout::BaseNode *ptr) : FONodeView<StageLayoutImpl>(ptr) {}
   const T &get() const { return static_cast<const T &>(*(*this)->get()); }
@@ -127,7 +128,9 @@ public:
           uses.addUses(std::forward<decltype(sets)>(sets));
           return uses;
         }()) {}
-
+  StageSetImpl(FramedEngine &engine, auto &&stage)
+      : FONode<char, fon_type::swap, StageSetImpl>(
+            engine, FOUses{std::forward<decltype(stage)>(stage)}) {}
   char constructNew(FramedEngine &engine, FrameID frame) { return 0; }
   void onUseAction(const Frame &frame, char &obj) {
     // no action required.
@@ -230,7 +233,6 @@ private:
       descriptorLayoutsRaw.emplace_back(set.get());
     }
 
-    /// TODO: add merging push constants.
     return vkw::PipelineLayout(engine.context().device(), descriptorLayoutsRaw,
                                pushConstants, flags);
   }

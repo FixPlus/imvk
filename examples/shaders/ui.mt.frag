@@ -8,7 +8,7 @@ layout(location = 2) in vec3 inWorldPos;
 layout(location = 3) in vec3 inWorldNormal;
 layout(location = 4) in vec3 inViewPos;
 
-layout(set = 2, binding = 0) uniform sampler2D fontSampler;
+layout(set = 3, binding = 0) uniform sampler2D fontSampler;
 
 SurfaceInfo Material() {
   SurfaceInfo ret;

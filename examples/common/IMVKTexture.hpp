@@ -28,6 +28,9 @@ public:
       : FONodeView<TextureImpl>(std::forward<decltype(args)>(args)...) {}
   static vkw::Image<vkw::COLOR, vkw::I2D>
   load(FramedEngine &engine, CopyEngine &, const std::filesystem::path &path);
+  static vkw::Image<vkw::COLOR, vkw::I2D>
+  load(FramedEngine &engine, CopyEngine &, std::span<const unsigned char> data,
+       unsigned width, unsigned height);
 };
 
 class SampledViewImpl final

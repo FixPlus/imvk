@@ -4,6 +4,7 @@
 #include "IMVKShaderLoader.hpp"
 #include "IMVKTexture.hpp"
 #include "IMVKWindow.hpp"
+#include "IMVKgui.hpp"
 
 #include "imvk/base/Context.hpp"
 #include "imvk/base/Frame.hpp"
@@ -146,9 +147,9 @@ public:
             std::forward<decltype(args)>(args)...) {}
 };
 
-imvk::graph::Value &createCopyExtents(imvk::graph::WorkflowBuilder &builder,
-                                      imvk::graph::Value &extentSource,
-                                      VkFormat format) {
+static imvk::graph::Value &
+createCopyExtents(imvk::graph::WorkflowBuilder &builder,
+                  imvk::graph::Value &extentSource, VkFormat format) {
   auto &c1 =
       builder.create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(1)
           ->results()
@@ -168,23 +169,9 @@ imvk::graph::Value &createCopyExtents(imvk::graph::WorkflowBuilder &builder,
       .front();
 }
 
-imvk::graph::Value &renderImage(imvk::graph::WorkflowBuilder &builder,
-                                imvk::graph::Value &image, auto &&descriptors) {
-
-  return builder
-      .create<imvk::graph::RenderPass>(
-          std::array{imvk::graph::colorAttachment(image)},
-          std::forward<decltype(descriptors)>(descriptors),
-          [](const imvk::graph::RenderPass::PassInfo &info,
-             vkw::RenderPassRecorder &rec, const imvk::Frame &frame) {
-            // do nothing.
-          })
-      ->results()
-      .front();
-}
-
-imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx, auto &&passJob,
-                                    auto &&offscreenPassJob) {
+static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
+                                           auto &&passJob,
+                                           auto &&offscreenPassJob) {
   using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
   imvk::graph::Workflow workflow{ctx};
   imvk::graph::WorkflowBuilder builder{workflow, workflow.end()};
@@ -205,7 +192,7 @@ imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx, auto &&passJob,
   imvk::graph::Value &renderedImage =
       builder
           .create<imvk::graph::RenderPass>(
-              std::array{imvk::graph::colorAttachment(image, load),
+              std::array{imvk::graph::colorAttachment(image, clear),
                          imvk::graph::depthAttachment(depthBuffer, clear)},
               std::array{imvk::graph::combinedImageSampler(texture)},
               std::forward<decltype(passJob)>(passJob))
@@ -243,22 +230,23 @@ int app() try {
   imvk::examples::ShaderLoaderCreateInfo shaderLoaderCI{.shaderDirectory =
                                                             "assets/shaders"};
   imvk::examples::ShaderLoader shaderLoader{graphicsEngine, shaderLoaderCI};
+  imvk::examples::GUI gui{window, graphicsEngine, shaderLoader};
   auto copyEngine = imvk::CopyEngine(imvkContext, imvk::CopyEngineCreateInfo{});
 
   auto geometryLayout = imvk::StageLayout<imvk::examples::GeometryStage>(
-      graphicsEngine, graphicsEngine, shaderLoader, "box",
+      graphicsEngine, shaderLoader, "box",
       std::make_unique<
           vkw::VertexInputStateCreateInfo<vkw::per_vertex<VertexInfo, 0>>>());
   auto projectionLayout = imvk::StageLayout<imvk::examples::ProjectionStage>(
-      graphicsEngine, graphicsEngine, shaderLoader, "identity");
+      graphicsEngine, shaderLoader, "identity");
   auto materialLayout = imvk::StageLayout<imvk::examples::MaterialStage>(
-      graphicsEngine, graphicsEngine, shaderLoader, "textured",
+      graphicsEngine, shaderLoader, "textured",
       vkw::RasterizationStateCreateInfo{});
   auto materialLayout2 = imvk::StageLayout<imvk::examples::MaterialStage>(
-      graphicsEngine, graphicsEngine, shaderLoader, "textured2",
+      graphicsEngine, shaderLoader, "textured2",
       vkw::RasterizationStateCreateInfo{});
   auto lightingLayout = imvk::StageLayout<imvk::examples::LightingStage>(
-      graphicsEngine, graphicsEngine, shaderLoader, "identity");
+      graphicsEngine, shaderLoader, "identity");
 
   auto pipelinePool = imvk::GraphicsPipelinePool<
       imvk::graph::RenderPass::PipeHook, imvk::examples::GeometryStage,
@@ -374,6 +362,8 @@ int app() try {
     auto &anotherBuffer = anotherVertices->use(frame);
     commands.bindVertexBuffer(anotherBuffer, 0, 0);
     commands.draw(anotherBuffer.size(), 1u);
+
+    gui.draw(pipelineManager, commands, frame);
     updateCowVertices();
   };
   auto offscreenJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
@@ -410,6 +400,7 @@ int app() try {
       allocLogger.stamp(10000);
     }
     graphicsEngine.submitFrame([&](const imvk::Frame &frame) {
+      gui.gui([&]() { ImGui::ShowDemoWindow(); });
       auto &cb = commands->use(frame);
       vkw::BufferRecorder recorder{cb,
                                    VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};

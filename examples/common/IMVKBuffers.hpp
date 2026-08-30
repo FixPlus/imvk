@@ -142,4 +142,15 @@ public:
             std::forward<decltype(args)>(args)...) {}
 };
 
+template <VkIndexType itype, imvk::fon_type PType>
+class IndexBuffer
+    : public imvk::FONodeView<BufferImpl<vkw::vkr_index_type<itype>, PType,
+                                         vkw::IndexBuffer<itype>>> {
+public:
+  IndexBuffer(auto &&...args)
+      : imvk::FONodeView<BufferImpl<vkw::vkr_index_type<itype>, PType,
+                                    vkw::IndexBuffer<itype>>>(
+            std::forward<decltype(args)>(args)...) {}
+};
+
 } // namespace imvk::examples

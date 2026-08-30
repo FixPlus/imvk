@@ -4,7 +4,7 @@
 namespace imvk::examples {
 
 GeometryStage::GeometryStage(
-    GraphicsEngine &engine, ShaderLoader &shaderFactory,
+    FramedEngine &engine, ShaderLoader &shaderFactory,
     std::string_view shaderName,
     std::unique_ptr<vkw::VertexInputStateCreateInfoBase> vertexState)
     : GraphicsPipelineStage(
@@ -29,7 +29,7 @@ void GeometryStage::amendCreateInfo(
     info.addVertexInputState(*m_vertexState);
 }
 
-ProjectionStage::ProjectionStage(GraphicsEngine &engine,
+ProjectionStage::ProjectionStage(FramedEngine &engine,
                                  ShaderLoader &shaderFactory,
                                  std::string_view shaderName)
     : GraphicsPipelineStage(engine, [&]() {
@@ -43,7 +43,7 @@ ProjectionStage::ProjectionStage(GraphicsEngine &engine,
         return desc;
       }()) {}
 MaterialStage::MaterialStage(
-    GraphicsEngine &engine, ShaderLoader &shaderFactory,
+    FramedEngine &engine, ShaderLoader &shaderFactory,
     std::string_view shaderName,
     vkw::RasterizationStateCreateInfo rasterization,
     std::optional<vkw::DepthTestStateCreateInfo> depthTest)
@@ -69,7 +69,7 @@ void MaterialStage::amendCreateInfo(
 }
 
 LightingStage::LightingStage(
-    GraphicsEngine &engine, ShaderLoader &shaderFactory,
+    FramedEngine &engine, ShaderLoader &shaderFactory,
     std::string_view shaderName,
     std::span<const VkPipelineColorBlendAttachmentState> blends)
     : GraphicsPipelineStage(engine, [&]() {

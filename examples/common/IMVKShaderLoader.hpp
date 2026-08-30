@@ -13,8 +13,7 @@ struct ShaderLoaderCreateInfo {
   std::filesystem::path shaderDirectory;
 };
 
-// Just loads a shader from file in specified directory. Does not
-// cache them currently.
+// Just loads a shader from file in specified directory.
 class ShaderLoader final {
 public:
   ShaderLoader(FramedEngine &engine, const ShaderLoaderCreateInfo &CI);

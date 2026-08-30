@@ -149,6 +149,13 @@ vkw::Image<vkw::COLOR, vkw::I2D>
 Texture::load(FramedEngine &engine, CopyEngine &ce,
               const std::filesystem::path &path) {
   auto imageInfo = readImageFile(path);
+  return load(engine, ce, imageInfo.data, imageInfo.width, imageInfo.height);
+}
+
+vkw::Image<vkw::COLOR, vkw::I2D>
+Texture::load(FramedEngine &engine, CopyEngine &ce,
+              std::span<const unsigned char> data, unsigned width,
+              unsigned height) {
   VmaAllocationCreateInfo allocInfo{};
 
   auto &device = ce.context().device();
@@ -159,13 +166,12 @@ Texture::load(FramedEngine &engine, CopyEngine &ce,
 
   auto ret = vkw::Image<vkw::COLOR, vkw::I2D>(
       ce.context().getDeviceAllocator(), allocInfo, VK_FORMAT_R8G8B8A8_UNORM,
-      static_cast<uint32_t>(imageInfo.width),
-      static_cast<uint32_t>(imageInfo.height), 1, 1, 1,
+      static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1, 1, 1,
       VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-  auto copyFuture = ce.copy(std::make_unique<ImageInit>(
-      vkw::StagingBuffer<unsigned char>(ce.context().getDeviceAllocator(),
-                                        imageInfo.data),
-      ret));
+  auto copyFuture = ce.copy(
+      std::make_unique<ImageInit>(vkw::StagingBuffer<unsigned char>(
+                                      ce.context().getDeviceAllocator(), data),
+                                  ret));
   copyFuture.wait();
   return ret;
 }

@@ -17,8 +17,7 @@ struct GraphicsPipelineTraits {
 class GraphicsPipelineStage : public Stage {
 public:
   using PipelineTraits = GraphicsPipelineTraits;
-  GraphicsPipelineStage(GraphicsEngine &engine,
-                        Stage::Description &&description)
+  GraphicsPipelineStage(FramedEngine &engine, Stage::Description &&description)
       : Stage(engine, std::move(description)) {}
 
   virtual bool isProvoking() const { return false; }
@@ -71,6 +70,11 @@ public:
           (bindDescriptors(sets, layout), ...);
         },
         m_sets);
+  }
+
+  const vkw::PipelineLayout &currentLayout() const {
+    assert(m_boundPipeline);
+    return m_boundPipeline.layout()->use(m_frame);
   }
 
 private:
