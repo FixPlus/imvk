@@ -124,13 +124,18 @@ class StageSetImpl final : public FONode<char, fon_type::swap, StageSetImpl> {
 public:
   StageSetImpl(FramedEngine &engine, auto &&stage, auto &&sets)
       : FONode<char, fon_type::swap, StageSetImpl>(engine, [&]() {
+          assert(std::ranges::size(stage.sets()) == std::ranges::size(sets) &&
+                 "stage set created with wrong number of sets");
           FOUses uses(std::forward<decltype(stage)>(stage));
           uses.addUses(std::forward<decltype(sets)>(sets));
           return uses;
         }()) {}
   StageSetImpl(FramedEngine &engine, auto &&stage)
-      : FONode<char, fon_type::swap, StageSetImpl>(
-            engine, FOUses{std::forward<decltype(stage)>(stage)}) {}
+      : FONode<char, fon_type::swap, StageSetImpl>(engine, [&]() {
+          assert(std::ranges::size(stage.sets()) == 0 &&
+                 "stage set created with wrong number of sets");
+          return FOUses(std::forward<decltype(stage)>(stage));
+        }()) {}
   char constructNew(FramedEngine &engine, FrameID frame) { return 0; }
   void onUseAction(const Frame &frame, char &obj) {
     // no action required.

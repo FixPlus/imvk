@@ -9,12 +9,11 @@ layout(location = 3) in vec3 inWorldNormal;
 layout(location = 4) in vec3 inViewPos;
 
 layout(set = 3, binding = 0) uniform sampler2D myTex;
-layout(set = 0, binding = 0) uniform sampler2D myTex2;
+// layout(set = 3, binding = 1) uniform sampler2D myTex2;
 
 SurfaceInfo Material() {
   SurfaceInfo ret;
-  ret.albedo = inColor * 0.2 + vec4(texture(myTex, inUVW.rg)) * 0.4 +
-               vec4(texture(myTex2, inUVW.rg / 2)) * 0.4;
+  ret.albedo = inColor * 0.2 + vec4(texture(myTex, inUVW.rg)) * 0.8;
   ret.cameraOffset = inViewPos;
   ret.normal = inWorldNormal;
   return ret;

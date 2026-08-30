@@ -266,7 +266,9 @@ inline Attachment inputAttachment(Value &image,
 
 Node::Def attachmentDef(const Attachment &);
 
-Node::Use combinedImageSampler(Value &image);
+Node::Use combinedImageSampler(
+    Value &image,
+    boost::compat::move_only_function<void(Descriptor)> onMaterialization);
 
 class RenderPass : public Node {
 public:
@@ -290,6 +292,7 @@ public:
   struct PassInfo {
     StageLayout<PipeHook> passStage;
     StageSet<PipeHook> set;
+    boost::container::small_vector<Descriptor, 2> descriptors;
     PassInfo(RenderPass &pass, MaterializationContext &ctx,
              unsigned firstDescriptor);
   };

@@ -103,6 +103,17 @@ public:
     // nothing to do for now.
   }
 
+  template <typename Descriptor>
+  void replaceDescriptor(Descriptor &&desc, unsigned index) {
+    auto foundBinding =
+        std::ranges::find_if(m_bindings, [index](auto &&binding) {
+          return binding.second == index;
+        });
+    assert(foundBinding != m_bindings.end());
+    foundBinding->first = std::remove_cvref_t<Descriptor>::descriptorWrite;
+    replaceUseBy(index + 1, std::forward<Descriptor>(desc));
+  }
+
   DescriptorPool::SetHandle constructNew(FramedEngine &engine, FrameID id);
 
 private:
@@ -119,6 +130,58 @@ public:
   DescriptorSet(auto &&...args)
       : FONodeView<DescriptorSetImpl>(std::forward<decltype(args)>(args)...) {}
   DescriptorPool pool() const { return (*this)->getUse<DescriptorPool>(0); }
+
+  template <typename Descriptor>
+  void replaceDescriptor(Descriptor &&desc, unsigned index) {
+    static_cast<DescriptorSetImpl &>(**this).replaceDescriptor(
+        std::forward<Descriptor>(desc), index);
+  }
+};
+
+class DescriptorImpl : public FONode<DescriptorSetImpl::DescriptorFun,
+                                     fon_type::cow, DescriptorImpl> {
+public:
+  template <typename Descriptor>
+  DescriptorImpl(FramedEngine &engine, Descriptor &&desc)
+      : FONode<DescriptorSetImpl::DescriptorFun, fon_type::cow, DescriptorImpl>(
+            engine, &std::remove_cvref_t<Descriptor>::descriptorWrite,
+            FOUses{desc}),
+        m_fun(&std::remove_cvref_t<Descriptor>::descriptorWrite) {}
+
+  DescriptorSetImpl::DescriptorFun constructNew(FramedEngine &engine) {
+    return m_fun;
+  }
+  DescriptorSetImpl::DescriptorFun m_fun;
+};
+
+class NullDescriptorImpl
+    : public FONode<char, fon_type::mut, NullDescriptorImpl> {
+public:
+  NullDescriptorImpl(FramedEngine &engine)
+      : FONode<char, fon_type::mut, NullDescriptorImpl>(engine, 0) {}
+};
+
+class NullDescriptor : public FONodeView<NullDescriptorImpl> {
+public:
+  NullDescriptor(auto &&...args)
+      : FONodeView<NullDescriptorImpl>(std::forward<decltype(args)>(args)...) {}
+
+  static void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
+                              FONodeBase &obj, unsigned binding) {
+    assert(0 && "tried to bind null descriptor");
+  }
+};
+
+// Type erased descriptor.
+class Descriptor : public FONodeView<DescriptorImpl> {
+public:
+  Descriptor(auto &&...args)
+      : FONodeView<DescriptorImpl>(std::forward<decltype(args)>(args)...) {}
+  static void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
+                              FONodeBase &obj, unsigned binding) {
+    auto &self = static_cast<DescriptorImpl &>(obj);
+    std::invoke(self.get(), frame, set, self.getUseRaw(0), binding);
+  }
 };
 
 class DescriptorSetBuilder {

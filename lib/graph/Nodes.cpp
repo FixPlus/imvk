@@ -319,8 +319,11 @@ Node::Def attachmentDef(const Attachment &a) {
   return Node::Def(&a.first->type(), ret);
 }
 
-Node::Use combinedImageSampler(Value &image) {
-  return Node::Use(&image, new ImageDescriptorUseInfo());
+Node::Use combinedImageSampler(
+    Value &image,
+    boost::compat::move_only_function<void(Descriptor)> onMaterialization) {
+  return Node::Use(&image,
+                   new ImageDescriptorUseInfo(std::move(onMaterialization)));
 }
 
 const AttributesBase *Copy<ImageTy>::getAttributes(
@@ -596,18 +599,18 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
 RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
                                unsigned firstDescriptor)
     : passStage(ctx.engine(), pass, ctx, firstDescriptor),
-      set([&]() -> StageSet<PipeHook> {
-        StageSetBuilder setBuilder{ctx.engine(), passStage};
-        DescriptorSetBuilder &builder = setBuilder.addDescriptorSet(0);
-        for (auto &&[index, use] : pass.uses() |
-                                       std::views::drop(firstDescriptor) |
-                                       std::views::enumerate) {
-          auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
-          auto view = ctx.get<MatImageView>(use.value());
-          builder.addDescriptor(ImageSampledAdaptor(ctx.engine(), view), index);
-        }
-        return setBuilder;
-      }()) {}
+      set(ctx.engine(), passStage) {
+  std::ranges::transform(
+      pass.uses() | std::views::drop(firstDescriptor),
+      std::back_inserter(descriptors), [&](auto &&use) {
+        auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
+        auto view = ctx.get<MatImageView>(use.value());
+        auto ret =
+            Descriptor{ctx.engine(), ImageSampledAdaptor(ctx.engine(), view)};
+        std::invoke(info.onMaterialization, ret);
+        return ret;
+      });
+}
 
 bool Present::materialize(MaterializationContext &ctx) {
   // nothing to materialize for now.
@@ -622,28 +625,7 @@ RenderPass::PipeHook::initCreateInfo(const vkw::PipelineLayout &layout) const {
 RenderPass::PipeHook::PipeHook(FramedEngine &e, RenderPass &pass,
                                MaterializationContext &ctx,
                                unsigned firstDescriptor)
-    : GraphicsPipelineStage(
-          ctx.engine(),
-          [&]() {
-            Stage::Description ret{};
-            boost::container::small_vector<vkw::DescriptorSetLayoutBinding, 2>
-                bindings;
-            auto counter = 0;
-            for (auto &&use : pass.uses() | std::views::drop(firstDescriptor)) {
-              auto &info =
-                  static_cast<const ImageDescriptorUseInfo &>(*use.info());
-              auto binding = info.descriptorInfo();
-              binding.binding = counter++;
-              bindings.push_back(binding);
-            }
-            ret.sets.emplace_back(Stage::Description::ExternalSet{
-                0,
-                vkw::DescriptorSetLayout{ctx.engine().context().device(),
-                                         bindings},
-                static_cast<unsigned>(ctx.engine().getFIFCount())});
-            return ret;
-          }()),
-      m_info([&]() {
+    : GraphicsPipelineStage(ctx.engine(), Stage::Description{}), m_info([&]() {
         vkw::RenderingFormatInfo info;
         for (auto &&use : pass.uses() | std::views::take(firstDescriptor)) {
           auto kind =

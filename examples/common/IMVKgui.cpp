@@ -74,7 +74,7 @@ void GUI::m_createFontTexture(ImFontAtlas &atlas) {
                                         std::span<const unsigned char>(
                                             fontData, texWidth * texHeight * 4),
                                         texWidth, texHeight)};
-  atlas.SetTexID(addImage(SampledView{m_engine, std::move(image)}));
+  atlas.SetTexID(addImage(SampledView{m_engine, std::move(image)}).first);
 }
 
 StageSet<MaterialStage> GUI::m_getSetForTex(ImTextureID id) {

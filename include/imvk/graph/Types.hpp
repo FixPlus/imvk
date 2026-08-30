@@ -1,6 +1,7 @@
 #pragma once
 
 #include "imvk/graph/Node.hpp"
+#include <boost/compat/move_only_function.hpp>
 #include <vkw/DescriptorSet.hpp>
 
 #include <boost/container_hash/hash.hpp>
@@ -12,6 +13,9 @@
 inline std::ostream &operator<<(std::ostream &os, VkExtent3D extents) {
   return os << "[ " << extents.width << ", " << extents.height << ", "
             << extents.depth << " ]";
+}
+namespace imvk {
+class Descriptor;
 }
 namespace imvk::graph {
 class ImageTy : public Type {
@@ -76,8 +80,10 @@ public:
 
 class ImageDescriptorUseInfo : public ImageUseInfo {
 public:
-  ImageDescriptorUseInfo();
+  ImageDescriptorUseInfo(
+      boost::compat::move_only_function<void(Descriptor)> callback);
   vkw::DescriptorSetLayoutBinding descriptorInfo() const;
+  mutable boost::compat::move_only_function<void(Descriptor)> onMaterialization;
 };
 
 class ImageDefInfo : public DefInfo {

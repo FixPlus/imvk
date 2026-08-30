@@ -14,11 +14,13 @@ public:
   GUI(Window &window, GraphicsEngine &engine, ShaderLoader &loader);
 
   template <typename ImageDescriptor>
-  ImTextureID addImage(ImageDescriptor &&image) {
+  std::pair<ImTextureID, StageSet<MaterialStage>>
+  addImage(ImageDescriptor &&image) {
     StageSetBuilder<MaterialStage> builder{m_engine, m_materialLayout};
     builder.addDescriptorSet(/* set id */ 3)
         .addDescriptor(std::forward<ImageDescriptor>(image), /* binding id*/ 0);
-    return m_toTexId(m_images.emplace_back(std::move(builder)));
+    auto ret = m_images.emplace_back(std::move(builder));
+    return std::make_pair(m_toTexId(ret), ret);
   }
 
   void gui(boost::compat::function_ref<void(void)> recorder);

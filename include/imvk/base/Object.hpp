@@ -149,6 +149,18 @@ public:
                         [](auto &&use) -> decltype(auto) { return *use.ref; });
   }
 
+  void replaceUseBy(size_t useIndex, FONodeRef another) {
+    auto &use = m_uses.at(useIndex);
+    auto tmpPrev = use.prev;
+    if (use.prev)
+      use.prev->next = use.next;
+    if (use.next)
+      use.next->prev = tmpPrev;
+    use.ref = another;
+    use.ref->addUser(&use);
+    onUseReplace(useIndex);
+  }
+
   template <typename T> T getUse(size_t index) const {
     return T{static_cast<typename T::BaseNode *>(&*m_uses.at(index).ref)};
   }
@@ -236,6 +248,7 @@ protected:
   virtual void onUse(const Frame &frame) = 0;
   virtual bool isUsed(const Frame &frame) const = 0;
   virtual void markUsed(const Frame &frame) = 0;
+  virtual void onUseReplace(size_t index) {}
   void unlink() {
     assert(m_firstUser.next == nullptr);
     for (auto &&use : m_uses) {
@@ -304,6 +317,10 @@ protected:
   void earlyUse(const Frame &frame) override {
     if (destroyed)
       construct();
+  }
+  void onUseReplace(size_t index) override {
+    if (!destroyed)
+      destroy();
   }
 
 private:

@@ -169,9 +169,33 @@ createCopyExtents(imvk::graph::WorkflowBuilder &builder,
       .front();
 }
 
+class MySampleWidget {
+public:
+  MySampleWidget(imvk::GraphicsEngine &engine, imvk::examples::GUI &ui) {
+    std::tie(m_imageId, m_image) = ui.addImage(imvk::NullDescriptor{engine});
+  }
+
+  void onGui(imvk::examples::Window &w) {
+    ImGui::SetNextWindowSize(ImVec2(0, 0));
+    ImGui::Begin("offscreen");
+    ImGui::Text("fps: %.2f", w.clock().fps());
+    ImGui::Image(m_imageId, ImVec2(300, 300));
+    ImGui::End();
+  }
+
+  void updateImage(imvk::Descriptor desc) {
+    m_image.getSet(3).replaceDescriptor(std::move(desc), /* binding */ 0);
+  }
+
+private:
+  ImTextureID m_imageId;
+  imvk::StageSet<imvk::examples::MaterialStage> m_image;
+};
+
 static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
                                            auto &&passJob,
-                                           auto &&offscreenPassJob) {
+                                           auto &&offscreenPassJob,
+                                           MySampleWidget &offscreenWidget) {
   using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
   imvk::graph::Workflow workflow{ctx};
   imvk::graph::WorkflowBuilder builder{workflow, workflow.end()};
@@ -194,7 +218,11 @@ static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
           .create<imvk::graph::RenderPass>(
               std::array{imvk::graph::colorAttachment(image, clear),
                          imvk::graph::depthAttachment(depthBuffer, clear)},
-              std::array{imvk::graph::combinedImageSampler(texture)},
+              std::array{imvk::graph::combinedImageSampler(
+                  texture,
+                  [&](imvk::Descriptor desc) {
+                    offscreenWidget.updateImage(desc);
+                  })},
               std::forward<decltype(passJob)>(passJob))
           ->results()
           .front();
@@ -231,6 +259,7 @@ int app() try {
                                                             "assets/shaders"};
   imvk::examples::ShaderLoader shaderLoader{graphicsEngine, shaderLoaderCI};
   imvk::examples::GUI gui{window, graphicsEngine, shaderLoader};
+  MySampleWidget widget{graphicsEngine, gui};
   auto copyEngine = imvk::CopyEngine(imvkContext, imvk::CopyEngineCreateInfo{});
 
   auto geometryLayout = imvk::StageLayout<imvk::examples::GeometryStage>(
@@ -382,7 +411,7 @@ int app() try {
     commands.draw(vertexBuffer.size(), 1u);
   };
   imvk::graph::Context graphCtx{};
-  auto wf = basicWorkflow(graphCtx, passJob, offscreenJob);
+  auto wf = basicWorkflow(graphCtx, passJob, offscreenJob, widget);
   std::cout << "Pre-materialization workflow:" << std::endl;
   std::cout << wf << std::endl;
   imvk::graph::MaterializationContext matCtx{graphicsEngine, wf};
@@ -395,12 +424,13 @@ int app() try {
   while (!window.shouldClose()) {
     window.pollEvents();
     if (window.clock().totalFrames() % 10000 == 0u) {
-      std::cout << "fps: " << window.clock().fps() << std::endl;
-      std::cout << "nodes: " << graphicsEngine.totalNodeCount() << std::endl;
       allocLogger.stamp(10000);
     }
     graphicsEngine.submitFrame([&](const imvk::Frame &frame) {
-      gui.gui([&]() { ImGui::ShowDemoWindow(); });
+      gui.gui([&]() {
+        ImGui::ShowDemoWindow();
+        widget.onGui(window);
+      });
       auto &cb = commands->use(frame);
       vkw::BufferRecorder recorder{cb,
                                    VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
