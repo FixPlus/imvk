@@ -47,22 +47,26 @@ class LightingStage : public imvk::GraphicsPipelineStage {
 public:
   LightingStage(FramedEngine &engine, ShaderLoader &shaderFactory,
                 std::string_view shaderName,
+                const vkw::RenderingFormatInfo &renderingInfo,
                 std::span<const VkPipelineColorBlendAttachmentState> = {});
+  bool isProvoking() const override { return true; }
+
+  vkw::GraphicsPipelineCreateInfo
+  initCreateInfo(const vkw::PipelineLayout &layout) const override;
 
   void amendCreateInfo(vkw::GraphicsPipelineCreateInfo &info) const override;
 
 private:
+  vkw::RenderingFormatInfo m_renderingInfo;
   boost::container::small_vector<VkPipelineColorBlendAttachmentState, 2>
       m_blends;
 };
 
 using PipelinePool = imvk::GraphicsPipelinePool<
-    imvk::graph::RenderPass::PipeHook, imvk::examples::GeometryStage,
-    imvk::examples::ProjectionStage, imvk::examples::MaterialStage,
-    imvk::examples::LightingStage>;
+    imvk::examples::GeometryStage, imvk::examples::ProjectionStage,
+    imvk::examples::MaterialStage, imvk::examples::LightingStage>;
 using PipelineManager = imvk::GraphicsPipelineManager<
-    imvk::graph::RenderPass::PipeHook, imvk::examples::GeometryStage,
-    imvk::examples::ProjectionStage, imvk::examples::MaterialStage,
-    imvk::examples::LightingStage>;
+    imvk::examples::GeometryStage, imvk::examples::ProjectionStage,
+    imvk::examples::MaterialStage, imvk::examples::LightingStage>;
 
 } // namespace imvk::examples

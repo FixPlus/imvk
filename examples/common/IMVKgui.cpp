@@ -11,7 +11,7 @@ namespace imvk::examples {
 
 GUI::GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
          ShaderLoader &loader)
-    : m_engine(engine), m_ce(ce), m_window(window),
+    : m_engine(engine), m_ce(ce), m_sl(loader), m_window(window),
       m_ctx(ImGui::CreateContext()), m_geometry([&]() {
         StageLayout<GeometryStage> layout{
             engine, loader, "ui",
@@ -24,23 +24,7 @@ GUI::GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
         return StageSet<ProjectionStage>{engine, layout};
       }()),
       m_materialLayout(engine, loader, "ui",
-                       vkw::RasterizationStateCreateInfo{}),
-      m_lighting([&]() {
-        VkPipelineColorBlendAttachmentState state{};
-        state.blendEnable = VK_TRUE;
-        state.colorWriteMask =
-            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        state.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        state.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        state.colorBlendOp = VK_BLEND_OP_ADD;
-        state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        state.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        state.alphaBlendOp = VK_BLEND_OP_ADD;
-        StageLayout<LightingStage> layout{engine, loader, "identity",
-                                          std::array{state}};
-        return StageSet<LightingStage>(engine, layout);
-      }()) {
+                       vkw::RasterizationStateCreateInfo{}) {
 
   ImGui_ImplGlfw_InitForOther(window.rawHandle(), /*install callbacks*/ true);
 
@@ -48,6 +32,22 @@ GUI::GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
   IO.BackendRendererName = "imgui_impl_imvk";
   IO.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
   IO.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+}
+
+void GUI::updateRenderingInfo(const vkw::RenderingFormatInfo &info) {
+  VkPipelineColorBlendAttachmentState state{};
+  state.blendEnable = VK_TRUE;
+  state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  state.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+  state.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  state.colorBlendOp = VK_BLEND_OP_ADD;
+  state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  state.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  state.alphaBlendOp = VK_BLEND_OP_ADD;
+  StageLayout<LightingStage> layout{m_engine, m_sl, "identity", info,
+                                    std::array{state}};
+  m_lighting = StageSetBuilder{m_engine, std::move(layout)};
 }
 
 void GUI::gui(boost::compat::function_ref<void(void)> recorder) {
@@ -121,6 +121,8 @@ void GUI::draw(PipelineManager &pipeMngr, vkw::RenderPassRecorder &commands,
 
   auto boundTexture = io.Fonts->TexRef.GetTexID();
 
+  assert(m_lighting &&
+         "calling gui::draw() without attaching to specific scene");
   pipeMngr.bind(m_geometry, m_proj, m_getSetForTex(boundTexture), m_lighting);
   pipeMngr.bindPipeline();
 

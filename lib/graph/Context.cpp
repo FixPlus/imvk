@@ -5,6 +5,31 @@
 #include "imvk/graph/Attributes.hpp"
 
 namespace imvk::graph {
+
+Workflow::Workflow(const Workflow &another) : m_ctx(another.m_ctx) {
+  std::unordered_map<const Node *, Node *> nodeMap;
+  auto insertionPoint = m_workflow.end();
+  for (auto &&node : another.m_workflow) {
+    auto clonedNode = node.clone(*m_ctx);
+    nodeMap.insert({&node, clonedNode.get()});
+    insert(insertionPoint, clonedNode.release());
+  }
+  for (auto &&node : m_workflow) {
+    for (auto &&use : node.uses()) {
+      auto &val = use.value();
+      auto &origNode = val.node();
+      auto resultNum = val.resultNum();
+      use.replaceBy(&nodeMap.at(&origNode)->results()[resultNum]);
+    }
+  }
+}
+
+Workflow &Workflow::operator=(const Workflow &another) {
+  Workflow tmp{another};
+
+  return *this = std::move(tmp);
+}
+
 void Workflow::dump(std::ostream &os) const {
   auto dumpValue = [&](std::ostream &os, const Value &val, bool dumpType) {
     os << val;

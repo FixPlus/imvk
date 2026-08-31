@@ -69,6 +69,7 @@ inline std::ostream &operator<<(std::ostream &os, const Type &t) {
 
 class UseInfo {
 public:
+  virtual UseInfo *clone() const = 0;
   virtual ~UseInfo() = default;
 };
 
@@ -148,6 +149,7 @@ private:
 
 class DefInfo {
 public:
+  virtual DefInfo *clone() const = 0;
   virtual ~DefInfo() = default;
 };
 
@@ -170,10 +172,15 @@ public:
       oldNext->m_prev = &use;
   }
 
-  Node &node() const { return *m_node; }
+  bool isNull() const { return m_node == nullptr; }
+  Node &node() const {
+    assert(!isNull());
+    return *m_node;
+  }
   const Type &type() const { return *m_type; }
   const DefInfo &info() const { return *m_info; }
   size_t index() const { return m_index; }
+  size_t resultNum() const;
   auto users() const {
     return std::ranges::subrange(UserIterator{m_firstUse.m_next},
                                  UserIterator{});
@@ -216,16 +223,15 @@ public:
   using Use = std::pair<Value *, UseInfo *>;
   using Def = std::pair<const Type *, DefInfo *>;
   static constexpr auto EmptyUses = std::span<Use>{(Use *)nullptr, 0};
+  static constexpr auto EmptyValues = std::span<Value *>{(Value **)nullptr, 0};
   static constexpr auto EmptyResults = std::span<Def>{(Def *)nullptr, 0};
   Node(Context &ctx, auto &&values, auto &&types) {
     m_uses.resize(std::ranges::size(values));
     std::ranges::transform(values, std::begin(m_uses), [this](auto &&p) {
       return graph::Use{this, p.second};
     });
-    auto useIt = std::begin(m_uses);
-    auto valIt = std::begin(values);
-    for (; useIt != std::end(m_uses); ++useIt, ++valIt) {
-      valIt->first->addUse(*useIt);
+    for (auto &&[use, value] : std::views::zip(m_uses, values)) {
+      value.first->addUse(use);
     }
 
     std::ranges::transform(types, std::back_inserter(m_results),
@@ -238,6 +244,27 @@ public:
   std::span<graph::Use> uses() { return m_uses; }
   std::span<Value> results() { return m_results; }
   std::span<const Value> results() const { return m_results; }
+
+  /// @brief creates a clone of this node. the clone references same values as
+  /// original.
+  /// @return handle to allocated clone node.
+  std::unique_ptr<Node> clone(Context &ctx) const {
+    auto ret = doClone();
+    ret->m_uses.resize(m_uses.size());
+    std::ranges::transform(m_uses, ret->m_uses.begin(), [&](auto &&use) {
+      return graph::Use(ret.get(), use.info() ? use.info()->clone() : nullptr);
+    });
+    for (auto &&[use, value] : std::views::zip(ret->m_uses, m_uses)) {
+      value.value().addUse(use);
+    }
+
+    std::ranges::transform(
+        m_results, std::back_inserter(ret->m_results), [&](auto &&result) {
+          return Value{ctx, ret.get(), &result.type(),
+                       &result.info() ? result.info().clone() : nullptr};
+        });
+    return ret;
+  }
   virtual std::string_view name() const = 0;
   virtual void dumpAttributes(std::ostream &os) const = 0;
   virtual bool hasVisibleSideEffects() const = 0;
@@ -247,10 +274,22 @@ public:
   virtual bool materialize(MaterializationContext &ctx) = 0;
   virtual ~Node() = default;
 
+protected:
+  Node() = default;
+  /// @brief create a clone of node with same dynamic type. it is not required
+  /// to create uses and results for this clone as it handled in clone() method.
+  /// @return handle to allocated clone.
+  virtual std::unique_ptr<Node> doClone() const = 0;
+
 private:
   boost::container::small_vector<graph::Use, 2> m_uses;
   boost::container::small_vector<Value, 2> m_results;
 };
+
+inline size_t Value::resultNum() const {
+  return std::distance(const_cast<const Value *>(node().results().data()),
+                       this);
+}
 
 } // namespace imvk::graph
 

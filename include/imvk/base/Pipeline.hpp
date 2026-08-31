@@ -167,7 +167,7 @@ public:
 
 template <std::derived_from<Stage> T> class StageSetBuilder final {
 public:
-  StageSetBuilder(FramedEngine &engine, StageLayout<T> &stage)
+  StageSetBuilder(FramedEngine &engine, const StageLayout<T> &stage)
       : m_engine(engine), m_stage(stage) {
     for (auto &&[setn, _] : stage.sets()) {
       m_setBuilders.insert({setn, std::nullopt});

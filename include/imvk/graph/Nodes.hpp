@@ -34,6 +34,12 @@ public:
   void dumpAttributes(std::ostream &os) const final { os << value; }
   bool hasVisibleSideEffects() const final { return false; }
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  Constant(size_t v) : value(v) {}
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new Constant(value)};
+  }
 };
 
 template <> class Constant<ExtentsTy> : public Node {
@@ -51,6 +57,12 @@ public:
   bool hasVisibleSideEffects() const final { return false; }
 
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  Constant(VkExtent3D v) : value(v) {}
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new Constant(value)};
+  }
 };
 
 template <typename Ty> class Dynamic {};
@@ -70,6 +82,12 @@ public:
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  Dynamic(std::function<size_t()> p) : producer(std::move(p)) {}
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new Dynamic(producer)};
+  }
 };
 
 class MakeImage : public Node {
@@ -89,6 +107,12 @@ public:
   bool hasVisibleSideEffects() const final { return false; }
 
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  MakeImage() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new MakeImage()};
+  }
 };
 
 class AcquireImage : public Node {
@@ -105,6 +129,12 @@ public:
   bool hasVisibleSideEffects() const final { return false; }
 
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  AcquireImage() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new AcquireImage()};
+  }
 };
 
 // Attribute read nodes.
@@ -122,6 +152,12 @@ public:
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  GetExtents() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new GetExtents()};
+  }
 };
 
 #if 0
@@ -166,6 +202,12 @@ public:
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  Clone() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new Clone()};
+  }
 };
 
 template <> class Copy<ImageTy> : public Node {
@@ -204,6 +246,12 @@ public:
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  Copy() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new Copy()};
+  }
 };
 
 template <typename T> class Barrier {};
@@ -239,96 +287,112 @@ public:
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  Barrier() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new Barrier()};
+  }
 };
 
 // Command nodes
 
-using Attachment = std::pair<Value *, ImageAttachmentUseInfo *>;
-
-inline Attachment colorAttachment(Value &image,
-                                  ImageAttachmentUseInfo::LoadOp loadOp) {
-  return std::make_pair(
-      &image,
-      new ImageAttachmentUseInfo{ImageAttachmentUseInfo::Kind::color, loadOp});
-}
-inline Attachment depthAttachment(Value &image,
-                                  ImageAttachmentUseInfo::LoadOp loadOp) {
-  return std::make_pair(
-      &image,
-      new ImageAttachmentUseInfo{ImageAttachmentUseInfo::Kind::depth, loadOp});
-}
-inline Attachment inputAttachment(Value &image,
-                                  ImageAttachmentUseInfo::LoadOp loadOp) {
-  return std::make_pair(
-      &image,
-      new ImageAttachmentUseInfo{ImageAttachmentUseInfo::Kind::input, loadOp});
-}
-
-Node::Def attachmentDef(const Attachment &);
-
-Node::Use combinedImageSampler(
-    Value &image,
-    boost::compat::move_only_function<void(Descriptor)> onMaterialization);
+/// @brief Scene is an interface consumed by render pass node. It must describe
+/// framebuffer and descriptor layout and provide callbacks for materialization
+/// and rendering.
+class Scene {
+public:
+  /// @brief fill in expected layout of framebuffer attachments.
+  /// @param attachmentLayout out vector of attachments.
+  virtual void fillAttachmentLayout(
+      boost::container::small_vector_base<ImageAttachmentUseInfo>
+          &attachmentLayout) const = 0;
+  /// @brief fill in expected layout of descriptors.
+  /// @param descriptorLayout out vector of descriptors.
+  virtual void fillDescriptorLayout(
+      boost::container::small_vector_base<DescriptorUseInfo> &descriptorLayout)
+      const = 0;
+  /// @brief called once during materialization process when rendering format
+  /// info and descriptors are initialized and can be used by scene.
+  /// @param renderingInfo structure to pass to create graphics pipelines for
+  /// this render pass. It matches the layout provided by scene.
+  /// @param descriptors vector of type-erased descriptors matching the layout
+  /// provided by scene.
+  virtual void onMaterialization(const vkw::RenderingFormatInfo &renderingInfo,
+                                 std::span<Descriptor> descriptors) = 0;
+  /// @brief called each frame to record scene draw commands inside pass.
+  /// @param commands recorder for this pass.
+  /// @param frame current frame handle.
+  virtual void onDraw(vkw::RenderPassRecorder &commands,
+                      const Frame &frame) = 0;
+  virtual ~Scene() = default;
+};
 
 class RenderPass : public Node {
 public:
-  class PipeHook : public GraphicsPipelineStage {
-  public:
-    PipeHook(FramedEngine &e, RenderPass &pass, MaterializationContext &ctx,
-             unsigned firstDescriptor);
-    bool isProvoking() const override { return true; }
-
-    vkw::GraphicsPipelineCreateInfo
-    initCreateInfo(const vkw::PipelineLayout &layout) const override;
-
-    void amendCreateInfo(vkw::GraphicsPipelineCreateInfo &info) const override {
-      info.addDynamicState(VK_DYNAMIC_STATE_VIEWPORT);
-      info.addDynamicState(VK_DYNAMIC_STATE_SCISSOR);
-    }
-
-  private:
-    vkw::RenderingFormatInfo m_info;
-  };
-  struct PassInfo {
-    StageLayout<PipeHook> passStage;
-    StageSet<PipeHook> set;
-    boost::container::small_vector<Descriptor, 2> descriptors;
-    PassInfo(RenderPass &pass, MaterializationContext &ctx,
-             unsigned firstDescriptor);
-  };
-  using PassRecord = std::function<void(
-      const PassInfo &, vkw::RenderPassRecorder &, const Frame &)>;
-  RenderPass(Context &ctx, auto &&attachments, auto &&descriptors,
-             PassRecord recorder)
+  /// @brief create render pass node.
+  /// @param ctx graph context handle.
+  /// @param attachments array of image values. must match scene attachment
+  /// layout.
+  /// @param descriptors array of descripted values. must match scene attachment
+  /// layout.
+  /// @param scene a scene handle to render in this pass. it's layout must match
+  /// attachments and descriptor values.
+  RenderPass(Context &ctx, auto &&attachments, auto &&descriptors, Scene &scene)
       : Node(
             ctx,
             [&]() {
+              boost::container::small_vector<ImageAttachmentUseInfo, 2>
+                  attachmentLayout;
+              scene.fillAttachmentLayout(attachmentLayout);
+              if (attachmentLayout.size() != std::ranges::size(attachments))
+                throw std::runtime_error(
+                    "scene has incompatible number of attachments");
               boost::container::small_vector<Node::Use, 4> uses;
               unsigned passIndex = 0;
-              for (auto &&[val, info] : attachments) {
-                if (info->kind != ImageAttachmentUseInfo::Kind::input) {
-                  info->passthrough = passIndex++;
+              for (auto &&[val, info] :
+                   std::views::zip(attachments, attachmentLayout)) {
+                auto *copyInfo = info.clone();
+                if (copyInfo->kind != ImageAttachmentUseInfo::Kind::input) {
+                  copyInfo->passthrough = passIndex++;
                 }
-                uses.emplace_back(val, info);
+                uses.emplace_back(val, copyInfo);
               }
-              std::ranges::copy(descriptors, std::back_inserter(uses));
+              boost::container::small_vector<DescriptorUseInfo, 2>
+                  descriptorLayout;
+              scene.fillDescriptorLayout(descriptorLayout);
+              if (descriptorLayout.size() != std::ranges::size(descriptors))
+                throw std::runtime_error(
+                    "scene has incompatible number of descriptors");
+              for (auto &&[val, info] :
+                   std::views::zip(descriptors, descriptorLayout)) {
+                auto *copyInfo = info.useInfo().clone();
+                uses.emplace_back(val, copyInfo);
+              }
+
               return uses;
             }(),
             [&]() {
+              boost::container::small_vector<ImageAttachmentUseInfo, 2>
+                  attachmentLayout;
+              scene.fillAttachmentLayout(attachmentLayout);
+              if (attachmentLayout.size() != std::ranges::size(attachments))
+                throw std::runtime_error(
+                    "scene has incompatible number of attachments");
               boost::container::small_vector<Node::Def, 4> defs;
               unsigned passIndex = 0;
-              for (auto &&a : attachments) {
-                if (a.second->kind != ImageAttachmentUseInfo::Kind::input) {
-                  static_cast<ImageDefInfo *>(
-                      defs.emplace_back(attachmentDef(a)).second)
-                      ->passthrough = passIndex;
+              for (auto &&[val, info] :
+                   std::views::zip(attachments, attachmentLayout)) {
+                if (info.kind != ImageAttachmentUseInfo::Kind::input) {
+                  auto *def = new ImageDefInfo{info.defFromThis()};
+                  def->passthrough = passIndex;
+                  defs.emplace_back(&val->type(), def);
                 }
                 passIndex++;
               }
               return defs;
             }()),
-        m_record(std::move(recorder)),
-        m_firstDescriptor(std::ranges::size(attachments)) {}
+        m_scene(&scene), m_firstDescriptor(std::ranges::size(attachments)) {}
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
@@ -338,8 +402,13 @@ public:
   bool materialize(MaterializationContext &ctx) final;
 
 private:
-  PassRecord m_record;
+  Scene *m_scene;
   unsigned m_firstDescriptor;
+  RenderPass(Scene &scene, unsigned firstDescriptor)
+      : m_scene(&scene), m_firstDescriptor(firstDescriptor) {}
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new RenderPass(*m_scene, m_firstDescriptor)};
+  }
 };
 
 // Terminator nodes
@@ -363,6 +432,12 @@ public:
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return true; }
   bool materialize(MaterializationContext &ctx) final;
+
+private:
+  Present() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new Present()};
+  }
 };
 
 } // namespace imvk::graph

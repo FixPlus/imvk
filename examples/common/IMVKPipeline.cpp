@@ -70,19 +70,25 @@ void MaterialStage::amendCreateInfo(
 
 LightingStage::LightingStage(
     FramedEngine &engine, ShaderLoader &shaderFactory,
-    std::string_view shaderName,
+    std::string_view shaderName, const vkw::RenderingFormatInfo &renderingInfo,
     std::span<const VkPipelineColorBlendAttachmentState> blends)
-    : GraphicsPipelineStage(engine, [&]() {
-        Stage::Description desc{};
-        desc.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        desc.shaders.emplace_back(shaderFactory.getModule(
-            std::string(shaderName).append(".lt.frag")));
-        desc.sets.emplace_back(
-            Stage::Description::Set{/* set*/ 4, VK_SHADER_STAGE_FRAGMENT_BIT,
-                                    /* sets per pool*/ 10u});
-        return desc;
-      }()) {
+    : GraphicsPipelineStage(engine,
+                            [&]() {
+                              Stage::Description desc{};
+                              desc.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+                              desc.shaders.emplace_back(shaderFactory.getModule(
+                                  std::string(shaderName).append(".lt.frag")));
+                              desc.sets.emplace_back(Stage::Description::Set{
+                                  /* set*/ 4, VK_SHADER_STAGE_FRAGMENT_BIT,
+                                  /* sets per pool*/ 10u});
+                              return desc;
+                            }()),
+      m_renderingInfo(renderingInfo) {
   std::ranges::copy(blends, std::back_inserter(m_blends));
+}
+vkw::GraphicsPipelineCreateInfo
+LightingStage::initCreateInfo(const vkw::PipelineLayout &layout) const {
+  return vkw::GraphicsPipelineCreateInfo{m_renderingInfo, layout};
 }
 
 void LightingStage::amendCreateInfo(
@@ -92,6 +98,8 @@ void LightingStage::amendCreateInfo(
       continue;
     info.addBlendState(state, index);
   }
+  info.addDynamicState(VK_DYNAMIC_STATE_VIEWPORT);
+  info.addDynamicState(VK_DYNAMIC_STATE_SCISSOR);
 }
 
 } // namespace imvk::examples

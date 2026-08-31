@@ -69,21 +69,7 @@ public:
       : access(acc), passthrough(pass) {}
   ImageAccessInfo access;
   std::optional<size_t> passthrough;
-};
-
-class ImageAttachmentUseInfo : public ImageUseInfo {
-public:
-  enum class Kind { color, depth, input } kind;
-  enum class LoadOp { load, clear, dc } load;
-  ImageAttachmentUseInfo(Kind kind, LoadOp load);
-};
-
-class ImageDescriptorUseInfo : public ImageUseInfo {
-public:
-  ImageDescriptorUseInfo(
-      boost::compat::move_only_function<void(Descriptor)> callback);
-  vkw::DescriptorSetLayoutBinding descriptorInfo() const;
-  mutable boost::compat::move_only_function<void(Descriptor)> onMaterialization;
+  ImageUseInfo *clone() const override { return new ImageUseInfo(*this); }
 };
 
 class ImageDefInfo : public DefInfo {
@@ -94,6 +80,40 @@ public:
       : access(acc), passthrough(pass) {}
   ImageAccessInfo access;
   std::optional<size_t> passthrough;
+  ImageDefInfo *clone() const override { return new ImageDefInfo(*this); }
+};
+
+class ImageAttachmentUseInfo : public ImageUseInfo {
+public:
+  enum class Kind { color, depth, input } kind;
+  enum class LoadOp { load, clear, dc } load;
+  ImageAttachmentUseInfo(Kind kind, LoadOp load);
+  ImageAttachmentUseInfo *clone() const override {
+    return new ImageAttachmentUseInfo{*this};
+  }
+  ImageDefInfo defFromThis() const;
+};
+
+class ImageDescriptorUseInfo : public ImageUseInfo {
+public:
+  ImageDescriptorUseInfo();
+  vkw::DescriptorSetLayoutBinding descriptorInfo() const;
+  ImageDescriptorUseInfo *clone() const override {
+    return new ImageDescriptorUseInfo{*this};
+  }
+};
+class DescriptorUseInfo {
+public:
+  DescriptorUseInfo(std::unique_ptr<UseInfo> &&info)
+      : m_useInfo(std::move(info)) {}
+  const UseInfo &useInfo() { return *m_useInfo; }
+
+  static DescriptorUseInfo sampledImage() {
+    return DescriptorUseInfo(std::make_unique<ImageDescriptorUseInfo>());
+  }
+
+private:
+  std::unique_ptr<UseInfo> m_useInfo;
 };
 
 class IntegerScalarTy : public Type {

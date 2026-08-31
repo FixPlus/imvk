@@ -58,8 +58,28 @@ ImageAttachmentUseInfo::ImageAttachmentUseInfo(Kind k, LoadOp l)
         return info;
       }()),
       kind(k), load(l) {}
-ImageDescriptorUseInfo::ImageDescriptorUseInfo(
-    boost::compat::move_only_function<void(Descriptor)> callback)
+
+ImageDefInfo ImageAttachmentUseInfo::defFromThis() const {
+  ImageAccessInfo info{};
+  switch (kind) {
+  case ImageAttachmentUseInfo::Kind::color:
+    info.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    info.stageFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    info.accessFlags = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    break;
+  case ImageAttachmentUseInfo::Kind::depth:
+    info.layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    info.stageFlags = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT; //?
+    info.accessFlags = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                       VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    break;
+  }
+  return ImageDefInfo{info};
+}
+
+ImageDescriptorUseInfo::ImageDescriptorUseInfo()
     : ImageUseInfo([]() {
         ImageAccessInfo info{};
         info.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -68,8 +88,7 @@ ImageDescriptorUseInfo::ImageDescriptorUseInfo(
                           VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
         info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
         return info;
-      }()),
-      onMaterialization(std::move(callback)) {}
+      }()) {}
 vkw::DescriptorSetLayoutBinding ImageDescriptorUseInfo::descriptorInfo() const {
   return vkw::DescriptorSetLayoutBinding{
       0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,

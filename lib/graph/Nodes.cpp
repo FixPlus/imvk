@@ -298,34 +298,6 @@ const AttributesBase *MakeImage::getAttributes(
                                                     levels);
 }
 
-Node::Def attachmentDef(const Attachment &a) {
-  ImageAccessInfo info{};
-  switch (a.second->kind) {
-  case ImageAttachmentUseInfo::Kind::color:
-    info.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    info.stageFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    info.accessFlags = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    break;
-  case ImageAttachmentUseInfo::Kind::depth:
-    info.layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    info.stageFlags = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT; //?
-    info.accessFlags = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                       VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    break;
-  }
-  auto *ret = new ImageDefInfo{info};
-  return Node::Def(&a.first->type(), ret);
-}
-
-Node::Use combinedImageSampler(
-    Value &image,
-    boost::compat::move_only_function<void(Descriptor)> onMaterialization) {
-  return Node::Use(&image,
-                   new ImageDescriptorUseInfo(std::move(onMaterialization)));
-}
-
 const AttributesBase *Copy<ImageTy>::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
@@ -509,7 +481,8 @@ bool Barrier<ImageTy>::materialize(MaterializationContext &ctx) {
 
 bool RenderPass::materialize(MaterializationContext &ctx) {
   vkw::RenderingInfo info{};
-  PassInfo pInfo{*this, ctx, m_firstDescriptor};
+  vkw::RenderingFormatInfo formatInfo{};
+  boost::container::small_vector<Descriptor, 2> descriptors;
 
   boost::container::small_vector<
       std::pair<MatImageView, ImageAttachmentUseInfo::Kind>, 4>
@@ -532,12 +505,17 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
     VkRenderingAttachmentInfo a{};
     a.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     a.imageLayout = useInfo.access.layout;
+    auto &img = *ctx.get<MatImage>(use.value());
+    if (img.node().isDestroyed())
+      img.node().construct();
+    auto format = img.info().format;
     switch (useInfo.kind) {
     case ImageAttachmentUseInfo::Kind::color: {
       a.loadOp = getLoadOp(useInfo.load);
       a.clearValue = VkClearValue{.color = {0.8, 0.5, 0.2, 0.0}};
       a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       info.addColorAttachment(a, false);
+      formatInfo.addColorAttachment(format, false);
       break;
     }
     case ImageAttachmentUseInfo::Kind::depth: {
@@ -547,105 +525,68 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
       a.clearValue = cv;
       a.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
       info.addDepthAttachment(a);
+      formatInfo.addDepthAttachment(format);
       break;
     }
     default:
       break;
     }
   }
+
+  for (auto &&use : uses() | std::views::drop(m_firstDescriptor)) {
+    assert(isa<ImageDescriptorUseInfo>(use.info()));
+    auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
+    auto view = ctx.get<MatImageView>(use.value());
+    descriptors.emplace_back(ctx.engine(),
+                             ImageSampledAdaptor(ctx.engine(), view));
+  }
+  m_scene->onMaterialization(formatInfo, descriptors);
   MatImage refImage = ctx.get<MatImage>(uses().front().value());
 
-  ctx.materializeNode(*this, [info = std::move(info), pInfo = std::move(pInfo),
-                              attachments = std::move(attachments), refImage,
-                              this](vkw::BufferRecorder &recorder,
-                                    const imvk::Frame &frame) mutable {
-    auto extents = refImage->info().extent;
-    auto drawArea = VkRect2D{{0, 0}, {extents.width, extents.height}};
-    info.setRenderArea(drawArea);
-    auto counter = 0u;
-    for (auto &&[view, kind] : attachments) {
-      VkImageView handle = view->useView(frame);
-      switch (kind) {
-      case ImageAttachmentUseInfo::Kind::color:
-        info.setColorView(handle, counter++);
-        break;
-      case ImageAttachmentUseInfo::Kind::depth:
-        info.setDepthView(handle);
-        break;
-      default:
-        break;
-      }
-    }
-    auto renderPass = recorder.beginRenderPass(info);
-    auto &drawAreaExtent = drawArea.extent;
-    VkViewport viewport;
-    viewport.height = drawAreaExtent.height;
-    viewport.width = drawAreaExtent.width;
-    viewport.x = viewport.y = 0.0f;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    VkRect2D scissor;
-    scissor.extent.width = drawAreaExtent.width;
-    scissor.extent.height = drawAreaExtent.height;
-    scissor.offset.x = 0;
-    scissor.offset.y = 0;
-    renderPass.setViewports({&viewport, 1});
-    renderPass.setScissors({&scissor, 1});
-    m_record(pInfo, renderPass, frame);
-  });
-  return false;
-}
-
-RenderPass::PassInfo::PassInfo(RenderPass &pass, MaterializationContext &ctx,
-                               unsigned firstDescriptor)
-    : passStage(ctx.engine(), pass, ctx, firstDescriptor),
-      set(ctx.engine(), passStage) {
-  std::ranges::transform(
-      pass.uses() | std::views::drop(firstDescriptor),
-      std::back_inserter(descriptors), [&](auto &&use) {
-        auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
-        auto view = ctx.get<MatImageView>(use.value());
-        auto ret =
-            Descriptor{ctx.engine(), ImageSampledAdaptor(ctx.engine(), view)};
-        std::invoke(info.onMaterialization, ret);
-        return ret;
+  ctx.materializeNode(
+      *this,
+      [info = std::move(info), attachments = std::move(attachments), refImage,
+       this](vkw::BufferRecorder &recorder, const imvk::Frame &frame) mutable {
+        auto extents = refImage->info().extent;
+        auto drawArea = VkRect2D{{0, 0}, {extents.width, extents.height}};
+        info.setRenderArea(drawArea);
+        auto counter = 0u;
+        for (auto &&[view, kind] : attachments) {
+          VkImageView handle = view->useView(frame);
+          switch (kind) {
+          case ImageAttachmentUseInfo::Kind::color:
+            info.setColorView(handle, counter++);
+            break;
+          case ImageAttachmentUseInfo::Kind::depth:
+            info.setDepthView(handle);
+            break;
+          default:
+            break;
+          }
+        }
+        auto renderPass = recorder.beginRenderPass(info);
+        auto &drawAreaExtent = drawArea.extent;
+        VkViewport viewport;
+        viewport.height = drawAreaExtent.height;
+        viewport.width = drawAreaExtent.width;
+        viewport.x = viewport.y = 0.0f;
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        VkRect2D scissor;
+        scissor.extent.width = drawAreaExtent.width;
+        scissor.extent.height = drawAreaExtent.height;
+        scissor.offset.x = 0;
+        scissor.offset.y = 0;
+        renderPass.setViewports({&viewport, 1});
+        renderPass.setScissors({&scissor, 1});
+        m_scene->onDraw(renderPass, frame);
       });
+  return false;
 }
 
 bool Present::materialize(MaterializationContext &ctx) {
   // nothing to materialize for now.
   return false;
 }
-
-vkw::GraphicsPipelineCreateInfo
-RenderPass::PipeHook::initCreateInfo(const vkw::PipelineLayout &layout) const {
-  return vkw::GraphicsPipelineCreateInfo{m_info, layout};
-}
-
-RenderPass::PipeHook::PipeHook(FramedEngine &e, RenderPass &pass,
-                               MaterializationContext &ctx,
-                               unsigned firstDescriptor)
-    : GraphicsPipelineStage(ctx.engine(), Stage::Description{}), m_info([&]() {
-        vkw::RenderingFormatInfo info;
-        for (auto &&use : pass.uses() | std::views::take(firstDescriptor)) {
-          auto kind =
-              static_cast<const ImageAttachmentUseInfo &>(*use.info()).kind;
-          auto &img = *ctx.get<MatImage>(use.value());
-          if (img.node().isDestroyed())
-            img.node().construct();
-          auto format = img.info().format;
-          switch (kind) {
-          case ImageAttachmentUseInfo::Kind::color:
-            info.addColorAttachment(format, false);
-            break;
-          case ImageAttachmentUseInfo::Kind::depth:
-            info.addDepthAttachment(format);
-            break;
-          default:
-            break;
-          }
-        };
-        return info;
-      }()) {}
 
 } // namespace imvk::graph

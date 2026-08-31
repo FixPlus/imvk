@@ -14,6 +14,8 @@ public:
   GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
       ShaderLoader &loader);
 
+  void updateRenderingInfo(const vkw::RenderingFormatInfo &info);
+
   template <typename ImageDescriptor>
   std::pair<ImTextureID, StageSet<MaterialStage>>
   addImage(ImageDescriptor &&image) {
@@ -53,6 +55,7 @@ private:
 
   GraphicsEngine &m_engine;
   CopyEngine &m_ce;
+  ShaderLoader &m_sl;
   Window &m_window;
   struct ContextDeleter {
     void operator()(ImGuiContext *ctx) const;
@@ -61,7 +64,7 @@ private:
   StageSet<GeometryStage> m_geometry;
   StageSet<ProjectionStage> m_proj;
   StageLayout<MaterialStage> m_materialLayout;
-  StageSet<LightingStage> m_lighting;
+  StageSet<LightingStage> m_lighting = nullptr;
   std::vector<StageSet<MaterialStage>> m_images;
   using VertexBuffer = VertexBuffer<VertexInfo, fon_type::swap_mut>;
   VertexBuffer m_vertices;

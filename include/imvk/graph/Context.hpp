@@ -53,7 +53,13 @@ private:
 
 class Workflow {
 public:
-  Workflow(Context &ctx) : m_ctx(ctx) {}
+  Workflow(Context &ctx) : m_ctx(&ctx) {}
+
+  Workflow(Workflow &&) noexcept = default;
+  Workflow &operator=(Workflow &&) noexcept = default;
+
+  Workflow(const Workflow &another);
+  Workflow &operator=(const Workflow &another);
 
   auto begin() { return std::begin(m_workflow); }
 
@@ -72,10 +78,10 @@ public:
     return m_workflow.insert(point, *node);
   }
   void dump(std::ostream &os) const;
-  Context &context() { return m_ctx; }
+  Context &context() { return *m_ctx; }
 
 private:
-  Context &m_ctx;
+  Context *m_ctx;
   std::vector<std::unique_ptr<Node>> m_nodes;
   boost::intrusive::list<Node> m_workflow;
 };
