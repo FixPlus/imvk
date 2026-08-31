@@ -258,9 +258,9 @@ int app() try {
   imvk::examples::ShaderLoaderCreateInfo shaderLoaderCI{.shaderDirectory =
                                                             "assets/shaders"};
   imvk::examples::ShaderLoader shaderLoader{graphicsEngine, shaderLoaderCI};
-  imvk::examples::GUI gui{window, graphicsEngine, shaderLoader};
-  MySampleWidget widget{graphicsEngine, gui};
   auto copyEngine = imvk::CopyEngine(imvkContext, imvk::CopyEngineCreateInfo{});
+  imvk::examples::GUI gui{window, graphicsEngine, copyEngine, shaderLoader};
+  MySampleWidget widget{graphicsEngine, gui};
 
   auto geometryLayout = imvk::StageLayout<imvk::examples::GeometryStage>(
       graphicsEngine, shaderLoader, "box",

@@ -162,8 +162,6 @@ Texture::load(FramedEngine &engine, CopyEngine &ce,
   allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
   allocInfo.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
-  int transferUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
   auto ret = vkw::Image<vkw::COLOR, vkw::I2D>(
       ce.context().getDeviceAllocator(), allocInfo, VK_FORMAT_R8G8B8A8_UNORM,
       static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1, 1, 1,

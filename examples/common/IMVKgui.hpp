@@ -11,7 +11,8 @@ namespace imvk::examples {
 
 class GUI {
 public:
-  GUI(Window &window, GraphicsEngine &engine, ShaderLoader &loader);
+  GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
+      ShaderLoader &loader);
 
   template <typename ImageDescriptor>
   std::pair<ImTextureID, StageSet<MaterialStage>>
@@ -21,6 +22,14 @@ public:
         .addDescriptor(std::forward<ImageDescriptor>(image), /* binding id*/ 0);
     auto ret = m_images.emplace_back(std::move(builder));
     return std::make_pair(m_toTexId(ret), ret);
+  }
+
+  void removeImage(ImTextureID id) {
+    auto found = std::ranges::find_if(
+        m_images, [id](auto &&image) { return m_toTexId(image) == id; });
+    if (found != m_images.end()) {
+      m_images.erase(found);
+    }
   }
 
   void gui(boost::compat::function_ref<void(void)> recorder);
@@ -36,13 +45,14 @@ private:
         public ImDrawVert {
     VertexInfo(ImDrawVert vert = {}) : ImDrawVert(vert) {}
   };
-  void m_createFontTexture(ImFontAtlas &atlas);
+  void m_actualizeTexture(ImTextureData &tex);
   static ImTextureID m_toTexId(StageSet<MaterialStage> set);
   static StageSet<MaterialStage> m_getSetForTex(ImTextureID id);
 
   void m_fillBuffers(const imvk::Frame &frame);
 
   GraphicsEngine &m_engine;
+  CopyEngine &m_ce;
   Window &m_window;
   struct ContextDeleter {
     void operator()(ImGuiContext *ctx) const;

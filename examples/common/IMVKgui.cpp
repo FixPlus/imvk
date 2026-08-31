@@ -9,9 +9,10 @@
 
 namespace imvk::examples {
 
-GUI::GUI(Window &window, GraphicsEngine &engine, ShaderLoader &loader)
-    : m_engine(engine), m_window(window), m_ctx(ImGui::CreateContext()),
-      m_geometry([&]() {
+GUI::GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
+         ShaderLoader &loader)
+    : m_engine(engine), m_ce(ce), m_window(window),
+      m_ctx(ImGui::CreateContext()), m_geometry([&]() {
         StageLayout<GeometryStage> layout{
             engine, loader, "ui",
             std::make_unique<vkw::VertexInputStateCreateInfo<
@@ -44,7 +45,9 @@ GUI::GUI(Window &window, GraphicsEngine &engine, ShaderLoader &loader)
   ImGui_ImplGlfw_InitForOther(window.rawHandle(), /*install callbacks*/ true);
 
   auto &IO = ImGui::GetIO();
-  m_createFontTexture(*IO.Fonts);
+  IO.BackendRendererName = "imgui_impl_imvk";
+  IO.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
+  IO.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
 }
 
 void GUI::gui(boost::compat::function_ref<void(void)> recorder) {
@@ -63,26 +66,37 @@ void GUI::ContextDeleter::operator()(ImGuiContext *ctx) const {
   ImGui::DestroyContext(ctx);
 }
 
-void GUI::m_createFontTexture(ImFontAtlas &atlas) {
-  unsigned char *fontData;
-  int texWidth, texHeight;
-
-  atlas.GetTexDataAsRGBA32(&fontData, &texWidth, &texHeight);
-  // FIXME: we should use external engine.
-  imvk::CopyEngine ce{m_engine.context(), {}};
-  Texture image{m_engine, Texture::load(m_engine, ce,
-                                        std::span<const unsigned char>(
-                                            fontData, texWidth * texHeight * 4),
-                                        texWidth, texHeight)};
-  atlas.SetTexID(addImage(SampledView{m_engine, std::move(image)}).first);
-}
-
 StageSet<MaterialStage> GUI::m_getSetForTex(ImTextureID id) {
   return StageSet<MaterialStage>{reinterpret_cast<StageSetImpl *>(id)};
 }
 
 ImTextureID GUI::m_toTexId(StageSet<MaterialStage> set) {
   return reinterpret_cast<ImTextureID>(&*set);
+}
+
+void GUI::m_actualizeTexture(ImTextureData &tex) {
+  if (tex.Status == ImTextureStatus_OK)
+    return;
+
+  if (tex.Status == ImTextureStatus_WantCreate ||
+      tex.Status == ImTextureStatus_WantUpdates) {
+    assert(tex.Format == ImTextureFormat_RGBA32);
+    Texture image{m_engine,
+                  Texture::load(m_engine, m_ce,
+                                std::span<const unsigned char>(
+                                    tex.Pixels,
+                                    tex.Width * tex.Height * tex.BytesPerPixel),
+                                tex.Width, tex.Height)};
+    if (tex.GetTexID() != ImTextureID_Invalid)
+      removeImage(tex.GetTexID());
+    tex.SetTexID(addImage(SampledView{m_engine, std::move(image)}).first);
+    tex.SetStatus(ImTextureStatus_OK);
+  }
+
+  if (tex.Status == ImTextureStatus_WantDestroy) {
+    removeImage(tex.GetTexID());
+    tex.SetStatus(ImTextureStatus_Destroyed);
+  }
 }
 
 void GUI::draw(PipelineManager &pipeMngr, vkw::RenderPassRecorder &commands,
@@ -95,6 +109,11 @@ void GUI::draw(PipelineManager &pipeMngr, vkw::RenderPassRecorder &commands,
   if ((!imDrawData) || (imDrawData->CmdListsCount == 0)) {
     return;
   }
+
+  if (imDrawData->Textures != nullptr)
+    for (ImTextureData *tex : *imDrawData->Textures)
+      if (tex->Status != ImTextureStatus_OK)
+        m_actualizeTexture(*tex);
 
   m_fillBuffers(frame);
 
