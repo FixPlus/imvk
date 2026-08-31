@@ -235,7 +235,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.
@@ -303,6 +303,15 @@ int app() try {
   auto anotherVertices = VertexBuffer<VertexInfo, imvk::fon_type::cow>(
       graphicsEngine, copyEngine,
       getVerticesForFrame(0.5, Pos2D{0.3, 0.3}, /* scale */ 0.2f));
+  std::future<vkw::VertexBuffer<VertexInfo>> swapVertices =
+      std::async(std::launch::deferred, [&]() {
+        return imvk::examples::BufferImpl<
+            VertexInfo, imvk::fon_type::cow,
+            vkw::VertexBuffer<VertexInfo>>::create(graphicsEngine, copyEngine,
+                                                   getVerticesForFrame(
+                                                       0.5, Pos2D{0.3, 0.3},
+                                                       /* scale */ 0.5f));
+      });
   auto myUniform = UniformBuffer<MyUniform, imvk::fon_type::swap_mut>(
       graphicsEngine,
       [&](const imvk::Frame &f, vkw::UniformBuffer<MyUniform> &u) {
@@ -322,6 +331,11 @@ int app() try {
       graphicsEngine,
       imvk::examples::Texture::load(graphicsEngine, copyEngine,
                                     imvk::examples::assetsDir() / "image1"));
+  std::future<vkw::Image<vkw::COLOR, vkw::I2D>> swapImage =
+      std::async(std::launch::deferred, [&]() {
+        return imvk::examples::Texture::load(
+            graphicsEngine, copyEngine, imvk::examples::assetsDir() / "image2");
+      });
   auto myTexture2 = imvk::examples::Texture(
       graphicsEngine,
       imvk::examples::Texture::load(graphicsEngine, copyEngine,
@@ -362,15 +376,8 @@ int app() try {
       return;
     auxEven = !auxEven;
     auxCount = 0;
-    anotherVertices->replace(
-        imvk::examples::BufferImpl<VertexInfo, imvk::fon_type::cow,
-                                   vkw::VertexBuffer<VertexInfo>>::
-            create(graphicsEngine, copyEngine,
-                   getVerticesForFrame(0.5, Pos2D{0.3, 0.3},
-                                       /* scale */ auxEven ? 0.5f : 0.2f)));
-    myTexture->replace(imvk::examples::Texture::load(
-        graphicsEngine, copyEngine,
-        imvk::examples::assetsDir() / (auxEven ? "image2" : "image1")));
+    swapVertices = anotherVertices->exchange(swapVertices.get());
+    swapImage = myTexture->exchange(swapImage.get());
   };
   auto passJob = [&](const imvk::graph::RenderPass::PassInfo &pass,
                      vkw::RenderPassRecorder &commands,

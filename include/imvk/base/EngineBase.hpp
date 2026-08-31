@@ -112,6 +112,11 @@ public:
     return new T(*this, std::forward<Args>(args)...);
   }
 
+  /// @brief Fetches next retired frame and sets it in recording state. Calls a
+  /// frameRecord callback on frame and expects either valid submit info or
+  /// null. If valid submit info is returned the frame is submitted otherwise it
+  /// is reset to retired state.
+  /// @param frameRecord callback that returns submit info or null.
   void submitFrame(auto &&frameRecord) {
     auto &nextFrame = getNextFrame();
     auto submitOpt = std::invoke(
@@ -119,10 +124,21 @@ public:
     if (submitOpt && nextFrame.status() == FrameInfo::stat::recd) {
       submit(*std::move(submitOpt), nextFrame);
       postSubmit(nextFrame.frame());
+    } else {
+      nextFrame.reset();
     }
   }
 
+  /// @brief waits for all submitted frames to retire and resets all frames -
+  /// any frames that were in recording state become retired and cannot be used
+  /// for submission.
   void flush();
+
+  /// @brief waits for all submitted frames with ordinal less or equal of given
+  /// to retire. This call will fail if any frame with ordinal less or equal of
+  /// given is not yet submitted.
+  /// @param ordinal to wait for.
+  void waitTill(FrameID ordinal);
 
   ~FramedEngine() override;
 
@@ -328,6 +344,22 @@ private:
     static void waitAll(auto &&frames) {
       auto submitted = frames | std::views::filter([](const FrameInfo &frame) {
                          return frame.m_status == stat::subd;
+                       });
+      auto fences =
+          submitted | std::views::transform(
+                          [](const FrameInfo &frame) -> const vkw::Fence & {
+                            return frame.m_fence;
+                          });
+      if (!std::ranges::empty(fences))
+        vkw::Fence::wait_all(std::begin(fences), std::end(fences));
+      for (auto &&frame : frames)
+        frame.retireIfSignaled();
+    }
+
+    static void waitAllTill(auto &&frames, FrameID ordinal) {
+      auto submitted = frames | std::views::filter([&](const FrameInfo &frame) {
+                         return frame.m_status == stat::subd ||
+                                frame.m_frame.ordinal() <= ordinal;
                        });
       auto fences =
           submitted | std::views::transform(

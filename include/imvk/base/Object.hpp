@@ -480,7 +480,13 @@ public:
       : FOReconstructible(true, std::move(uses)), m_current(std::nullopt),
         m_deleter(parent) {}
 
-  void replace(auto &&...args) noexcept {
+  /// @brief Replaces current object with newly constructed using args. All
+  /// users of this node are destroyed and after that replaced object is moved
+  /// to destruction queue.
+  /// @param args passed to in-place constructor of object T.
+  /// NOTE: only leaf objects may be replaced in this way.
+  void replace(auto &&...args) {
+    assert(std::ranges::empty(uses()) && "cannot replace non-leaf object");
     for (auto &user : users())
       static_cast<FOReconstructible &>(user).destroy();
     if (isDestroyed()) {
@@ -495,6 +501,35 @@ public:
         FObject<T>(std::piecewise_construct,
                    std::forward_as_tuple(std::forward<decltype(args)>(args)...),
                    std::forward_as_tuple(FrameID{0}))));
+  }
+
+  /// @brief Replaces current object with newly constructed using args. In
+  /// contrast to replace() method it does not move object to destruction queue,
+  /// but instead wraps it in future object that waits for all frames this
+  /// object is used in to retire. Received object handle from specified future
+  /// is allowed to be used freely as it is not associated with any engine
+  /// state any more. Notice that future wait operation must be externally
+  /// synchronized with any other engine operation. Also this future should not
+  /// be called before last frame this object was used in is submitted.
+  /// @param args passed to in-place constructor of object T.
+  /// @return future for T object that was replaced.
+  /// NOTE: only leaf objects may be replaced in this way.
+  [[nodiscard]] std::future<T> exchange(auto &&...args) {
+    assert(std::ranges::empty(uses()) && "cannot replace non-leaf object");
+    assert(!isDestroyed());
+    for (auto &user : users())
+      static_cast<FOReconstructible &>(user).destroy();
+    auto oldObj = std::exchange(
+        *m_current,
+        FObject<T>(std::piecewise_construct,
+                   std::forward_as_tuple(std::forward<decltype(args)>(args)...),
+                   std::forward_as_tuple(FrameID{0})));
+    return std::async(
+        std::launch::deferred,
+        [oldObj = std::move(oldObj), &m_deleter = m_deleter]() mutable {
+          m_deleter.waitTill(oldObj.second);
+          return std::move(oldObj.first);
+        });
   }
 
   const T &use(const Frame &frame) {

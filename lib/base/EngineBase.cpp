@@ -32,6 +32,13 @@ void FramedEngine::flush() {
   }
 }
 
+void FramedEngine::waitTill(FrameID ordinal) {
+  if (ordinal >= m_ordinal)
+    throw std::runtime_error(
+        "waitTill() called before submitting required frame");
+  FrameInfo::waitAllTill(m_frames, ordinal);
+}
+
 FramedEngine::FrameInfo &FramedEngine::getNextFrame() {
   FrameInfo::waitAny(m_frames);
   boost::container::small_vector<std::reference_wrapper<FrameInfo>, 3> retired;
