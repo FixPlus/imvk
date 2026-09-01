@@ -1,6 +1,8 @@
 #include "IMVKBuffers.hpp"
 #include "IMVKDevice.hpp"
+#include "IMVKGraphEditor.hpp"
 #include "IMVKPipeline.hpp"
+#include "IMVKScene.hpp"
 #include "IMVKShaderLoader.hpp"
 #include "IMVKTexture.hpp"
 #include "IMVKWindow.hpp"
@@ -221,14 +223,44 @@ static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
   return workflow;
 }
 
-class OffscreenScene : public imvk::graph::Scene {
+static imvk::StageSet<imvk::examples::GeometryStage>
+someCoolGeometry(imvk::GraphicsEngine &graphicsEngine,
+                 imvk::examples::Window &window,
+                 imvk::examples::ShaderLoader &shaderLoader) {
+  auto myUniform = UniformBuffer<MyUniform, imvk::fon_type::swap_mut>(
+      graphicsEngine,
+      [&](const imvk::Frame &f, vkw::UniformBuffer<MyUniform> &u) {
+        MyUniform uniValue;
+        uniValue.vals[0] =
+            std::sin(window.clock().totalTime().count() / 593.0) * 0.5 + 0.5;
+        uniValue.vals[1] =
+            std::cos(window.clock().totalTime().count() / 769.0 + 1.0) * 0.5 +
+            0.5;
+        uniValue.vals[2] =
+            std::sin(window.clock().totalTime().count() / 947.0 + 2.0) * 0.5 +
+            0.5;
+        u.mapped().front() = uniValue;
+        u.flush();
+      });
+
+  auto vsbuilder = imvk::StageSetBuilder{
+      graphicsEngine, imvk::StageLayout<imvk::examples::GeometryStage>(
+                          graphicsEngine, shaderLoader, "box",
+                          std::make_unique<vkw::VertexInputStateCreateInfo<
+                              vkw::per_vertex<VertexInfo, 0>>>())};
+  vsbuilder.addDescriptorSet(1).addDescriptor(myUniform, 0);
+  return vsbuilder;
+}
+
+class OffscreenScene : public imvk::graph::MatScene {
 public:
   OffscreenScene(imvk::GraphicsEngine &ge, imvk::CopyEngine &ce,
                  imvk::examples::ShaderLoader &sl,
                  imvk::examples::PipelinePool &pp,
                  imvk::examples::Window &window,
-                 imvk::StageSet<imvk::examples::GeometryStage> geometry)
-      : m_ge(ge), m_sl(sl), m_pp(pp), m_geometry(std::move(geometry)),
+                 const imvk::graph::Scene::MaterializationInfo &sceneInfo)
+      : m_ge(ge), m_sl(sl), m_pp(pp),
+        m_geometry(someCoolGeometry(ge, window, sl)),
         m_projection(imvk::StageSetBuilder{
             ge, imvk::StageLayout<imvk::examples::ProjectionStage>(
                     ge, sl, "identity")}),
@@ -252,28 +284,28 @@ public:
                                       Pos2D{}, /* scale */ 3.0f),
                   vbuf.mapped().begin());
               vbuf.flush();
-            }) {}
-  void fillAttachmentLayout(
-      boost::container::small_vector_base<imvk::graph::ImageAttachmentUseInfo>
-          &attachmentLayout) const override {
-    using enum imvk::graph::ImageAttachmentUseInfo::Kind;
-    using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
-    attachmentLayout.emplace_back(color, clear);
-  }
-  void fillDescriptorLayout(
-      boost::container::small_vector_base<imvk::graph::DescriptorUseInfo>
-          &descriptorLayout) const override {
-// no descriptors.
-#if 0
-    descriptorLayout.emplace_back(
-        imvk::graph::DescriptorUseInfo::sampledImage());
-#endif
-  }
-  void onMaterialization(const vkw::RenderingFormatInfo &renderingInfo,
-                         std::span<imvk::Descriptor> descriptors) override {
+            }) {
     m_lighting = imvk::StageSetBuilder{
         m_ge, imvk::StageLayout<imvk::examples::LightingStage>(
-                  m_ge, m_sl, "identity", renderingInfo)};
+                  m_ge, m_sl, "identity", sceneInfo.renderingInfo)};
+  }
+  static imvk::graph::Scene get() {
+    imvk::graph::Scene ret{};
+    using enum imvk::graph::ImageAttachmentUseInfo::Kind;
+    using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
+    ret.attachments.emplace_back(color, clear);
+    ret.materialization =
+        [](const imvk::graph::MaterializationEnvironment &envBase,
+           const imvk::graph::Scene::MaterializationInfo &sceneInfo) {
+          assert(isa<imvk::examples::MaterializationEnvironment>(&envBase));
+          auto &env =
+              static_cast<const imvk::examples::MaterializationEnvironment &>(
+                  envBase);
+          return std::make_unique<OffscreenScene>(
+              env.engine(), env.copyEngine(), env.shaderLoader(),
+              env.pipelinePool(), env.window(), sceneInfo);
+        };
+    return ret;
   }
   void onDraw(vkw::RenderPassRecorder &commands,
               const imvk::Frame &frame) override {
@@ -297,80 +329,94 @@ private:
   VertexBuffer<VertexInfo, imvk::fon_type::swap_mut> m_vertices;
 };
 
-class MainScene : public imvk::graph::Scene {
+class MainScene : public imvk::graph::MatScene {
 public:
-  MainScene(imvk::GraphicsEngine &ge, imvk::CopyEngine &ce,
-            imvk::examples::ShaderLoader &sl, imvk::examples::PipelinePool &pp,
-            imvk::examples::Window &window, imvk::examples::GUI &gui,
-            imvk::StageSet<imvk::examples::GeometryStage> geometry)
-      : m_ge(ge), m_sl(sl), m_pp(pp), m_gui(gui), m_offscreenWidget(ge, gui),
-        m_geometry(std::move(geometry)),
+  MainScene(const imvk::examples::MaterializationEnvironment &env,
+            const imvk::graph::Scene::MaterializationInfo &sceneInfo)
+      : m_env(env),
+        m_gui(env.window(), env.engine(), env.copyEngine(), env.shaderLoader()),
+        m_offscreenWidget(env.engine(), m_gui),
+        m_geometry(
+            someCoolGeometry(env.engine(), env.window(), env.shaderLoader())),
         m_projection(imvk::StageSetBuilder{
-            ge, imvk::StageLayout<imvk::examples::ProjectionStage>(
-                    ge, sl, "identity")}),
-        m_materialTexture(ge,
+            env.engine(), imvk::StageLayout<imvk::examples::ProjectionStage>(
+                              env.engine(), env.shaderLoader(), "identity")}),
+        m_materialTexture(env.engine(),
                           imvk::examples::Texture::load(
-                              ge, ce, imvk::examples::assetsDir() / "image1")),
+                              env.engine(), env.copyEngine(),
+                              imvk::examples::assetsDir() / "image1")),
         m_swapTexture(std::async(std::launch::deferred,
                                  [&]() {
                                    return imvk::examples::Texture::load(
-                                       ge, ce,
+                                       env.engine(), env.copyEngine(),
                                        imvk::examples::assetsDir() / "image2");
                                  })),
         m_material([&]() {
           auto layout = imvk::StageLayout<imvk::examples::MaterialStage>(
-              ge, sl, "textured2", vkw::RasterizationStateCreateInfo{});
-          auto builder = imvk::StageSetBuilder{ge, layout};
+              env.engine(), env.shaderLoader(), "textured2",
+              vkw::RasterizationStateCreateInfo{});
+          auto builder = imvk::StageSetBuilder{env.engine(), layout};
           builder.addDescriptorSet(3).addDescriptor(
-              imvk::examples::SampledView(ge, m_materialTexture), 0);
+              imvk::examples::SampledView(env.engine(), m_materialTexture), 0);
           return builder;
         }()),
         m_vertices(
-            ge, 3,
+            env.engine(), 3,
             [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
-              std::ranges::copy(getVerticesForFrame(
-                                    window.clock().totalTime().count() / 1000.0,
-                                    Pos2D{}, /* scale */ 0.75f),
-                                vbuf.mapped().begin());
+              std::ranges::copy(
+                  getVerticesForFrame(env.window().clock().totalTime().count() /
+                                          1000.0,
+                                      Pos2D{}, /* scale */ 0.75f),
+                  vbuf.mapped().begin());
               vbuf.flush();
             }),
         m_anotherVertices(
-            ge, ce,
+            env.engine(), env.copyEngine(),
             getVerticesForFrame(0.5, Pos2D{0.3, 0.3}, /* scale */ 0.2f)),
         m_swapVertices(std::async(std::launch::deferred, [&]() {
           return imvk::examples::BufferImpl<
               VertexInfo, imvk::fon_type::cow,
-              vkw::VertexBuffer<VertexInfo>>::create(ge, ce,
+              vkw::VertexBuffer<VertexInfo>>::create(env.engine(),
+                                                     env.copyEngine(),
                                                      getVerticesForFrame(
                                                          0.5, Pos2D{0.3, 0.3},
                                                          /* scale */ 0.5f));
-        })) {}
-  void fillAttachmentLayout(
-      boost::container::small_vector_base<imvk::graph::ImageAttachmentUseInfo>
-          &attachmentLayout) const override {
+        })) {
+    assert(sceneInfo.descriptors.size() == 1);
+    m_offscreenWidget.updateImage(sceneInfo.descriptors.front());
+    m_gui.updateRenderingInfo(sceneInfo.renderingInfo,
+                              sceneInfo.framebufferInfo);
+    m_lighting = imvk::StageSetBuilder{
+        m_env.engine(), imvk::StageLayout<imvk::examples::LightingStage>(
+                            m_env.engine(), m_env.shaderLoader(), "identity",
+                            sceneInfo.renderingInfo)};
+  }
+  static imvk::graph::Scene get() {
+    imvk::graph::Scene ret{};
     using enum imvk::graph::ImageAttachmentUseInfo::Kind;
     using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
-    attachmentLayout.emplace_back(color, clear);
-    attachmentLayout.emplace_back(depth, clear);
-  }
-  void fillDescriptorLayout(
-      boost::container::small_vector_base<imvk::graph::DescriptorUseInfo>
-          &descriptorLayout) const override {
-    descriptorLayout.emplace_back(
+    ret.attachments.emplace_back(color, clear);
+    ret.attachments.emplace_back(depth, clear);
+    ret.descriptors.emplace_back(
         imvk::graph::DescriptorUseInfo::sampledImage());
-  }
-  void onMaterialization(const vkw::RenderingFormatInfo &renderingInfo,
-                         std::span<imvk::Descriptor> descriptors) override {
-    assert(descriptors.size() == 1);
-    m_offscreenWidget.updateImage(descriptors.front());
-    m_gui.updateRenderingInfo(renderingInfo);
-    m_lighting = imvk::StageSetBuilder{
-        m_ge, imvk::StageLayout<imvk::examples::LightingStage>(
-                  m_ge, m_sl, "identity", renderingInfo)};
+    ret.materialization =
+        [](const imvk::graph::MaterializationEnvironment &envBase,
+           const imvk::graph::Scene::MaterializationInfo &sceneInfo) {
+          assert(isa<imvk::examples::MaterializationEnvironment>(&envBase));
+          auto &env =
+              static_cast<const imvk::examples::MaterializationEnvironment &>(
+                  envBase);
+          return std::make_unique<MainScene>(env, sceneInfo);
+        };
+    return ret;
   }
   void onDraw(vkw::RenderPassRecorder &commands,
               const imvk::Frame &frame) override {
-    imvk::examples::PipelineManager mng{m_pp, commands, frame};
+    m_gui.gui([&]() {
+      ImGui::ShowDemoWindow();
+      m_offscreenWidget.onGui(m_env.window());
+    });
+    imvk::examples::PipelineManager mng{m_env.pipelinePool(), commands, frame};
     mng.bind(m_geometry, m_projection, m_material, m_lighting);
     mng.bindPipeline();
     auto &vertexBuffer = m_vertices->use(frame);
@@ -385,8 +431,6 @@ public:
     m_updateCowVertices();
   }
 
-  auto &widget() { return m_offscreenWidget; }
-
 private:
   void m_updateCowVertices() {
     auxCount++;
@@ -396,10 +440,8 @@ private:
     m_swapVertices = m_anotherVertices->exchange(m_swapVertices.get());
     m_swapTexture = m_materialTexture->exchange(m_swapTexture.get());
   }
-  imvk::GraphicsEngine &m_ge;
-  imvk::examples::ShaderLoader &m_sl;
-  imvk::examples::PipelinePool &m_pp;
-  imvk::examples::GUI &m_gui;
+  const imvk::examples::MaterializationEnvironment &m_env;
+  imvk::examples::GUI m_gui;
   size_t auxCount = 0;
   MySampleWidget m_offscreenWidget;
   imvk::StageSet<imvk::examples::GeometryStage> m_geometry;
@@ -438,59 +480,15 @@ int app() try {
   auto graphicsEngine = imvk::GraphicsEngine(imvkContext, eCi);
 
   // Create shader loader
-  imvk::examples::ShaderLoaderCreateInfo shaderLoaderCI{.shaderDirectory =
-                                                            "assets/shaders"};
-  imvk::examples::ShaderLoader shaderLoader{graphicsEngine, shaderLoaderCI};
-  auto copyEngine = imvk::CopyEngine(imvkContext, imvk::CopyEngineCreateInfo{});
-  imvk::examples::GUI gui{window, graphicsEngine, copyEngine, shaderLoader};
 
-  auto pipelinePool =
-      imvk::examples::PipelinePool{graphicsEngine, /* cache size*/ 10u};
-
-  MyUniform uniValue{};
-  uniValue.vals[0] = 0.5;
-
-  auto myUniform = UniformBuffer<MyUniform, imvk::fon_type::swap_mut>(
-      graphicsEngine,
-      [&](const imvk::Frame &f, vkw::UniformBuffer<MyUniform> &u) {
-        MyUniform uniValue;
-        uniValue.vals[0] =
-            std::sin(window.clock().totalTime().count() / 593.0) * 0.5 + 0.5;
-        uniValue.vals[1] =
-            std::cos(window.clock().totalTime().count() / 769.0 + 1.0) * 0.5 +
-            0.5;
-        uniValue.vals[2] =
-            std::sin(window.clock().totalTime().count() / 947.0 + 2.0) * 0.5 +
-            0.5;
-        u.mapped().front() = uniValue;
-        u.flush();
-      });
-  auto geometrySet = [&]() -> imvk::StageSet<imvk::examples::GeometryStage> {
-    auto vsbuilder = imvk::StageSetBuilder{
-        graphicsEngine, imvk::StageLayout<imvk::examples::GeometryStage>(
-                            graphicsEngine, shaderLoader, "box",
-                            std::make_unique<vkw::VertexInputStateCreateInfo<
-                                vkw::per_vertex<VertexInfo, 0>>>())};
-    vsbuilder.addDescriptorSet(1).addDescriptor(myUniform, 0);
-    return vsbuilder;
-  }();
-  OffscreenScene offscreenScene{graphicsEngine, copyEngine, shaderLoader,
-                                pipelinePool,   window,     geometrySet};
-  MainScene mainScene{graphicsEngine, copyEngine, shaderLoader, pipelinePool,
-                      window,         gui,        geometrySet};
+  auto offscreenScene = OffscreenScene::get();
+  auto mainScene = MainScene::get();
 
   imvk::graph::Context graphCtx{};
   auto iniWf = basicWorkflow(graphCtx, mainScene, offscreenScene);
-  // test if copy works properly.
-  auto wf = iniWf;
-  std::cout << "Ini workflow:" << std::endl;
-  std::cout << iniWf << std::endl;
-  std::cout << "Pre-materialization workflow:" << std::endl;
-  std::cout << wf << std::endl;
-  imvk::graph::MaterializationContext matCtx{graphicsEngine, wf};
-  std::cout << "Post-materialization workflow:" << std::endl;
-  std::cout << wf << std::endl;
-#if 1
+
+  imvk::examples::MaterializationEnvironment matEnv{graphicsEngine, window};
+  imvk::examples::GraphEditor ged{matEnv, std::move(iniWf)};
 
   auto commands = MyCommandBuffer(graphicsEngine);
   //  Main application loop.
@@ -500,20 +498,15 @@ int app() try {
       allocLogger.stamp(10000);
     }
     graphicsEngine.submitFrame([&](const imvk::Frame &frame) {
-      gui.gui([&]() {
-        ImGui::ShowDemoWindow();
-        mainScene.widget().onGui(window);
-      });
       auto &cb = commands->use(frame);
       vkw::BufferRecorder recorder{cb,
                                    VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-      matCtx.run(recorder, frame);
+      ged.onRecord(recorder, frame);
       vkw::SubmitInfo ret{};
       ret.addCommands(cb);
       return ret;
     });
   }
-#endif
 
   return 0;
 } catch (std::runtime_error &e) {

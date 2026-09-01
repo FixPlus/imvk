@@ -9,6 +9,54 @@
 
 namespace imvk::examples {
 
+class GUIPlatform {
+public:
+  virtual void newFrame() = 0;
+  virtual ~GUIPlatform() = default;
+};
+
+namespace {
+
+class GLFWPlatform : public GUIPlatform {
+public:
+  GLFWPlatform(ImGuiContext *ctx, Window &window) : m_ctx(ctx) {
+    ImGui::SetCurrentContext(ctx);
+
+    ImGui_ImplGlfw_InitForOther(window.rawHandle(), /*install callbacks*/ true);
+  }
+
+  void newFrame() override { ImGui_ImplGlfw_NewFrame(); }
+  ~GLFWPlatform() override {
+    ImGui::SetCurrentContext(m_ctx);
+    ImGui_ImplGlfw_Shutdown();
+  }
+
+private:
+  ImGuiContext *m_ctx;
+};
+
+class OffscreenPlatform : public GUIPlatform {
+public:
+  OffscreenPlatform(ImGuiContext *ctx, imvk::graph::FramebufferInfo fb)
+      : m_ctx(ctx), m_fb(fb) {}
+
+  void newFrame() override {
+    auto &io = ImGui::GetIO();
+    if (m_fb->isDestroyed())
+      m_fb->construct();
+    auto fbInfo = m_fb->get();
+    io.DisplaySize = ImVec2(fbInfo.extents.width, fbInfo.extents.height);
+    io.DeltaTime = 0.06;
+  }
+  ~OffscreenPlatform() override = default;
+
+private:
+  ImGuiContext *m_ctx;
+  imvk::graph::FramebufferInfo m_fb;
+};
+
+} // namespace
+
 GUI::GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
          ShaderLoader &loader)
     : m_engine(engine), m_ce(ce), m_sl(loader), m_window(window),
@@ -25,8 +73,7 @@ GUI::GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
       }()),
       m_materialLayout(engine, loader, "ui",
                        vkw::RasterizationStateCreateInfo{}) {
-
-  ImGui_ImplGlfw_InitForOther(window.rawHandle(), /*install callbacks*/ true);
+  ImGui::SetCurrentContext(m_ctx.get());
 
   auto &IO = ImGui::GetIO();
   IO.BackendRendererName = "imgui_impl_imvk";
@@ -34,7 +81,10 @@ GUI::GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
   IO.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
 }
 
-void GUI::updateRenderingInfo(const vkw::RenderingFormatInfo &info) {
+GUI::~GUI() = default;
+
+void GUI::updateRenderingInfo(const vkw::RenderingFormatInfo &info,
+                              const imvk::graph::FramebufferInfo &fbInfo) {
   VkPipelineColorBlendAttachmentState state{};
   state.blendEnable = VK_TRUE;
   state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -48,11 +98,17 @@ void GUI::updateRenderingInfo(const vkw::RenderingFormatInfo &info) {
   StageLayout<LightingStage> layout{m_engine, m_sl, "identity", info,
                                     std::array{state}};
   m_lighting = StageSetBuilder{m_engine, std::move(layout)};
+  auto fb = fbInfo->get();
+  if (fb.isSwapchain)
+    m_platform = std::make_unique<GLFWPlatform>(m_ctx.get(), m_window);
+  else
+    m_platform = std::make_unique<OffscreenPlatform>(m_ctx.get(), fbInfo);
 }
 
 void GUI::gui(boost::compat::function_ref<void(void)> recorder) {
   ImGui::SetCurrentContext(m_ctx.get());
-  ImGui_ImplGlfw_NewFrame();
+  assert(m_platform && "called gui() with no bound platform");
+  m_platform->newFrame();
   ImGui::NewFrame();
 
   recorder();
@@ -61,8 +117,6 @@ void GUI::gui(boost::compat::function_ref<void(void)> recorder) {
 }
 
 void GUI::ContextDeleter::operator()(ImGuiContext *ctx) const {
-  ImGui::SetCurrentContext(ctx);
-  ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext(ctx);
 }
 
@@ -101,6 +155,7 @@ void GUI::m_actualizeTexture(ImTextureData &tex) {
 
 void GUI::draw(PipelineManager &pipeMngr, vkw::RenderPassRecorder &commands,
                const imvk::Frame &frame) {
+  ImGui::SetCurrentContext(m_ctx.get());
   ImGui::Render();
   auto *imDrawData = ImGui::GetDrawData();
   int32_t vertexOffset = 0;

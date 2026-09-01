@@ -147,9 +147,9 @@ static MatImageView createImageView(const MaterializationContext &ctx,
                                     const VkImageViewCreateInfo &info) {
   switch (image->type()) {
   case fon_type::swap:
-    return ctx.engine().createNode<RegularImageViewNode>(image, info);
+    return ctx.env().engine().createNode<RegularImageViewNode>(image, info);
   case fon_type::ext:
-    return ctx.engine().createNode<SwapchainImageViewNode>(image, info);
+    return ctx.env().engine().createNode<SwapchainImageViewNode>(image, info);
   default:
     assert(0 && "unsupported");
     return nullptr;
@@ -370,10 +370,17 @@ void MaterializationContext::materializeNode(Node &n, MatNode &&action) {
   m_nodes[&n] = std::move(action);
 }
 
-MaterializationContext::MaterializationContext(GraphicsEngine &ge, Workflow &wf)
-    : m_engine(ge) {
+MaterializationContext::MaterializationContext(
+    const MaterializationEnvironment &env, Workflow &wf)
+    : m_env(env) {
   {
     auto imageChains = materializeImageValueChains(wf);
+    for (auto &&chain : imageChains) {
+      for (auto &&val : chain.chain) {
+        std::cout << *val.def << " -> ";
+      }
+      std::cout << "null\n";
+    }
     for (auto &chain : imageChains) {
       assert(!chain.chain.empty());
       auto *def = chain.chain.front().def;

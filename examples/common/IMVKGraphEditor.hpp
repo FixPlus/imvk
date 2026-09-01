@@ -1,0 +1,83 @@
+
+#pragma once
+
+#include "IMVKPipeline.hpp"
+#include "IMVKScene.hpp"
+#include "IMVKShaderLoader.hpp"
+#include "IMVKgui.hpp"
+
+#include "imvk/copy/Engine.hpp"
+#include "imvk/graph/Materialization.hpp"
+#include "imvk/graph/Nodes.hpp"
+#include "imvk/graphics/Engine.hpp"
+
+namespace imvk::examples {
+
+class GraphScene : public imvk::graph::MatScene {
+public:
+  GraphScene(const MaterializationEnvironment &me,
+             const imvk::graph::Scene::MaterializationInfo &sceneInfo,
+             auto &&onGui)
+      : m_gui(me.window(), me.engine(), me.copyEngine(), me.shaderLoader()),
+        m_pp(me.pipelinePool()), m_onGui(std::forward<decltype(onGui)>(onGui)) {
+    std::tie(m_resultID, std::ignore) =
+        m_gui.addImage(sceneInfo.descriptors.front());
+    assert(sceneInfo.descriptors.size() == 1);
+    m_gui.updateRenderingInfo(sceneInfo.renderingInfo,
+                              sceneInfo.framebufferInfo);
+  }
+  static imvk::graph::Scene get(auto &&onGui) {
+    imvk::graph::Scene ret;
+    using enum imvk::graph::ImageAttachmentUseInfo::Kind;
+    using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
+    ret.attachments.emplace_back(color, clear);
+    ret.descriptors.emplace_back(
+        imvk::graph::DescriptorUseInfo::sampledImage());
+    ret.materialization =
+        [&](const imvk::graph::MaterializationEnvironment &envBase,
+            const imvk::graph::Scene::MaterializationInfo &sceneInfo) {
+          assert(isa<imvk::examples::MaterializationEnvironment>(&envBase));
+          auto &env =
+              static_cast<const imvk::examples::MaterializationEnvironment &>(
+                  envBase);
+          return std::make_unique<GraphScene>(
+              env, sceneInfo, std::forward<decltype(onGui)>(onGui));
+        };
+    return ret;
+  }
+  void onDraw(vkw::RenderPassRecorder &commands, const Frame &frame) override {
+    PipelineManager mng{m_pp, commands, frame};
+    m_gui.gui([this, &frame]() { m_onGui(*this, frame); });
+    m_gui.draw(mng, commands, frame);
+  }
+
+  ImTextureID resultBuffer() const { return m_resultID; }
+
+private:
+  GUI m_gui;
+  PipelinePool &m_pp;
+  std::function<void(GraphScene &, const Frame &)> m_onGui;
+  ImTextureID m_resultID;
+};
+
+class GraphEditor {
+public:
+  GraphEditor(const MaterializationEnvironment &me,
+              imvk::graph::Workflow initialWorkflow);
+
+  void onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
+    assert(m_matCtx);
+    m_matCtx->run(commands, frame);
+  }
+
+private:
+  void onGui(GraphScene &scene, const Frame &frame);
+  void m_inject_into_workflow(imvk::graph::Workflow &wf);
+  const MaterializationEnvironment &m_me;
+  imvk::graph::Scene m_scene;
+  imvk::graph::Workflow m_currentWorkflow;
+  imvk::graph::Workflow m_materializedWorkflow;
+  std::optional<imvk::graph::MaterializationContext> m_matCtx;
+};
+
+} // namespace imvk::examples

@@ -297,35 +297,53 @@ private:
 
 // Command nodes
 
+struct FramebufferInfoFields {
+  VkExtent3D extents;
+  bool isSwapchain;
+};
+
+class FramebufferInfoImpl
+    : public FONode<FramebufferInfoFields, fon_type::cow, FramebufferInfoImpl> {
+public:
+  FramebufferInfoImpl(FramedEngine &ge, MatImage refAttachment);
+
+  FramebufferInfoFields constructNew(FramedEngine &);
+
+private:
+  FramebufferInfoFields doConstructNew(FramedEngine &ge,
+                                       MatImage refAttachment);
+};
+
+class FramebufferInfo : public FONodeView<FramebufferInfoImpl> {
+public:
+  FramebufferInfo(auto &&...args)
+      : FONodeView<FramebufferInfoImpl>(std::forward<decltype(args)>(args)...) {
+  }
+};
+
 /// @brief Scene is an interface consumed by render pass node. It must describe
 /// framebuffer and descriptor layout and provide callbacks for materialization
 /// and rendering.
-class Scene {
+
+class MatScene {
 public:
-  /// @brief fill in expected layout of framebuffer attachments.
-  /// @param attachmentLayout out vector of attachments.
-  virtual void fillAttachmentLayout(
-      boost::container::small_vector_base<ImageAttachmentUseInfo>
-          &attachmentLayout) const = 0;
-  /// @brief fill in expected layout of descriptors.
-  /// @param descriptorLayout out vector of descriptors.
-  virtual void fillDescriptorLayout(
-      boost::container::small_vector_base<DescriptorUseInfo> &descriptorLayout)
-      const = 0;
-  /// @brief called once during materialization process when rendering format
-  /// info and descriptors are initialized and can be used by scene.
-  /// @param renderingInfo structure to pass to create graphics pipelines for
-  /// this render pass. It matches the layout provided by scene.
-  /// @param descriptors vector of type-erased descriptors matching the layout
-  /// provided by scene.
-  virtual void onMaterialization(const vkw::RenderingFormatInfo &renderingInfo,
-                                 std::span<Descriptor> descriptors) = 0;
-  /// @brief called each frame to record scene draw commands inside pass.
-  /// @param commands recorder for this pass.
-  /// @param frame current frame handle.
   virtual void onDraw(vkw::RenderPassRecorder &commands,
                       const Frame &frame) = 0;
-  virtual ~Scene() = default;
+  virtual ~MatScene() = default;
+};
+struct Scene final {
+
+  struct MaterializationInfo {
+    vkw::RenderingFormatInfo renderingInfo;
+    FramebufferInfo framebufferInfo;
+    boost::container::small_vector<Descriptor, 2> descriptors;
+  };
+
+  boost::container::small_vector<ImageAttachmentUseInfo, 2> attachments;
+  boost::container::small_vector<DescriptorUseInfo, 2> descriptors;
+  std::function<std::unique_ptr<MatScene>(const MaterializationEnvironment &,
+                                          const MaterializationInfo &)>
+      materialization;
 };
 
 class RenderPass : public Node {
@@ -338,13 +356,12 @@ public:
   /// layout.
   /// @param scene a scene handle to render in this pass. it's layout must match
   /// attachments and descriptor values.
-  RenderPass(Context &ctx, auto &&attachments, auto &&descriptors, Scene &scene)
+  RenderPass(Context &ctx, auto &&attachments, auto &&descriptors,
+             const Scene &scene)
       : Node(
             ctx,
             [&]() {
-              boost::container::small_vector<ImageAttachmentUseInfo, 2>
-                  attachmentLayout;
-              scene.fillAttachmentLayout(attachmentLayout);
+              auto &attachmentLayout = scene.attachments;
               if (attachmentLayout.size() != std::ranges::size(attachments))
                 throw std::runtime_error(
                     "scene has incompatible number of attachments");
@@ -358,9 +375,7 @@ public:
                 }
                 uses.emplace_back(val, copyInfo);
               }
-              boost::container::small_vector<DescriptorUseInfo, 2>
-                  descriptorLayout;
-              scene.fillDescriptorLayout(descriptorLayout);
+              auto &descriptorLayout = scene.descriptors;
               if (descriptorLayout.size() != std::ranges::size(descriptors))
                 throw std::runtime_error(
                     "scene has incompatible number of descriptors");
@@ -373,9 +388,7 @@ public:
               return uses;
             }(),
             [&]() {
-              boost::container::small_vector<ImageAttachmentUseInfo, 2>
-                  attachmentLayout;
-              scene.fillAttachmentLayout(attachmentLayout);
+              auto &attachmentLayout = scene.attachments;
               if (attachmentLayout.size() != std::ranges::size(attachments))
                 throw std::runtime_error(
                     "scene has incompatible number of attachments");
@@ -402,9 +415,9 @@ public:
   bool materialize(MaterializationContext &ctx) final;
 
 private:
-  Scene *m_scene;
+  const Scene *m_scene;
   unsigned m_firstDescriptor;
-  RenderPass(Scene &scene, unsigned firstDescriptor)
+  RenderPass(const Scene &scene, unsigned firstDescriptor)
       : m_scene(&scene), m_firstDescriptor(firstDescriptor) {}
   std::unique_ptr<Node> doClone() const override {
     return std::unique_ptr<Node>{new RenderPass(*m_scene, m_firstDescriptor)};

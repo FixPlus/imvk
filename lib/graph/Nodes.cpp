@@ -4,19 +4,19 @@
 namespace imvk::graph {
 
 bool Constant<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
-  ctx.materialize<MatIntegerScalar>(results().front(),
-                                    MatIntegerScalar(ctx.engine(), value));
+  ctx.materialize<MatIntegerScalar>(
+      results().front(), MatIntegerScalar(ctx.env().engine(), value));
   return true;
 }
 bool Constant<ExtentsTy>::materialize(MaterializationContext &ctx) {
   ctx.materialize<MatExtents>(results().front(),
-                              MatExtents(ctx.engine(), value));
+                              MatExtents(ctx.env().engine(), value));
   return true;
 }
 
 bool Dynamic<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
 
-  auto dynVal = MatIntegerScalar(ctx.engine());
+  auto dynVal = MatIntegerScalar(ctx.env().engine());
   ctx.materialize(results().front(), dynVal);
   ctx.materializeNode(
       *this, [dynVal = std::move(dynVal), this](vkw::BufferRecorder &recorder,
@@ -330,7 +330,7 @@ const AttributesBase *Dynamic<IntegerScalarTy>::getAttributes(
 }
 
 bool MakeImage::materialize(MaterializationContext &ctx) {
-  auto &engine = ctx.engine();
+  auto &engine = ctx.env().engine();
   auto &value = results().front();
   if (!ctx.startsImageChain(value))
     return false;
@@ -369,7 +369,7 @@ completeSubresourceRange(const VkImageCreateInfo &info) {
   return ret;
 }
 bool Clone<ImageTy>::materialize(MaterializationContext &ctx) {
-  auto &engine = ctx.engine();
+  auto &engine = ctx.env().engine();
   auto &value = results().front();
   if (!ctx.startsImageChain(value))
     return false;
@@ -381,7 +381,7 @@ bool Clone<ImageTy>::materialize(MaterializationContext &ctx) {
   return true;
 }
 bool Copy<ImageTy>::materialize(MaterializationContext &ctx) {
-  auto &engine = ctx.engine();
+  auto &engine = ctx.env().engine();
   auto src = ctx.get<MatImage>(uses().front().value());
   auto dst = ctx.get<MatImage>(uses().back().value());
 
@@ -405,7 +405,7 @@ bool Copy<ImageTy>::materialize(MaterializationContext &ctx) {
 }
 
 bool AcquireImage::materialize(MaterializationContext &ctx) {
-  auto &engine = ctx.engine();
+  auto &engine = ctx.env().engine();
   auto &value = results().front();
   assert(ctx.startsImageChain(value));
   auto &templ = ctx.chainImageTemplate(value);
@@ -415,7 +415,7 @@ bool AcquireImage::materialize(MaterializationContext &ctx) {
 }
 
 bool GetExtents::materialize(MaterializationContext &ctx) {
-  auto &engine = ctx.engine();
+  auto &engine = ctx.env().engine();
   auto &value = results().front();
   auto &use = uses().front().value();
   auto &image = ctx.get<MatImage>(use);
@@ -479,10 +479,30 @@ bool Barrier<ImageTy>::materialize(MaterializationContext &ctx) {
   return false;
 }
 
+FramebufferInfoImpl::FramebufferInfoImpl(FramedEngine &ge,
+                                         MatImage refAttachment)
+    : FONode<FramebufferInfoFields, fon_type::cow, FramebufferInfoImpl>(
+          ge, doConstructNew(ge, refAttachment),
+          FOUses{&refAttachment->node()}) {}
+
+FramebufferInfoFields FramebufferInfoImpl::constructNew(FramedEngine &engine) {
+  auto *image = dyn_cast<MatImageBase>(&getUseRaw(0));
+  assert(image);
+  return doConstructNew(engine, image);
+}
+
+FramebufferInfoFields
+FramebufferInfoImpl::doConstructNew(FramedEngine &ge, MatImage refAttachment) {
+  FramebufferInfoFields ret{};
+  ret.extents = refAttachment->info().extent;
+  /// TODO: come up with better solution for swapchain identification here.
+  ret.isSwapchain = refAttachment->type() == fon_type::ext;
+  return ret;
+}
+
 bool RenderPass::materialize(MaterializationContext &ctx) {
   vkw::RenderingInfo info{};
-  vkw::RenderingFormatInfo formatInfo{};
-  boost::container::small_vector<Descriptor, 2> descriptors;
+  Scene::MaterializationInfo sceneInfo{};
 
   boost::container::small_vector<
       std::pair<MatImageView, ImageAttachmentUseInfo::Kind>, 4>
@@ -515,7 +535,7 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
       a.clearValue = VkClearValue{.color = {0.8, 0.5, 0.2, 0.0}};
       a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       info.addColorAttachment(a, false);
-      formatInfo.addColorAttachment(format, false);
+      sceneInfo.renderingInfo.addColorAttachment(format, false);
       break;
     }
     case ImageAttachmentUseInfo::Kind::depth: {
@@ -525,27 +545,37 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
       a.clearValue = cv;
       a.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
       info.addDepthAttachment(a);
-      formatInfo.addDepthAttachment(format);
+      sceneInfo.renderingInfo.addDepthAttachment(format);
       break;
     }
     default:
       break;
     }
   }
+  MatImage refImage = ctx.get<MatImage>(uses().front().value());
+  auto framebuf = uses() | std::views::take(m_firstDescriptor);
+  /// TODO: come up with better way to identify swapchain image.
+  auto foundSwapchain = std::ranges::find_if(framebuf, [&](auto &&use) {
+    return ctx.get<MatImage>(use.value())->type() == fon_type::ext;
+  });
+  if (foundSwapchain != framebuf.end()) {
+    refImage = ctx.get<MatImage>(foundSwapchain->value());
+  }
+  sceneInfo.framebufferInfo = FramebufferInfo{ctx.env().engine(), refImage};
 
   for (auto &&use : uses() | std::views::drop(m_firstDescriptor)) {
     assert(isa<ImageDescriptorUseInfo>(use.info()));
     auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
     auto view = ctx.get<MatImageView>(use.value());
-    descriptors.emplace_back(ctx.engine(),
-                             ImageSampledAdaptor(ctx.engine(), view));
+    sceneInfo.descriptors.emplace_back(
+        ctx.env().engine(), ImageSampledAdaptor(ctx.env().engine(), view));
   }
-  m_scene->onMaterialization(formatInfo, descriptors);
-  MatImage refImage = ctx.get<MatImage>(uses().front().value());
+  auto matScene = std::invoke(m_scene->materialization, ctx.env(), sceneInfo);
 
   ctx.materializeNode(
       *this,
       [info = std::move(info), attachments = std::move(attachments), refImage,
+       matScene = std::move(matScene),
        this](vkw::BufferRecorder &recorder, const imvk::Frame &frame) mutable {
         auto extents = refImage->info().extent;
         auto drawArea = VkRect2D{{0, 0}, {extents.width, extents.height}};
@@ -579,7 +609,7 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
         scissor.offset.y = 0;
         renderPass.setViewports({&viewport, 1});
         renderPass.setScissors({&scissor, 1});
-        m_scene->onDraw(renderPass, frame);
+        matScene->onDraw(renderPass, frame);
       });
   return false;
 }

@@ -190,13 +190,12 @@ public:
     assert(m_type = another->m_type);
     if (!m_firstUse.m_next)
       return;
-    auto *lastUse = &another->m_firstUse;
-    while (lastUse->m_next)
-      lastUse = lastUse->m_next;
-    lastUse->m_next = m_firstUse.m_next;
-    while (lastUse->m_next) {
-      lastUse = lastUse->m_next;
-      lastUse->m_value = another;
+    auto *use = m_firstUse.m_next;
+    m_firstUse.m_next = nullptr;
+    while (use) {
+      auto *nextUse = use->m_next;
+      use->replaceBy(another);
+      use = nextUse;
     }
   }
 

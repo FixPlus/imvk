@@ -126,9 +126,21 @@ struct ImageValueChain {
 
 std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf);
 
+class MaterializationEnvironment {
+public:
+  MaterializationEnvironment(GraphicsEngine &ge) : m_ge(ge) {}
+
+  GraphicsEngine &engine() const { return m_ge; }
+
+  virtual ~MaterializationEnvironment() = default;
+
+private:
+  GraphicsEngine &m_ge;
+};
+
 class MaterializationContext {
 public:
-  MaterializationContext(GraphicsEngine &ge, Workflow &wf);
+  MaterializationContext(const MaterializationEnvironment &env, Workflow &wf);
   template <typename T> using MatMap = std::unordered_map<Value *, T>;
 
   bool startsImageChain(Value &val);
@@ -151,10 +163,10 @@ public:
     for (auto &&sub : m_submissions)
       std::invoke(*sub, recorder, frame);
   }
-  GraphicsEngine &engine() const { return m_engine; }
+  const MaterializationEnvironment &env() const { return m_env; }
 
 private:
-  GraphicsEngine &m_engine;
+  const MaterializationEnvironment &m_env;
   std::tuple<MatMap<MatImage>, MatMap<MatImageView>, MatMap<MatIntegerScalar>,
              MatMap<MatExtents>>
       m_mats;

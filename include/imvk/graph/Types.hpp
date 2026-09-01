@@ -106,7 +106,7 @@ class DescriptorUseInfo {
 public:
   DescriptorUseInfo(std::unique_ptr<UseInfo> &&info)
       : m_useInfo(std::move(info)) {}
-  const UseInfo &useInfo() { return *m_useInfo; }
+  const UseInfo &useInfo() const { return *m_useInfo; }
 
   static DescriptorUseInfo sampledImage() {
     return DescriptorUseInfo(std::make_unique<ImageDescriptorUseInfo>());

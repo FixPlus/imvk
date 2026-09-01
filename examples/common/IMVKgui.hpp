@@ -3,18 +3,24 @@
 #include "IMVKBuffers.hpp"
 #include "IMVKPipeline.hpp"
 #include "IMVKWindow.hpp"
+
+#include "imvk/graph/Nodes.hpp"
+
 #include "imgui.h"
 
 #include <boost/compat/function_ref.hpp>
 
 namespace imvk::examples {
 
-class GUI {
+class GUIPlatform;
+
+class GUI final {
 public:
   GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
       ShaderLoader &loader);
 
-  void updateRenderingInfo(const vkw::RenderingFormatInfo &info);
+  void updateRenderingInfo(const vkw::RenderingFormatInfo &info,
+                           const imvk::graph::FramebufferInfo &fbInfo);
 
   template <typename ImageDescriptor>
   std::pair<ImTextureID, StageSet<MaterialStage>>
@@ -38,6 +44,7 @@ public:
 
   void draw(PipelineManager &pipeMngr, vkw::RenderPassRecorder &commands,
             const imvk::Frame &frame);
+  ~GUI();
 
 private:
   struct VertexInfo
@@ -61,6 +68,7 @@ private:
     void operator()(ImGuiContext *ctx) const;
   };
   std::unique_ptr<ImGuiContext, ContextDeleter> m_ctx;
+  std::unique_ptr<GUIPlatform> m_platform;
   StageSet<GeometryStage> m_geometry;
   StageSet<ProjectionStage> m_proj;
   StageLayout<MaterialStage> m_materialLayout;
