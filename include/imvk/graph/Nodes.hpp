@@ -23,8 +23,8 @@ template <> class Constant<IntegerScalarTy> : public Node {
 public:
   Constant(Context &ctx, auto &&v)
       : Node(ctx, Node::EmptyUses,
-             std::array{
-                 Node::Def{&ctx.types().get<IntegerScalarTy>(), nullptr}}),
+             std::array{Node::Def{&ctx.types().get<IntegerScalarTy>(),
+                                  new BasicDefInfo{"value"}}}),
         value(static_cast<size_t>(v)) {}
   size_t value;
   const AttributesBase *
@@ -46,7 +46,8 @@ template <> class Constant<ExtentsTy> : public Node {
 public:
   Constant(Context &ctx, VkExtent3D v)
       : Node(ctx, Node::EmptyUses,
-             std::array{Node::Def{&ctx.types().get<ExtentsTy>(), nullptr}}),
+             std::array{Node::Def{&ctx.types().get<ExtentsTy>(),
+                                  new BasicDefInfo{"value"}}}),
         value(v) {}
   VkExtent3D value;
   const AttributesBase *
@@ -71,8 +72,8 @@ template <> class Dynamic<IntegerScalarTy> : public Node {
 public:
   Dynamic(Context &ctx, auto &&p)
       : Node(ctx, Node::EmptyUses,
-             std::array{
-                 Node::Def{&ctx.types().get<IntegerScalarTy>(), nullptr}}),
+             std::array{Node::Def{&ctx.types().get<IntegerScalarTy>(),
+                                  new BasicDefInfo{"value"}}}),
         producer(std::forward<decltype(p)>(p)) {}
   std::function<size_t()> producer;
   const AttributesBase *
@@ -95,10 +96,12 @@ public:
   MakeImage(Context &ctx, const ImageTy &type, Value &extents, Value &format,
             Value &layers, Value &mips)
       : Node(ctx,
-             std::array{Node::Use{&extents, nullptr},
-                        Node::Use{&format, nullptr},
-                        Node::Use{&layers, nullptr}, Node::Use{&mips, nullptr}},
-             std::array{Node::Def{&type, new ImageDefInfo{}}}) {}
+             std::array{Node::Use{&extents, new BasicUseInfo{"extents"}},
+                        Node::Use{&format, new BasicUseInfo{"format"}},
+                        Node::Use{&layers, new BasicUseInfo{"layers"}},
+                        Node::Use{&mips, new BasicUseInfo{"mip levels"}}},
+             std::array{Node::Def{
+                 &type, new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
@@ -119,8 +122,9 @@ class AcquireImage : public Node {
 public:
   AcquireImage(Context &ctx)
       : Node(ctx, Node::EmptyUses,
-             std::array{Node::Def{&ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
-                                  new ImageDefInfo{}}}) {}
+             std::array{Node::Def{
+                 &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 new ImageDefInfo{ImageAccessInfo{}, "swapchain image"}}}) {}
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
@@ -142,8 +146,11 @@ private:
 class GetExtents : public Node {
 public:
   GetExtents(Context &ctx, Value &image)
-      : Node(ctx, std::array{Node::Use{&image, new ImageUseInfo{}}},
-             std::array{Node::Def{&ctx.types().get<ExtentsTy>(), nullptr}}) {}
+      : Node(ctx,
+             std::array{Node::Use{
+                 &image, new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+             std::array{Node::Def{&ctx.types().get<ExtentsTy>(),
+                                  new BasicDefInfo{"extents"}}}) {}
 
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
@@ -186,14 +193,19 @@ template <typename T> class Copy {};
 template <> class Clone<ImageTy> : public Node {
 public:
   Clone(Context &ctx, Value &image)
-      : Node(ctx, std::array{Node::Use(&image, new ImageUseInfo{[]() {
-               ImageAccessInfo info{};
-               return info;
-             }()})},
-             std::array{Node::Def(&image.type(), new ImageDefInfo{[]() {
-               ImageAccessInfo info{};
-               return info;
-             }()})}) {}
+      : Node(ctx,
+             std::array{
+                 Node::Use(&image, new ImageUseInfo{[]() {
+                                                      ImageAccessInfo info{};
+                                                      return info;
+                                                    }(),
+                                                    "source"})},
+             std::array{Node::Def(&image.type(),
+                                  new ImageDefInfo{[]() {
+                                                     ImageAccessInfo info{};
+                                                     return info;
+                                                   }(),
+                                                   "clone"})}) {}
 
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
@@ -214,30 +226,35 @@ template <> class Copy<ImageTy> : public Node {
 public:
   Copy(Context &ctx, Value &src, Value &dst)
       : Node(ctx,
-             std::array{Node::Use(&src, new ImageUseInfo{[]() {
-                          ImageAccessInfo info{};
-                          info.layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                          info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-                          info.accessFlags = VK_ACCESS_MEMORY_READ_BIT;
-                          info.stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
-                          return info;
-                        }()}),
-                        Node::Use(&dst, new ImageUseInfo{[]() {
-                          ImageUseInfo info{};
-                          info.access.layout =
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                          info.passthrough = 0;
-                          return info;
-                        }()})},
-             std::array{Node::Def(&dst.type(), new ImageDefInfo{[]() {
-               ImageDefInfo info{};
-               info.access.layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-               info.access.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-               info.access.accessFlags = VK_ACCESS_MEMORY_WRITE_BIT;
-               info.access.stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
-               info.passthrough = 1;
-               return info;
-             }()})}) {}
+             std::array{
+                 Node::Use(&src,
+                           new ImageUseInfo{
+                               []() {
+                                 ImageAccessInfo info{};
+                                 info.layout =
+                                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                                 info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+                                 info.accessFlags = VK_ACCESS_MEMORY_READ_BIT;
+                                 info.stageFlags =
+                                     VK_PIPELINE_STAGE_TRANSFER_BIT;
+                                 return info;
+                               }(),
+                               "source"}),
+                 Node::Use(
+                     &dst,
+                     new ImageUseInfo{
+                         ImageAccessInfo{
+                             .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                         0, "destination"})},
+             std::array{Node::Def(
+                 &dst.type(),
+                 new ImageDefInfo{
+                     ImageAccessInfo{
+                         .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
+                         .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                     1, "destination"})}) {}
 
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
@@ -268,6 +285,7 @@ public:
                                     info.stageFlags = 0;
                                     auto ret = new ImageUseInfo{info};
                                     ret->passthrough = 0;
+                                    ret->setName("image");
                                     return ret;
                                   }())},
              std::array{Node::Def(&image.type(), [&]() {
@@ -277,6 +295,7 @@ public:
                info.stageFlags = 0;
                auto ret = new ImageDefInfo{info};
                ret->passthrough = 0;
+               ret->setName("image");
                return ret;
              }())}) {}
 
@@ -370,6 +389,17 @@ public:
               for (auto &&[val, info] :
                    std::views::zip(attachments, attachmentLayout)) {
                 auto *copyInfo = info.clone();
+                switch (copyInfo->kind) {
+                case ImageAttachmentUseInfo::Kind::color:
+                  copyInfo->setName("color attachment");
+                  break;
+                case ImageAttachmentUseInfo::Kind::depth:
+                  copyInfo->setName("depth attachment");
+                  break;
+                case ImageAttachmentUseInfo::Kind::input:
+                  copyInfo->setName("input attachment");
+                  break;
+                }
                 if (copyInfo->kind != ImageAttachmentUseInfo::Kind::input) {
                   copyInfo->passthrough = passIndex++;
                 }
@@ -382,6 +412,7 @@ public:
               for (auto &&[val, info] :
                    std::views::zip(descriptors, descriptorLayout)) {
                 auto *copyInfo = info.useInfo().clone();
+                copyInfo->setName("descriptor");
                 uses.emplace_back(val, copyInfo);
               }
 
@@ -399,6 +430,9 @@ public:
                 if (info.kind != ImageAttachmentUseInfo::Kind::input) {
                   auto *def = new ImageDefInfo{info.defFromThis()};
                   def->passthrough = passIndex;
+                  def->setName(info.kind == ImageAttachmentUseInfo::Kind::color
+                                   ? "color attachment"
+                                   : "depth attachment");
                   defs.emplace_back(&val->type(), def);
                 }
                 passIndex++;
@@ -431,10 +465,13 @@ public:
   Present(Context &ctx, Value &image)
       : Node(ctx,
              std::array{Node::Use{
-                 &image, new ImageUseInfo{ImageAccessInfo{
-                             .accessFlags = 0,
-                             .stageFlags = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                             .layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR}}}},
+                 &image,
+                 new ImageUseInfo{
+                     ImageAccessInfo{.accessFlags = 0,
+                                     .stageFlags =
+                                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                     .layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR},
+                     "image"}}},
              Node::EmptyResults) {}
   const AttributesBase *getAttributes(
       Context &ctx, const Value &result,

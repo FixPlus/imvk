@@ -64,9 +64,10 @@ struct ImageAccessInfo {
 class ImageUseInfo : public UseInfo {
 public:
   ImageUseInfo() = default;
-  ImageUseInfo(ImageAccessInfo acc) : access(acc) {}
-  ImageUseInfo(ImageAccessInfo acc, size_t pass)
-      : access(acc), passthrough(pass) {}
+  ImageUseInfo(ImageAccessInfo acc, std::string name = {})
+      : UseInfo(std::move(name)), access(acc) {}
+  ImageUseInfo(ImageAccessInfo acc, size_t pass, std::string name = {})
+      : UseInfo(std::move(name)), access(acc), passthrough(pass) {}
   ImageAccessInfo access;
   std::optional<size_t> passthrough;
   ImageUseInfo *clone() const override { return new ImageUseInfo(*this); }
@@ -75,9 +76,10 @@ public:
 class ImageDefInfo : public DefInfo {
 public:
   ImageDefInfo() = default;
-  ImageDefInfo(ImageAccessInfo acc) : access(acc) {}
-  ImageDefInfo(ImageAccessInfo acc, size_t pass)
-      : access(acc), passthrough(pass) {}
+  ImageDefInfo(ImageAccessInfo acc, std::string name = {})
+      : DefInfo(std::move(name)), access(acc) {}
+  ImageDefInfo(ImageAccessInfo acc, size_t pass, std::string name = {})
+      : DefInfo(std::move(name)), access(acc), passthrough(pass) {}
   ImageAccessInfo access;
   std::optional<size_t> passthrough;
   ImageDefInfo *clone() const override { return new ImageDefInfo(*this); }

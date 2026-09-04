@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <ranges>
+#include <string>
 
 namespace imvk::graph {
 
@@ -69,8 +70,20 @@ inline std::ostream &operator<<(std::ostream &os, const Type &t) {
 
 class UseInfo {
 public:
+  explicit UseInfo(std::string name = {}) : m_name(std::move(name)) {}
   virtual UseInfo *clone() const = 0;
+  std::string_view name() const { return m_name; }
+  void setName(std::string name) { m_name = std::move(name); }
   virtual ~UseInfo() = default;
+
+private:
+  std::string m_name;
+};
+
+class BasicUseInfo final : public UseInfo {
+public:
+  using UseInfo::UseInfo;
+  BasicUseInfo *clone() const override { return new BasicUseInfo(*this); }
 };
 
 class Use final {
@@ -149,8 +162,20 @@ private:
 
 class DefInfo {
 public:
+  explicit DefInfo(std::string name = {}) : m_name(std::move(name)) {}
   virtual DefInfo *clone() const = 0;
+  std::string_view name() const { return m_name; }
+  void setName(std::string name) { m_name = std::move(name); }
   virtual ~DefInfo() = default;
+
+private:
+  std::string m_name;
+};
+
+class BasicDefInfo final : public DefInfo {
+public:
+  using DefInfo::DefInfo;
+  BasicDefInfo *clone() const override { return new BasicDefInfo(*this); }
 };
 
 class Value final {
@@ -179,6 +204,7 @@ public:
   }
   const Type &type() const { return *m_type; }
   const DefInfo &info() const { return *m_info; }
+  const DefInfo *infoOrNull() const { return m_info.get(); }
   size_t index() const { return m_index; }
   size_t resultNum() const;
   auto users() const {
