@@ -143,7 +143,9 @@ void GUI::m_actualizeTexture(ImTextureData &tex) {
                                 tex.Width, tex.Height)};
     if (tex.GetTexID() != ImTextureID_Invalid)
       removeImage(tex.GetTexID());
-    tex.SetTexID(addImage(SampledView{m_engine, std::move(image)}).first);
+    tex.SetTexID(
+        addImage(SampledView{m_engine, std::move(image), VK_FILTER_NEAREST})
+            .first);
     tex.SetStatus(ImTextureStatus_OK);
   }
 

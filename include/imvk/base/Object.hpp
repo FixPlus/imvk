@@ -540,7 +540,11 @@ public:
     assert(!isDestroyed());
     return m_current->first;
   }
-  ~FONode() override { m_deleter.destroyObject(*std::move(m_current)); }
+  ~FONode() override {
+    if (isDestroyed())
+      return;
+    m_deleter.destroyObject(*std::move(m_current));
+  }
 
 protected:
   /// @brief constructs new object using current uses as inputs. May be

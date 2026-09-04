@@ -11,6 +11,10 @@
 #include "imvk/graph/Nodes.hpp"
 #include "imvk/graphics/Engine.hpp"
 
+namespace ax::NodeEditor {
+struct EditorContext;
+}
+
 namespace imvk::examples {
 
 class GraphScene : public imvk::graph::MatScene {
@@ -71,13 +75,19 @@ public:
   }
 
 private:
+  class EditorDeleter {
+  public:
+    void operator()(ax::NodeEditor::EditorContext *ctx) const;
+  };
   void onGui(GraphScene &scene, const Frame &frame);
   void m_inject_into_workflow(imvk::graph::Workflow &wf);
   const MaterializationEnvironment &m_me;
+  std::unique_ptr<ax::NodeEditor::EditorContext, EditorDeleter> m_ctx;
   imvk::graph::Scene m_scene;
   imvk::graph::Workflow m_currentWorkflow;
   imvk::graph::Workflow m_materializedWorkflow;
   std::optional<imvk::graph::MaterializationContext> m_matCtx;
+  bool m_needUntangleLayout = true;
 };
 
 } // namespace imvk::examples

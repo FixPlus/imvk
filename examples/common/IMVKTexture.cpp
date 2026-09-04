@@ -24,18 +24,19 @@ void SampledView::descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
 
 std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>
 SampledViewImpl::constructNew(FramedEngine &engine) {
-  return doConstructNew(engine, getUse<Texture>(0)->get());
+  return doConstructNew(engine, getUse<Texture>(0)->get(), m_filter);
 }
 
 std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>
 SampledViewImpl::doConstructNew(FramedEngine &engine,
-                                const vkw::Image<vkw::COLOR, vkw::I2D> &image) {
+                                const vkw::Image<vkw::COLOR, vkw::I2D> &image,
+                                VkFilter filter) {
   VkSamplerCreateInfo info{};
   info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
   info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
   info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-  info.magFilter = VK_FILTER_LINEAR;
-  info.minFilter = VK_FILTER_LINEAR;
+  info.magFilter = filter;
+  info.minFilter = filter;
   info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
   info.pNext = nullptr;
 
