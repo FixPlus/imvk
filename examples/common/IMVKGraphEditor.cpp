@@ -12,7 +12,8 @@ namespace ed = ax::NodeEditor;
 
 namespace imvk::examples {
 GraphEditor::GraphEditor(const MaterializationEnvironment &me,
-                         imvk::graph::Workflow initialWorkflow)
+                         imvk::graph::Workflow initialWorkflow,
+                         SceneTable availableScenes)
     : m_me(me), m_ctx([]() {
         ed::Config config;
         auto *context = ed::CreateEditor(&config);
@@ -21,12 +22,11 @@ GraphEditor::GraphEditor(const MaterializationEnvironment &me,
       m_scene(GraphScene::get([this](GraphScene &scene, const Frame &frame) {
         onGui(scene, frame);
       })),
+      m_availableScenes(std::move(availableScenes)),
       m_currentWorkflow(std::move(initialWorkflow)),
       m_materializedWorkflow(m_currentWorkflow) {
   m_inject_into_workflow(m_materializedWorkflow);
-  std::cout << m_materializedWorkflow << std::endl;
   m_matCtx.emplace(m_me, m_materializedWorkflow);
-  std::cout << m_materializedWorkflow << std::endl;
 }
 void GraphEditor::m_inject_into_workflow(imvk::graph::Workflow &wf) {
   auto foundAquireImage = std::ranges::find_if(
@@ -205,7 +205,76 @@ static void drawPinIcon(const imvk::graph::Type &type, bool connected) {
   ImGui::Dummy(ImVec2(iconSize, iconSize));
 }
 
-static void drawNode(imvk::graph::Node &node) {
+static std::string_view
+sceneName(const imvk::graph::Scene &scene,
+          const GraphEditor::SceneTable &availableScenes) {
+  auto found = std::ranges::find_if(availableScenes, [&](const auto &entry) {
+    return &entry.second.get() == &scene;
+  });
+  if (found == availableScenes.end())
+    return "Unregistered";
+  return found->first;
+}
+
+static float nodeWidgetWidth(const imvk::graph::Node &node) {
+  if (isa<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(&node))
+    return 120.0f;
+  if (isa<imvk::graph::Constant<imvk::graph::ExtentsTy>>(&node))
+    return 210.0f;
+  if (isa<imvk::graph::RenderPass>(&node))
+    return 160.0f;
+  return 0.0f;
+}
+
+static bool drawNodeWidget(imvk::graph::Node &node,
+                           const GraphEditor::SceneTable &availableScenes,
+                           float contentWidth) {
+  bool changed = false;
+  ImGui::PushID(&node);
+  if (auto *constant =
+          dyn_cast<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(
+              &node)) {
+    auto value = static_cast<unsigned long long>(constant->getValue());
+    ImGui::SetNextItemWidth(contentWidth);
+    if (ImGui::InputScalar("##value", ImGuiDataType_U64, &value)) {
+      constant->setValue(static_cast<size_t>(value));
+      changed = true;
+    }
+  } else if (auto *constant =
+                 dyn_cast<imvk::graph::Constant<imvk::graph::ExtentsTy>>(
+                     &node)) {
+    auto value = constant->getValue();
+    unsigned components[] = {value.width, value.height, value.depth};
+    ImGui::SetNextItemWidth(contentWidth);
+    if (ImGui::InputScalarN("##value", ImGuiDataType_U32, components, 3)) {
+      constant->setValue({components[0], components[1], components[2]});
+      changed = true;
+    }
+  } else if (auto *renderPass = dyn_cast<imvk::graph::RenderPass>(&node)) {
+    const auto currentName = sceneName(renderPass->scene(), availableScenes);
+    ImGui::SetNextItemWidth(contentWidth);
+    if (ImGui::BeginCombo("##scene", currentName.data())) {
+      for (const auto &[name, sceneRef] : availableScenes) {
+        const auto &scene = sceneRef.get();
+        const bool selected = &scene == &renderPass->scene();
+        const bool compatible = renderPass->acceptsScene(scene);
+        ImGui::BeginDisabled(!compatible);
+        if (ImGui::Selectable(name.c_str(), selected) && !selected) {
+          changed = renderPass->setScene(scene);
+        }
+        ImGui::EndDisabled();
+        if (selected)
+          ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+  }
+  ImGui::PopID();
+  return changed;
+}
+
+static bool drawNode(imvk::graph::Node &node,
+                     const GraphEditor::SceneTable &availableScenes) {
   const auto nodeId = ed::NodeId(&node);
   const auto title = displayName(node.name());
   const auto uses = node.uses();
@@ -215,7 +284,8 @@ static void drawNode(imvk::graph::Node &node) {
   const auto iconSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
   const auto pinDecorationWidth = iconSize + iconSpacing;
   constexpr float pinGap = 32.0f;
-  float contentWidth = ImGui::CalcTextSize(title.c_str()).x;
+  float contentWidth =
+      std::max(ImGui::CalcTextSize(title.c_str()).x, nodeWidgetWidth(node));
   for (size_t index = 0; index < rowCount; ++index) {
     const auto inputWidth =
         index < uses.size()
@@ -241,6 +311,8 @@ static void drawNode(imvk::graph::Node &node) {
                       ImGui::GetTextLineHeight()));
   const auto titleEnd = ImGui::GetItemRectMax();
   ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+  const bool stateChanged = drawNodeWidget(node, availableScenes, contentWidth);
 
   auto drawUse = [](auto &&use, const std::string &name) {
     ed::BeginPin(ed::PinId(&use), ed::PinKind::Input);
@@ -288,6 +360,19 @@ static void drawNode(imvk::graph::Node &node) {
                       IM_COL32(255, 255, 255, 32));
   }
   ed::PopStyleVar();
+  return stateChanged;
+}
+
+void GraphEditor::onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
+  if (m_needRematerialization) {
+    m_matCtx.reset();
+    m_materializedWorkflow = m_currentWorkflow;
+    m_inject_into_workflow(m_materializedWorkflow);
+    m_matCtx.emplace(m_me, m_materializedWorkflow);
+    m_needRematerialization = false;
+  }
+  assert(m_matCtx);
+  m_matCtx->run(commands, frame);
 }
 
 void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
@@ -308,7 +393,7 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, windowBorderSize);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, windowRounding);
 
-  auto &workflow = m_materializedWorkflow;
+  auto &workflow = m_currentWorkflow;
   ImGui::Text("fps: %.2f, nodes: %lld", m_me.window().clock().fps(),
               std::distance(workflow.begin(), workflow.end()));
   ImGui::Separator();
@@ -318,7 +403,7 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   // ed::PushStyleVar(ed::StyleVar_PinArrowWidth, 4.0f);
   ed::Begin("Render graph", ImVec2(0, 0));
   for (auto &node : workflow)
-    drawNode(node);
+    m_needRematerialization |= drawNode(node, m_availableScenes);
   for (auto &node : workflow) {
     for (auto &&[index, use] : std::views::enumerate(node.uses())) {
       ed::Link(ed::LinkId(&use), ed::PinId(&use.value()), ed::PinId(&use));

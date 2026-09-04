@@ -11,6 +11,8 @@
 #include "imvk/graph/Nodes.hpp"
 #include "imvk/graphics/Engine.hpp"
 
+#include <map>
+
 namespace ax::NodeEditor {
 struct EditorContext;
 }
@@ -38,14 +40,14 @@ public:
     ret.descriptors.emplace_back(
         imvk::graph::DescriptorUseInfo::sampledImage());
     ret.materialization =
-        [&](const imvk::graph::MaterializationEnvironment &envBase,
+        [onGui = std::move(onGui)](
+            const imvk::graph::MaterializationEnvironment &envBase,
             const imvk::graph::Scene::MaterializationInfo &sceneInfo) {
           assert(isa<imvk::examples::MaterializationEnvironment>(&envBase));
           auto &env =
               static_cast<const imvk::examples::MaterializationEnvironment &>(
                   envBase);
-          return std::make_unique<GraphScene>(
-              env, sceneInfo, std::forward<decltype(onGui)>(onGui));
+          return std::make_unique<GraphScene>(env, sceneInfo, onGui);
         };
     return ret;
   }
@@ -66,13 +68,14 @@ private:
 
 class GraphEditor {
 public:
-  GraphEditor(const MaterializationEnvironment &me,
-              imvk::graph::Workflow initialWorkflow);
+  using SceneTable =
+      std::map<std::string, std::reference_wrapper<const imvk::graph::Scene>>;
 
-  void onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
-    assert(m_matCtx);
-    m_matCtx->run(commands, frame);
-  }
+  GraphEditor(const MaterializationEnvironment &me,
+              imvk::graph::Workflow initialWorkflow,
+              SceneTable availableScenes = {});
+
+  void onRecord(vkw::BufferRecorder &commands, const Frame &frame);
 
 private:
   class EditorDeleter {
@@ -84,10 +87,12 @@ private:
   const MaterializationEnvironment &m_me;
   std::unique_ptr<ax::NodeEditor::EditorContext, EditorDeleter> m_ctx;
   imvk::graph::Scene m_scene;
+  SceneTable m_availableScenes;
   imvk::graph::Workflow m_currentWorkflow;
   imvk::graph::Workflow m_materializedWorkflow;
   std::optional<imvk::graph::MaterializationContext> m_matCtx;
   bool m_needUntangleLayout = true;
+  bool m_needRematerialization = false;
 };
 
 } // namespace imvk::examples

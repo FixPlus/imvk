@@ -56,7 +56,12 @@ public:
   Workflow(Context &ctx) : m_ctx(&ctx) {}
 
   Workflow(Workflow &&) noexcept = default;
-  Workflow &operator=(Workflow &&) noexcept = default;
+  Workflow &operator=(Workflow &&another) noexcept {
+    std::swap(m_ctx, another.m_ctx);
+    std::swap(m_nodes, another.m_nodes);
+    std::swap(m_workflow, another.m_workflow);
+    return *this;
+  }
 
   Workflow(const Workflow &another);
   Workflow &operator=(const Workflow &another);

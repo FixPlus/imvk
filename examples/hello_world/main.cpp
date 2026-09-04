@@ -460,7 +460,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.
@@ -488,7 +488,10 @@ int app() try {
   auto iniWf = basicWorkflow(graphCtx, mainScene, offscreenScene);
 
   imvk::examples::MaterializationEnvironment matEnv{graphicsEngine, window};
-  imvk::examples::GraphEditor ged{matEnv, std::move(iniWf)};
+  imvk::examples::GraphEditor::SceneTable availableScenes{
+      {"Main", std::cref(mainScene)}, {"Offscreen", std::cref(offscreenScene)}};
+  imvk::examples::GraphEditor ged{matEnv, std::move(iniWf),
+                                  std::move(availableScenes)};
 
   auto commands = MyCommandBuffer(graphicsEngine);
   //  Main application loop.

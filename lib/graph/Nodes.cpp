@@ -500,6 +500,39 @@ FramebufferInfoImpl::doConstructNew(FramedEngine &ge, MatImage refAttachment) {
   return ret;
 }
 
+bool RenderPass::acceptsScene(const Scene &scene) const {
+  if (scene.attachments.size() != m_firstDescriptor ||
+      scene.descriptors.size() != uses().size() - m_firstDescriptor)
+    return false;
+
+  for (auto &&[use, candidate] : std::views::zip(
+           uses() | std::views::take(m_firstDescriptor), scene.attachments)) {
+    const auto *current = dyn_cast<ImageAttachmentUseInfo>(use.info());
+    if (!current || current->kind != candidate.kind ||
+        current->load != candidate.load || current->access != candidate.access)
+      return false;
+  }
+  for (auto &&[use, candidate] : std::views::zip(
+           uses() | std::views::drop(m_firstDescriptor), scene.descriptors)) {
+    if (typeid(*use.info()) != typeid(candidate.useInfo()))
+      return false;
+    const auto *currentImage = dyn_cast<ImageUseInfo>(use.info());
+    const auto *candidateImage = dyn_cast<ImageUseInfo>(&candidate.useInfo());
+    if ((currentImage || candidateImage) &&
+        (!currentImage || !candidateImage ||
+         currentImage->access != candidateImage->access))
+      return false;
+  }
+  return true;
+}
+
+bool RenderPass::setScene(const Scene &scene) {
+  if (!acceptsScene(scene))
+    return false;
+  m_scene = &scene;
+  return true;
+}
+
 bool RenderPass::materialize(MaterializationContext &ctx) {
   vkw::RenderingInfo info{};
   Scene::MaterializationInfo sceneInfo{};

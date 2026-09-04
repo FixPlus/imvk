@@ -27,6 +27,8 @@ public:
                                   new BasicDefInfo{"value"}}}),
         value(static_cast<size_t>(v)) {}
   size_t value;
+  size_t getValue() const { return value; }
+  void setValue(size_t newValue) { value = newValue; }
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
@@ -50,6 +52,8 @@ public:
                                   new BasicDefInfo{"value"}}}),
         value(v) {}
   VkExtent3D value;
+  VkExtent3D getValue() const { return value; }
+  void setValue(VkExtent3D newValue) { value = newValue; }
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
@@ -447,6 +451,9 @@ public:
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
   bool materialize(MaterializationContext &ctx) final;
+  const Scene &scene() const { return *m_scene; }
+  bool acceptsScene(const Scene &scene) const;
+  bool setScene(const Scene &scene);
 
 private:
   const Scene *m_scene;
