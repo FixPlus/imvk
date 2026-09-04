@@ -106,22 +106,126 @@ static std::string pinName(const imvk::graph::Value &value) {
   return typeName(value.type());
 }
 
+enum class PinIconShape {
+  circle,
+  square,
+  diamond,
+  triangle,
+  grid,
+  roundSquare
+};
+
+struct PinIconStyle {
+  PinIconShape shape;
+  ImU32 color;
+};
+
+static PinIconStyle pinIconStyle(const imvk::graph::Type &type) {
+  if (isa<imvk::graph::ImageTy>(&type))
+    return {PinIconShape::square, IM_COL32(51, 150, 215, 255)};
+  if (isa<imvk::graph::IntegerScalarTy>(&type))
+    return {PinIconShape::circle, IM_COL32(68, 201, 156, 255)};
+  if (isa<imvk::graph::ExtentsTy>(&type))
+    return {PinIconShape::diamond, IM_COL32(238, 184, 82, 255)};
+  if (isa<imvk::graph::BufferTy>(&type))
+    return {PinIconShape::roundSquare, IM_COL32(147, 112, 219, 255)};
+  if (isa<imvk::graph::DescriptorTy>(&type))
+    return {PinIconShape::triangle, IM_COL32(218, 85, 183, 255)};
+  if (isa<imvk::graph::ArrayTy>(&type))
+    return {PinIconShape::grid, IM_COL32(92, 210, 210, 255)};
+  return {PinIconShape::circle, IM_COL32(190, 190, 190, 255)};
+}
+
+static void drawPinIcon(const imvk::graph::Type &type, bool connected) {
+  constexpr float iconSize = 14.0f;
+  constexpr float outlineWidth = 2.0f;
+  const auto start = ImGui::GetCursorScreenPos();
+  const ImVec2 end{start.x + iconSize, start.y + iconSize};
+  const ImVec2 center{start.x + iconSize * 0.5f, start.y + iconSize * 0.5f};
+  const auto style = pinIconStyle(type);
+  auto *drawList = ImGui::GetWindowDrawList();
+  const auto innerColor = IM_COL32(32, 32, 32, 255);
+  const auto fill = connected ? style.color : innerColor;
+  const auto drawPolygon = [&](const ImVec2 *points, int count) {
+    drawList->AddConvexPolyFilled(points, count, fill);
+    drawList->AddPolyline(points, count, style.color, ImDrawFlags_Closed,
+                          outlineWidth);
+  };
+
+  switch (style.shape) {
+  case PinIconShape::circle:
+    drawList->AddCircleFilled(center, iconSize * 0.34f, fill, 12);
+    drawList->AddCircle(center, iconSize * 0.34f, style.color, 12,
+                        outlineWidth);
+    break;
+  case PinIconShape::square: {
+    const ImVec2 min{start.x + 2.0f, start.y + 2.0f};
+    const ImVec2 max{end.x - 2.0f, end.y - 2.0f};
+    drawList->AddRectFilled(min, max, fill);
+    drawList->AddRect(min, max, style.color, 0.0f, ImDrawFlags_None,
+                      outlineWidth);
+    break;
+  }
+  case PinIconShape::roundSquare: {
+    const ImVec2 min{start.x + 1.5f, start.y + 2.5f};
+    const ImVec2 max{end.x - 1.5f, end.y - 2.5f};
+    drawList->AddRectFilled(min, max, fill, 3.0f);
+    drawList->AddRect(min, max, style.color, 3.0f, ImDrawFlags_RoundCornersAll,
+                      outlineWidth);
+    break;
+  }
+  case PinIconShape::diamond: {
+    const ImVec2 points[] = {{center.x, start.y + 1.0f},
+                             {end.x - 1.0f, center.y},
+                             {center.x, end.y - 1.0f},
+                             {start.x + 1.0f, center.y}};
+    drawPolygon(points, 4);
+    break;
+  }
+  case PinIconShape::triangle: {
+    const ImVec2 points[] = {{center.x, start.y + 1.0f},
+                             {end.x - 1.0f, end.y - 2.0f},
+                             {start.x + 1.0f, end.y - 2.0f}};
+    drawPolygon(points, 3);
+    break;
+  }
+  case PinIconShape::grid: {
+    constexpr float cellSize = 4.0f;
+    for (int y = 0; y < 2; ++y) {
+      for (int x = 0; x < 2; ++x) {
+        const ImVec2 min{start.x + 2.0f + x * 6.0f, start.y + 2.0f + y * 6.0f};
+        const ImVec2 max{min.x + cellSize, min.y + cellSize};
+        drawList->AddRectFilled(min, max, connected ? style.color : innerColor);
+        drawList->AddRect(min, max, style.color);
+      }
+    }
+    break;
+  }
+  }
+  ImGui::Dummy(ImVec2(iconSize, iconSize));
+}
+
 static void drawNode(imvk::graph::Node &node) {
   const auto nodeId = ed::NodeId(&node);
   const auto title = displayName(node.name());
   const auto uses = node.uses();
   const auto results = node.results();
   const auto rowCount = std::max(uses.size(), results.size());
+  constexpr float iconSize = 14.0f;
+  const auto iconSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
+  const auto pinDecorationWidth = iconSize + iconSpacing;
   constexpr float pinGap = 32.0f;
   float contentWidth = ImGui::CalcTextSize(title.c_str()).x;
   for (size_t index = 0; index < rowCount; ++index) {
     const auto inputWidth =
         index < uses.size()
-            ? ImGui::CalcTextSize(pinName(uses[index]).c_str()).x
+            ? ImGui::CalcTextSize(pinName(uses[index]).c_str()).x +
+                  pinDecorationWidth
             : 0.0f;
     const auto outputWidth =
         index < results.size()
-            ? ImGui::CalcTextSize(pinName(results[index]).c_str()).x
+            ? ImGui::CalcTextSize(pinName(results[index]).c_str()).x +
+                  pinDecorationWidth
             : 0.0f;
     contentWidth = std::max(contentWidth, inputWidth + pinGap + outputWidth);
   }
@@ -142,6 +246,8 @@ static void drawNode(imvk::graph::Node &node) {
     ed::BeginPin(ed::PinId(&use), ed::PinKind::Input);
     ed::PinPivotAlignment(ImVec2(0.0f, 0.5f));
     ed::PinPivotSize(ImVec2(0.0f, 0.0f));
+    drawPinIcon(use.value().type(), ed::HasAnyLinks(ed::PinId(&use)));
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
     ImGui::TextUnformatted(name.c_str());
     ed::EndPin();
   };
@@ -150,6 +256,8 @@ static void drawNode(imvk::graph::Node &node) {
     ed::PinPivotAlignment(ImVec2(1.0f, 0.5f));
     ed::PinPivotSize(ImVec2(0.0f, 0.0f));
     ImGui::TextUnformatted(name.c_str());
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    drawPinIcon(result.type(), ed::HasAnyLinks(ed::PinId(&result)));
     ed::EndPin();
   };
 
@@ -162,7 +270,8 @@ static void drawNode(imvk::graph::Node &node) {
       if (index < uses.size())
         ImGui::SameLine();
       ImGui::SetCursorPosX(rowStart + contentWidth -
-                           ImGui::CalcTextSize(label.c_str()).x);
+                           ImGui::CalcTextSize(label.c_str()).x -
+                           pinDecorationWidth);
       drawResult(results[index], label);
     }
   }
