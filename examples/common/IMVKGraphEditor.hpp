@@ -92,6 +92,7 @@ private:
   imvk::graph::Workflow m_materializedWorkflow;
   std::optional<imvk::graph::MaterializationContext> m_matCtx;
   bool m_needUntangleLayout = true;
+  bool m_hasUnmaterializedChanges = false;
   bool m_needRematerialization = false;
 };
 

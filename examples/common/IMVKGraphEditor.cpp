@@ -369,6 +369,7 @@ void GraphEditor::onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
     m_materializedWorkflow = m_currentWorkflow;
     m_inject_into_workflow(m_materializedWorkflow);
     m_matCtx.emplace(m_me, m_materializedWorkflow);
+    m_hasUnmaterializedChanges = false;
     m_needRematerialization = false;
   }
   assert(m_matCtx);
@@ -396,6 +397,11 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   auto &workflow = m_currentWorkflow;
   ImGui::Text("fps: %.2f, nodes: %lld", m_me.window().clock().fps(),
               std::distance(workflow.begin(), workflow.end()));
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!m_hasUnmaterializedChanges || m_needRematerialization);
+  if (ImGui::Button("Rematerialize"))
+    m_needRematerialization = true;
+  ImGui::EndDisabled();
   ImGui::Separator();
   ed::SetCurrentEditor(m_ctx.get());
   ed::PushStyleVar(ed::StyleVar_PivotSize, ImVec2(3, 3));
@@ -403,7 +409,7 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   // ed::PushStyleVar(ed::StyleVar_PinArrowWidth, 4.0f);
   ed::Begin("Render graph", ImVec2(0, 0));
   for (auto &node : workflow)
-    m_needRematerialization |= drawNode(node, m_availableScenes);
+    m_hasUnmaterializedChanges |= drawNode(node, m_availableScenes);
   for (auto &node : workflow) {
     for (auto &&[index, use] : std::views::enumerate(node.uses())) {
       ed::Link(ed::LinkId(&use), ed::PinId(&use.value()), ed::PinId(&use));
