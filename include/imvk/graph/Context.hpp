@@ -82,6 +82,20 @@ public:
     m_nodes.emplace_back(node);
     return m_workflow.insert(point, *node);
   }
+  void reorder(std::span<Node *const> order) {
+    assert(order.size() == m_workflow.size());
+    for (auto *node : order)
+      m_workflow.splice(m_workflow.end(), m_workflow, iteratorTo(node));
+  }
+  void erase(Node *node) {
+    for (auto &use : node->uses())
+      use.replaceBy(nullptr);
+    for (auto &result : node->results())
+      result.replaceAllUsesWith(nullptr);
+    m_workflow.erase(iteratorTo(node));
+    std::erase_if(m_nodes,
+                  [node](const auto &owned) { return owned.get() == node; });
+  }
   void dump(std::ostream &os) const;
   Context &context() { return *m_ctx; }
 

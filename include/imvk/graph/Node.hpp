@@ -217,7 +217,7 @@ public:
   }
 
   void replaceAllUsesWith(Value *another) {
-    assert(m_type = another->m_type);
+    assert(!another || m_type == another->m_type);
     if (!m_firstUse.m_next)
       return;
     auto *use = m_firstUse.m_next;

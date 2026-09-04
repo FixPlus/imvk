@@ -6,7 +6,10 @@
 
 #include <cctype>
 #include <iostream>
+#include <optional>
 #include <sstream>
+#include <unordered_map>
+#include <vector>
 
 namespace ed = ax::NodeEditor;
 
@@ -370,6 +373,155 @@ static bool isComplete(const imvk::graph::Workflow &workflow) {
   });
 }
 
+struct LinkCandidate {
+  imvk::graph::Value *value = nullptr;
+  imvk::graph::Use *use = nullptr;
+};
+
+static LinkCandidate findLinkCandidate(imvk::graph::Workflow &workflow,
+                                       ed::PinId first, ed::PinId second) {
+  LinkCandidate candidate;
+  for (auto &node : workflow) {
+    for (auto &value : node.results()) {
+      const auto pin = ed::PinId(&value);
+      if (pin == first || pin == second)
+        candidate.value = &value;
+    }
+    for (auto &use : node.uses()) {
+      const auto pin = ed::PinId(&use);
+      if (pin == first || pin == second)
+        candidate.use = &use;
+    }
+  }
+  return candidate;
+}
+
+static std::optional<std::vector<imvk::graph::Node *>>
+topologicalOrder(imvk::graph::Workflow &workflow,
+                 const imvk::graph::Use &changedUse,
+                 imvk::graph::Value &changedValue) {
+  std::vector<imvk::graph::Node *> nodes;
+  std::unordered_map<imvk::graph::Node *, size_t> indices;
+  for (auto &node : workflow) {
+    indices.emplace(&node, nodes.size());
+    nodes.push_back(&node);
+  }
+
+  std::vector<std::vector<size_t>> successors(nodes.size());
+  std::vector<size_t> predecessorCounts(nodes.size());
+  for (auto *consumer : nodes) {
+    for (auto &use : consumer->uses()) {
+      imvk::graph::Value *value = nullptr;
+      if (&use == &changedUse)
+        value = &changedValue;
+      else if (use.hasValue())
+        value = &use.value();
+      if (!value)
+        continue;
+
+      const auto producerIndex = indices.at(&value->node());
+      const auto consumerIndex = indices.at(consumer);
+      successors[producerIndex].push_back(consumerIndex);
+      ++predecessorCounts[consumerIndex];
+    }
+  }
+
+  std::vector<imvk::graph::Node *> order;
+  std::vector<bool> emitted(nodes.size());
+  order.reserve(nodes.size());
+  while (order.size() != nodes.size()) {
+    size_t next = nodes.size();
+    for (size_t index = 0; index < nodes.size(); ++index) {
+      if (!emitted[index] && predecessorCounts[index] == 0) {
+        next = index;
+        break;
+      }
+    }
+    if (next == nodes.size())
+      return std::nullopt;
+
+    emitted[next] = true;
+    order.push_back(nodes[next]);
+    for (const auto successor : successors[next])
+      --predecessorCounts[successor];
+  }
+  return order;
+}
+
+static bool handleLinkCreation(imvk::graph::Workflow &workflow) {
+  bool changed = false;
+  if (ed::BeginCreate()) {
+    ed::PinId first;
+    ed::PinId second;
+    if (ed::QueryNewLink(&first, &second) && first && second) {
+      const auto candidate = findLinkCandidate(workflow, first, second);
+      const bool hasBothKinds = candidate.value && candidate.use;
+      const bool differentNodes =
+          hasBothKinds && &candidate.value->node() != &candidate.use->user();
+      const bool compatibleTypes =
+          hasBothKinds && &candidate.value->type() == &candidate.use->type();
+      auto order =
+          differentNodes && compatibleTypes
+              ? topologicalOrder(workflow, *candidate.use, *candidate.value)
+              : std::nullopt;
+
+      if (!order) {
+        ed::RejectNewItem(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), 2.0f);
+      } else if (ed::AcceptNewItem(ImVec4(0.25f, 1.0f, 0.25f, 1.0f), 2.0f)) {
+        candidate.use->replaceBy(candidate.value);
+        workflow.reorder(*order);
+        changed = true;
+      }
+    }
+  }
+  ed::EndCreate();
+  return changed;
+}
+
+static imvk::graph::Node *findNode(imvk::graph::Workflow &workflow,
+                                   ed::NodeId id) {
+  auto found = std::ranges::find_if(
+      workflow, [id](auto &node) { return ed::NodeId(&node) == id; });
+  return found == workflow.end() ? nullptr : &*found;
+}
+
+static imvk::graph::Use *findUse(imvk::graph::Workflow &workflow,
+                                 ed::LinkId id) {
+  for (auto &node : workflow) {
+    auto found = std::ranges::find_if(
+        node.uses(), [id](auto &use) { return ed::LinkId(&use) == id; });
+    if (found != node.uses().end())
+      return &*found;
+  }
+  return nullptr;
+}
+
+static bool handleDeletion(imvk::graph::Workflow &workflow) {
+  std::vector<imvk::graph::Node *> deletedNodes;
+  std::vector<imvk::graph::Use *> deletedLinks;
+  if (ed::BeginDelete()) {
+    ed::NodeId nodeId;
+    while (ed::QueryDeletedNode(&nodeId)) {
+      if (auto *node = findNode(workflow, nodeId);
+          node && ed::AcceptDeletedItem())
+        deletedNodes.push_back(node);
+    }
+
+    ed::LinkId linkId;
+    while (ed::QueryDeletedLink(&linkId)) {
+      if (auto *use = findUse(workflow, linkId); use && ed::AcceptDeletedItem())
+        deletedLinks.push_back(use);
+    }
+  }
+  ed::EndDelete();
+
+  for (auto *use : deletedLinks)
+    use->replaceBy(nullptr);
+  for (auto *node : deletedNodes)
+    workflow.erase(node);
+  return !deletedNodes.empty() || !deletedLinks.empty();
+}
+
 static imvk::graph::Node *
 drawCreateNodeMenu(imvk::graph::Workflow &workflow,
                    const GraphEditor::SceneTable &availableScenes) {
@@ -475,6 +627,8 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
       ed::Link(ed::LinkId(&use), ed::PinId(&use.value()), ed::PinId(&use));
     }
   }
+  m_hasUnmaterializedChanges |= handleLinkCreation(workflow);
+  m_hasUnmaterializedChanges |= handleDeletion(workflow);
   ed::Suspend();
   if (ed::ShowBackgroundContextMenu())
     ImGui::OpenPopup("Create New Node");
