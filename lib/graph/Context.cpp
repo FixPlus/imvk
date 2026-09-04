@@ -16,6 +16,8 @@ Workflow::Workflow(const Workflow &another) : m_ctx(another.m_ctx) {
   }
   for (auto &&node : m_workflow) {
     for (auto &&use : node.uses()) {
+      if (!use.hasValue())
+        continue;
       auto &val = use.value();
       auto &origNode = val.node();
       auto resultNum = val.resultNum();
@@ -53,10 +55,17 @@ void Workflow::dump(std::ostream &os) const {
     if (!std::ranges::empty(uses)) {
       for (const Use &use :
            std::ranges::subrange{std::begin(uses), std::prev(std::end(uses))}) {
-        dumpValue(os, use.value(), false);
+        if (use.hasValue())
+          dumpValue(os, use.value(), false);
+        else
+          os << "null";
         os << ", ";
       }
-      dumpValue(os, std::prev(std::end(uses))->value(), false);
+      auto &lastUse = *std::prev(std::end(uses));
+      if (lastUse.hasValue())
+        dumpValue(os, lastUse.value(), false);
+      else
+        os << "null";
     }
     std::stringstream ss;
     node.dumpAttributes(ss);

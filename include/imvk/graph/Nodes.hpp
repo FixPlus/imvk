@@ -97,6 +97,18 @@ private:
 
 class MakeImage : public Node {
 public:
+  MakeImage(Context &ctx, const ImageTy &type)
+      : Node(ctx,
+             std::array{Node::Use{nullptr, &ctx.types().get<ExtentsTy>(),
+                                  new BasicUseInfo{"extents"}},
+                        Node::Use{nullptr, &ctx.types().get<IntegerScalarTy>(),
+                                  new BasicUseInfo{"format"}},
+                        Node::Use{nullptr, &ctx.types().get<IntegerScalarTy>(),
+                                  new BasicUseInfo{"layers"}},
+                        Node::Use{nullptr, &ctx.types().get<IntegerScalarTy>(),
+                                  new BasicUseInfo{"mip levels"}}},
+             std::array{Node::Def{
+                 &type, new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
   MakeImage(Context &ctx, const ImageTy &type, Value &extents, Value &format,
             Value &layers, Value &mips)
       : Node(ctx,
@@ -149,6 +161,13 @@ private:
 
 class GetExtents : public Node {
 public:
+  GetExtents(Context &ctx)
+      : Node(ctx,
+             std::array{
+                 Node::Use{nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                           new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+             std::array{Node::Def{&ctx.types().get<ExtentsTy>(),
+                                  new BasicDefInfo{"extents"}}}) {}
   GetExtents(Context &ctx, Value &image)
       : Node(ctx,
              std::array{Node::Use{
@@ -196,6 +215,14 @@ template <typename T> class Copy {};
 
 template <> class Clone<ImageTy> : public Node {
 public:
+  Clone(Context &ctx)
+      : Node(ctx,
+             std::array{
+                 Node::Use{nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                           new ImageUseInfo{ImageAccessInfo{}, "source"}}},
+             std::array{
+                 Node::Def{&ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                           new ImageDefInfo{ImageAccessInfo{}, "clone"}}}) {}
   Clone(Context &ctx, Value &image)
       : Node(ctx,
              std::array{
@@ -228,6 +255,33 @@ private:
 
 template <> class Copy<ImageTy> : public Node {
 public:
+  Copy(Context &ctx)
+      : Node(ctx,
+             std::array{
+                 Node::Use{
+                     nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                     new ImageUseInfo{
+                         ImageAccessInfo{
+                             .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
+                             .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
+                         "source"}},
+                 Node::Use{
+                     nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                     new ImageUseInfo{
+                         ImageAccessInfo{
+                             .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                         0, "destination"}}},
+             std::array{Node::Def(
+                 &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 new ImageDefInfo{
+                     ImageAccessInfo{
+                         .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
+                         .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                     1, "destination"})}) {}
   Copy(Context &ctx, Value &src, Value &dst)
       : Node(ctx,
              std::array{
@@ -279,6 +333,15 @@ template <typename T> class Barrier {};
 
 template <> class Barrier<ImageTy> : public Node {
 public:
+  Barrier(Context &ctx, VkImageLayout src, VkImageLayout dst)
+      : Node(ctx,
+             std::array{Node::Use{
+                 nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 new ImageUseInfo{ImageAccessInfo{.layout = src}, 0, "image"}}},
+             std::array{
+                 Node::Def(&ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                           new ImageDefInfo{ImageAccessInfo{.layout = dst}, 0,
+                                            "image"})}) {}
   Barrier(Context &ctx, Value &image, VkImageLayout src, VkImageLayout dst)
       : Node(ctx,
              std::array{Node::Use(&image,
@@ -371,6 +434,57 @@ struct Scene final {
 
 class RenderPass : public Node {
 public:
+  RenderPass(Context &ctx, const Scene &scene)
+      : Node(
+            ctx,
+            [&]() {
+              const auto &imageType =
+                  ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D);
+              boost::container::small_vector<Node::Use, 4> uses;
+              unsigned passIndex = 0;
+              for (const auto &info : scene.attachments) {
+                auto *copyInfo = info.clone();
+                switch (copyInfo->kind) {
+                case ImageAttachmentUseInfo::Kind::color:
+                  copyInfo->setName("color attachment");
+                  break;
+                case ImageAttachmentUseInfo::Kind::depth:
+                  copyInfo->setName("depth attachment");
+                  break;
+                case ImageAttachmentUseInfo::Kind::input:
+                  copyInfo->setName("input attachment");
+                  break;
+                }
+                if (copyInfo->kind != ImageAttachmentUseInfo::Kind::input)
+                  copyInfo->passthrough = passIndex++;
+                uses.emplace_back(nullptr, &imageType, copyInfo);
+              }
+              for (const auto &info : scene.descriptors) {
+                auto *copyInfo = info.useInfo().clone();
+                copyInfo->setName("descriptor");
+                uses.emplace_back(nullptr, &imageType, copyInfo);
+              }
+              return uses;
+            }(),
+            [&]() {
+              const auto &imageType =
+                  ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D);
+              boost::container::small_vector<Node::Def, 4> defs;
+              unsigned passIndex = 0;
+              for (const auto &info : scene.attachments) {
+                if (info.kind != ImageAttachmentUseInfo::Kind::input) {
+                  auto *def = new ImageDefInfo{info.defFromThis()};
+                  def->passthrough = passIndex;
+                  def->setName(info.kind == ImageAttachmentUseInfo::Kind::color
+                                   ? "color attachment"
+                                   : "depth attachment");
+                  defs.emplace_back(&imageType, def);
+                }
+                ++passIndex;
+              }
+              return defs;
+            }()),
+        m_scene(&scene), m_firstDescriptor(scene.attachments.size()) {}
   /// @brief create render pass node.
   /// @param ctx graph context handle.
   /// @param attachments array of image values. must match scene attachment
@@ -469,6 +583,17 @@ private:
 
 class Present : public Node {
 public:
+  Present(Context &ctx)
+      : Node(ctx,
+             std::array{Node::Use{
+                 nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 new ImageUseInfo{
+                     ImageAccessInfo{.accessFlags = 0,
+                                     .stageFlags =
+                                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                     .layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR},
+                     "image"}}},
+             Node::EmptyResults) {}
   Present(Context &ctx, Value &image)
       : Node(ctx,
              std::array{Node::Use{

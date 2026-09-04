@@ -97,7 +97,7 @@ static std::string typeName(const imvk::graph::Type &type) {
 static std::string pinName(const imvk::graph::Use &use) {
   if (use.info() && !use.info()->name().empty())
     return std::string{use.info()->name()};
-  return typeName(use.value().type());
+  return typeName(use.type());
 }
 
 static std::string pinName(const imvk::graph::Value &value) {
@@ -318,7 +318,7 @@ static bool drawNode(imvk::graph::Node &node,
     ed::BeginPin(ed::PinId(&use), ed::PinKind::Input);
     ed::PinPivotAlignment(ImVec2(0.0f, 0.5f));
     ed::PinPivotSize(ImVec2(0.0f, 0.0f));
-    drawPinIcon(use.value().type(), ed::HasAnyLinks(ed::PinId(&use)));
+    drawPinIcon(use.type(), ed::HasAnyLinks(ed::PinId(&use)));
     ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
     ImGui::TextUnformatted(name.c_str());
     ed::EndPin();
@@ -363,6 +363,62 @@ static bool drawNode(imvk::graph::Node &node,
   return stateChanged;
 }
 
+static bool isComplete(const imvk::graph::Workflow &workflow) {
+  return std::ranges::all_of(workflow, [](const auto &node) {
+    return std::ranges::all_of(node.uses(),
+                               [](const auto &use) { return use.hasValue(); });
+  });
+}
+
+static imvk::graph::Node *
+drawCreateNodeMenu(imvk::graph::Workflow &workflow,
+                   const GraphEditor::SceneTable &availableScenes) {
+  imvk::graph::Node *created = nullptr;
+  auto create = [&]<typename T>(auto &&...args) {
+    created = imvk::graph::WorkflowBuilder{workflow, workflow.end()}.create<T>(
+        std::forward<decltype(args)>(args)...);
+  };
+  auto &context = workflow.context();
+  const auto &imageType =
+      context.types().get<imvk::graph::ImageTy>(VK_IMAGE_TYPE_2D);
+
+  if (ImGui::BeginMenu("Constants")) {
+    if (ImGui::MenuItem("Integer"))
+      create.template
+      operator()<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(
+          size_t{0});
+    if (ImGui::MenuItem("Extents"))
+      create.template operator()<imvk::graph::Constant<imvk::graph::ExtentsTy>>(
+          VkExtent3D{1, 1, 1});
+    ImGui::EndMenu();
+  }
+  if (ImGui::MenuItem("Make Image"))
+    create.template operator()<imvk::graph::MakeImage>(imageType);
+  if (ImGui::MenuItem("Acquire Image"))
+    create.template operator()<imvk::graph::AcquireImage>();
+  if (ImGui::MenuItem("Get Extents"))
+    create.template operator()<imvk::graph::GetExtents>();
+  if (ImGui::MenuItem("Clone Image"))
+    create.template operator()<imvk::graph::Clone<imvk::graph::ImageTy>>();
+  if (ImGui::MenuItem("Copy Image"))
+    create.template operator()<imvk::graph::Copy<imvk::graph::ImageTy>>();
+  if (ImGui::MenuItem("Image Barrier"))
+    create.template operator()<imvk::graph::Barrier<imvk::graph::ImageTy>>(
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+  if (ImGui::BeginMenu("Render Pass")) {
+    if (availableScenes.empty())
+      ImGui::MenuItem("No scenes available", nullptr, false, false);
+    for (const auto &[name, scene] : availableScenes) {
+      if (ImGui::MenuItem(name.c_str()))
+        create.template operator()<imvk::graph::RenderPass>(scene.get());
+    }
+    ImGui::EndMenu();
+  }
+  if (ImGui::MenuItem("Present Image"))
+    create.template operator()<imvk::graph::Present>();
+  return created;
+}
+
 void GraphEditor::onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
   if (m_needRematerialization) {
     m_matCtx.reset();
@@ -395,10 +451,12 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, windowRounding);
 
   auto &workflow = m_currentWorkflow;
+  const bool graphComplete = isComplete(workflow);
   ImGui::Text("fps: %.2f, nodes: %lld", m_me.window().clock().fps(),
               std::distance(workflow.begin(), workflow.end()));
   ImGui::SameLine();
-  ImGui::BeginDisabled(!m_hasUnmaterializedChanges || m_needRematerialization);
+  ImGui::BeginDisabled(!m_hasUnmaterializedChanges || m_needRematerialization ||
+                       !graphComplete);
   if (ImGui::Button("Rematerialize"))
     m_needRematerialization = true;
   ImGui::EndDisabled();
@@ -412,9 +470,24 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
     m_hasUnmaterializedChanges |= drawNode(node, m_availableScenes);
   for (auto &node : workflow) {
     for (auto &&[index, use] : std::views::enumerate(node.uses())) {
+      if (!use.hasValue())
+        continue;
       ed::Link(ed::LinkId(&use), ed::PinId(&use.value()), ed::PinId(&use));
     }
   }
+  ed::Suspend();
+  if (ed::ShowBackgroundContextMenu())
+    ImGui::OpenPopup("Create New Node");
+  if (ImGui::BeginPopup("Create New Node")) {
+    const auto position =
+        ed::ScreenToCanvas(ImGui::GetMousePosOnOpeningCurrentPopup());
+    if (auto *created = drawCreateNodeMenu(workflow, m_availableScenes)) {
+      ed::SetNodePosition(ed::NodeId(created), position);
+      m_hasUnmaterializedChanges = true;
+    }
+    ImGui::EndPopup();
+  }
+  ed::Resume();
   if (m_needUntangleLayout) {
     /// TODO: implement
     untangleLayout(workflow);

@@ -89,12 +89,14 @@ public:
 class Use final {
 public:
   Use() = default;
-  Use(Node *user, UseInfo *info) : m_user(user), m_info(info){};
+  Use(Node *user, UseInfo *info, const Type *type)
+      : m_user(user), m_type(type), m_info(info){};
 
   void replaceBy(Value *val);
 
   bool hasValue() const { return m_value; }
   Value &value() const { return *m_value; }
+  const Type &type() const { return *m_type; }
 
   Node &user() const { return *m_user; }
 
@@ -107,6 +109,7 @@ private:
   Use *prev() const { return m_prev; }
   Value *m_value = nullptr;
   Node *m_user = nullptr;
+  const Type *m_type = nullptr;
   Use *m_prev = nullptr;
   Use *m_next = nullptr;
   std::unique_ptr<UseInfo> m_info = nullptr;
@@ -241,12 +244,27 @@ inline void Use::replaceBy(Value *val) {
     m_prev->m_next = m_next;
   if (m_next)
     m_next->m_prev = m_prev;
-  val->addUse(*this);
+  m_value = nullptr;
+  m_prev = nullptr;
+  m_next = nullptr;
+  if (val) {
+    assert(&val->type() == m_type);
+    val->addUse(*this);
+  }
 }
 
 class Node : public boost::intrusive::list_base_hook<> {
 public:
-  using Use = std::pair<Value *, UseInfo *>;
+  struct Use {
+    Value *value;
+    const Type *type;
+    UseInfo *info;
+
+    Use(Value *value, UseInfo *info)
+        : value(value), type(value ? &value->type() : nullptr), info(info) {}
+    Use(std::nullptr_t, const Type *type, UseInfo *info)
+        : value(nullptr), type(type), info(info) {}
+  };
   using Def = std::pair<const Type *, DefInfo *>;
   static constexpr auto EmptyUses = std::span<Use>{(Use *)nullptr, 0};
   static constexpr auto EmptyValues = std::span<Value *>{(Value **)nullptr, 0};
@@ -254,11 +272,11 @@ public:
   Node(Context &ctx, auto &&values, auto &&types) {
     m_uses.resize(std::ranges::size(values));
     std::ranges::transform(values, std::begin(m_uses), [this](auto &&p) {
-      return graph::Use{this, p.second};
+      return graph::Use{this, p.info, p.type};
     });
     for (auto &&[use, value] : std::views::zip(m_uses, values)) {
-      if (value.first)
-        value.first->addUse(use);
+      if (value.value)
+        value.value->addUse(use);
     }
 
     std::ranges::transform(types, std::back_inserter(m_results),
@@ -279,7 +297,8 @@ public:
     auto ret = doClone();
     ret->m_uses.resize(m_uses.size());
     std::ranges::transform(m_uses, ret->m_uses.begin(), [&](auto &&use) {
-      return graph::Use(ret.get(), use.info() ? use.info()->clone() : nullptr);
+      return graph::Use(ret.get(), use.info() ? use.info()->clone() : nullptr,
+                        &use.type());
     });
     for (auto &&[use, value] : std::views::zip(ret->m_uses, m_uses)) {
       if (value.hasValue())
