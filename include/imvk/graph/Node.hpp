@@ -93,6 +93,7 @@ public:
 
   void replaceBy(Value *val);
 
+  bool hasValue() const { return m_value; }
   Value &value() const { return *m_value; }
 
   Node &user() const { return *m_user; }
@@ -256,7 +257,8 @@ public:
       return graph::Use{this, p.second};
     });
     for (auto &&[use, value] : std::views::zip(m_uses, values)) {
-      value.first->addUse(use);
+      if (value.first)
+        value.first->addUse(use);
     }
 
     std::ranges::transform(types, std::back_inserter(m_results),
@@ -280,7 +282,8 @@ public:
       return graph::Use(ret.get(), use.info() ? use.info()->clone() : nullptr);
     });
     for (auto &&[use, value] : std::views::zip(ret->m_uses, m_uses)) {
-      value.value().addUse(use);
+      if (value.hasValue())
+        value.value().addUse(use);
     }
 
     std::ranges::transform(
