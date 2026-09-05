@@ -42,6 +42,9 @@ public:
 
   static void setNoAlpha();
   static void setAlpha();
+  static void filterLinear();
+  static void filterNearest();
+  static void reset();
 
   void gui(boost::compat::function_ref<void(void)> recorder);
 

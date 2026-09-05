@@ -1266,8 +1266,9 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ImGui::PopStyleVar(2);
   ImGui::Begin("scene");
   GUI::setNoAlpha();
+  GUI::filterLinear();
   ImGui::Image(scene.resultBuffer(), ImGui::GetContentRegionAvail());
-  GUI::setAlpha();
+  GUI::reset();
   ImGui::End();
   m_draw_verification_log();
 }

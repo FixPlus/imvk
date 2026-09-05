@@ -460,7 +460,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.

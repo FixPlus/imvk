@@ -191,6 +191,25 @@ void GUI::setAlpha() {
     state->pipeMngr->bindPipeline();
   });
 }
+
+void GUI::filterLinear() {
+  auto &platformIO = ImGui::GetPlatformIO();
+  ImDrawList *draw_list = ImGui::GetWindowDrawList();
+  draw_list->AddCallback(platformIO.DrawCallback_SetSamplerLinear);
+}
+
+void GUI::filterNearest() {
+  auto &platformIO = ImGui::GetPlatformIO();
+  ImDrawList *draw_list = ImGui::GetWindowDrawList();
+  draw_list->AddCallback(platformIO.DrawCallback_SetSamplerNearest);
+}
+
+void GUI::reset() {
+  auto &platformIO = ImGui::GetPlatformIO();
+  ImDrawList *draw_list = ImGui::GetWindowDrawList();
+  draw_list->AddCallback(platformIO.DrawCallback_ResetRenderState);
+}
+
 GUI::~GUI() = default;
 
 GUI::Lightings::Lightings(GraphicsEngine &engine, ShaderLoader &sl,
