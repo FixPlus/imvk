@@ -93,17 +93,22 @@ private:
   void m_inject_into_workflow(imvk::graph::Workflow &wf);
   void m_request_rematerialization();
   void m_draw_verification_log();
+  void m_draw_materialized_workflow();
   void m_clear_verification_log();
   const MaterializationEnvironment &m_me;
   std::unique_ptr<ax::NodeEditor::EditorContext, EditorDeleter> m_ctx;
+  std::unique_ptr<ax::NodeEditor::EditorContext, EditorDeleter>
+      m_materializedCtx;
   imvk::graph::Scene m_scene;
   SceneTable m_availableScenes;
   imvk::graph::Workflow m_currentWorkflow;
   imvk::graph::Workflow m_materializedWorkflow;
   std::optional<imvk::graph::MaterializationContext> m_matCtx;
   bool m_needUntangleLayout = true;
+  bool m_needMaterializedUntangleLayout = true;
   bool m_hasUnmaterializedChanges = false;
   bool m_needRematerialization = false;
+  bool m_showMaterializedWorkflow = false;
   bool m_showVerificationLog = false;
   std::optional<VerificationLogEntry> m_verificationLog;
 };

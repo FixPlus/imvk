@@ -180,8 +180,7 @@ createCopyExtents(imvk::graph::WorkflowBuilder &builder,
           ->results()
           .front();
   auto &fmt =
-      builder
-          .create<imvk::graph::Constant<imvk::graph::FormatTy>>(format)
+      builder.create<imvk::graph::Constant<imvk::graph::FormatTy>>(format)
           ->results()
           .front();
   auto &extents =
@@ -460,7 +459,7 @@ int app() try {
   // Open vulkan loader library, construct vulkan instance, pick
   // physical device and construct logical device.
   imvk::examples::Device imvkDevice{
-      imvk::examples::DeviceCreateInfo{.enableValidation = false}};
+      imvk::examples::DeviceCreateInfo{.enableValidation = true}};
 
   // Create presentable window and it's surface. This will be used as
   // swapchain factory.

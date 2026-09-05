@@ -24,14 +24,16 @@
 namespace ed = ax::NodeEditor;
 
 namespace imvk::examples {
+static ed::EditorContext *createEditorContext() {
+  ed::Config config;
+  return ed::CreateEditor(&config);
+}
+
 GraphEditor::GraphEditor(const MaterializationEnvironment &me,
                          imvk::graph::Workflow initialWorkflow,
                          SceneTable availableScenes)
-    : m_me(me), m_ctx([]() {
-        ed::Config config;
-        auto *context = ed::CreateEditor(&config);
-        return context;
-      }()),
+    : m_me(me), m_ctx(createEditorContext()),
+      m_materializedCtx(createEditorContext()),
       m_scene(GraphScene::get([this](GraphScene &scene, const Frame &frame) {
         onGui(scene, frame);
       })),
@@ -732,6 +734,8 @@ static float nodeWidgetWidth(const imvk::graph::Node &node) {
     return 210.0f;
   if (isa<imvk::graph::RenderPass>(&node))
     return 160.0f;
+  if (isa<imvk::graph::Barrier<imvk::graph::ImageTy>>(&node))
+    return 460.0f;
   return 0.0f;
 }
 
@@ -837,38 +841,66 @@ static bool drawFormatInput(imvk::graph::Constant<imvk::graph::FormatTy> &node,
 
 static bool drawNodeWidget(imvk::graph::Node &node,
                            const GraphEditor::SceneTable &availableScenes,
-                           float contentWidth, NodePopupState &popup) {
+                           float contentWidth, NodePopupState &popup,
+                           bool editable) {
   bool changed = false;
   ImGui::PushID(&node);
   if (auto *constant =
           dyn_cast<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(
               &node)) {
-    auto value = static_cast<unsigned long long>(constant->getValue());
-    ImGui::SetNextItemWidth(contentWidth);
-    if (ImGui::InputScalar("##value", ImGuiDataType_U64, &value)) {
-      constant->setValue(static_cast<size_t>(value));
-      changed = true;
+    if (editable) {
+      auto value = static_cast<unsigned long long>(constant->getValue());
+      ImGui::SetNextItemWidth(contentWidth);
+      if (ImGui::InputScalar("##value", ImGuiDataType_U64, &value)) {
+        constant->setValue(static_cast<size_t>(value));
+        changed = true;
+      }
+    } else {
+      ImGui::Text("%llu",
+                  static_cast<unsigned long long>(constant->getValue()));
     }
   } else if (auto *constant =
                  dyn_cast<imvk::graph::Constant<imvk::graph::FormatTy>>(
                      &node)) {
-    changed = drawFormatInput(*constant, contentWidth, popup);
+    if (editable)
+      changed = drawFormatInput(*constant, contentWidth, popup);
+    else
+      ImGui::TextUnformatted(string_VkFormat(constant->getValue()));
   } else if (auto *constant =
                  dyn_cast<imvk::graph::Constant<imvk::graph::ExtentsTy>>(
                      &node)) {
-    auto value = constant->getValue();
-    unsigned components[] = {value.width, value.height, value.depth};
-    ImGui::SetNextItemWidth(contentWidth);
-    if (ImGui::InputScalarN("##value", ImGuiDataType_U32, components, 3)) {
-      constant->setValue({components[0], components[1], components[2]});
-      changed = true;
+    const auto value = constant->getValue();
+    if (editable) {
+      unsigned components[] = {value.width, value.height, value.depth};
+      ImGui::SetNextItemWidth(contentWidth);
+      if (ImGui::InputScalarN("##value", ImGuiDataType_U32, components, 3)) {
+        constant->setValue({components[0], components[1], components[2]});
+        changed = true;
+      }
+    } else {
+      ImGui::Text("%u x %u x %u", value.width, value.height, value.depth);
     }
   } else if (auto *renderPass = dyn_cast<imvk::graph::RenderPass>(&node)) {
     const auto currentName = sceneName(renderPass->scene(), availableScenes);
-    popup.openRequested =
-        ImGui::Button(currentName.data(), ImVec2(contentWidth, 0.0f));
-    popup.anchor = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
-    popup.width = contentWidth;
+    if (editable) {
+      popup.openRequested =
+          ImGui::Button(currentName.data(), ImVec2(contentWidth, 0.0f));
+      popup.anchor = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+      popup.width = contentWidth;
+    } else {
+      ImGui::TextUnformatted(currentName.data());
+    }
+  } else if (auto *barrier =
+                 dyn_cast<imvk::graph::Barrier<imvk::graph::ImageTy>>(&node)) {
+    const auto *useInfo =
+        dyn_cast<const imvk::graph::ImageUseInfo>(barrier->uses()[0].info());
+    const auto *defInfo = dyn_cast<const imvk::graph::ImageDefInfo>(
+        &barrier->results()[0].info());
+    if (useInfo && defInfo) {
+      ImGui::Text("%s", string_VkImageLayout(useInfo->access.layout));
+      ImGui::Text("->");
+      ImGui::Text("%s", string_VkImageLayout(defInfo->access.layout));
+    }
   }
   ImGui::PopID();
   return changed;
@@ -940,7 +972,8 @@ static bool drawNodePopup(imvk::graph::Node &node,
 }
 
 static bool drawNode(imvk::graph::Node &node,
-                     const GraphEditor::SceneTable &availableScenes) {
+                     const GraphEditor::SceneTable &availableScenes,
+                     bool editable) {
   const auto nodeId = ed::NodeId(&node);
   boost::static_string<50> title;
   displayName(node.name(), title);
@@ -993,7 +1026,7 @@ static bool drawNode(imvk::graph::Node &node,
 
   NodePopupState popup;
   bool stateChanged =
-      drawNodeWidget(node, availableScenes, contentWidth, popup);
+      drawNodeWidget(node, availableScenes, contentWidth, popup, editable);
 
   auto drawUse = [](auto &&use, auto &&name) {
     ed::BeginPin(ed::PinId(&use), ed::PinKind::Input);
@@ -1041,7 +1074,7 @@ static bool drawNode(imvk::graph::Node &node,
                       IM_COL32(255, 255, 255, 32));
   }
   ed::PopStyleVar();
-  if (popup.width > 0.0f)
+  if (editable && popup.width > 0.0f)
     stateChanged |= drawNodePopup(node, availableScenes, popup);
   return stateChanged;
 }
@@ -1253,6 +1286,8 @@ void GraphEditor::onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
     m_materializedWorkflow = m_currentWorkflow;
     m_inject_into_workflow(m_materializedWorkflow);
     m_matCtx.emplace(m_me, m_materializedWorkflow);
+    m_materializedCtx.reset(createEditorContext());
+    m_needMaterializedUntangleLayout = true;
     m_hasUnmaterializedChanges = false;
     m_needRematerialization = false;
   }
@@ -1365,6 +1400,43 @@ void GraphEditor::m_draw_verification_log() {
   ImGui::End();
 }
 
+void GraphEditor::m_draw_materialized_workflow() {
+  if (!m_showMaterializedWorkflow)
+    return;
+
+  ImGui::SetNextWindowSize(ImVec2(900.0f, 600.0f), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Materialized workflow", &m_showMaterializedWorkflow)) {
+    ImGui::End();
+    return;
+  }
+
+  ImGui::TextDisabled(
+      "Read-only graph after materialization (including inserted copies and "
+      "barriers)");
+  ImGui::Separator();
+
+  ed::SetCurrentEditor(m_materializedCtx.get());
+  ed::PushStyleVar(ed::StyleVar_PivotSize, ImVec2(3, 3));
+  ed::Begin("Materialized render graph", ImVec2(0, 0));
+  for (auto &node : m_materializedWorkflow)
+    drawNode(node, m_availableScenes, false);
+  for (auto &node : m_materializedWorkflow) {
+    for (auto &use : node.uses()) {
+      if (use.hasValue())
+        ed::Link(ed::LinkId(&use), ed::PinId(&use.value()), ed::PinId(&use));
+    }
+  }
+  if (m_needMaterializedUntangleLayout) {
+    untangleLayout(m_materializedWorkflow);
+    m_needMaterializedUntangleLayout = false;
+  }
+  ed::PopStyleVar();
+  ed::End();
+  ed::SetCurrentEditor(m_ctx.get());
+
+  ImGui::End();
+}
+
 void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
 
   ImGuiWindowFlags flags =
@@ -1391,13 +1463,15 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   if (ImGui::Button("Rematerialize"))
     m_request_rematerialization();
   ImGui::EndDisabled();
+  ImGui::SameLine();
+  ImGui::Checkbox("Materialized workflow", &m_showMaterializedWorkflow);
   ImGui::Separator();
   ed::SetCurrentEditor(m_ctx.get());
   ed::PushStyleVar(ed::StyleVar_PivotSize, ImVec2(3, 3));
   ed::Begin("Render graph", ImVec2(0, 0));
   bool workflowChanged = false;
   for (auto &node : workflow)
-    workflowChanged |= drawNode(node, m_availableScenes);
+    workflowChanged |= drawNode(node, m_availableScenes, true);
   for (auto &node : workflow) {
     for (auto &&[index, use] : std::views::enumerate(node.uses())) {
       if (!use.hasValue())
@@ -1439,6 +1513,7 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ImGui::Image(scene.resultBuffer(), ImGui::GetContentRegionAvail());
   GUI::reset();
   ImGui::End();
+  m_draw_materialized_workflow();
   m_draw_verification_log();
 }
 
