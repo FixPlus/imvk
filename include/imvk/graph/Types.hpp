@@ -35,7 +35,7 @@ public:
   ImageTy(VkImageType type)
       : Type([&]() {
           std::stringstream ss;
-          ss << "image<" << imageTypeToStr(imageType) << ">";
+          ss << "image<" << imageTypeToStr(type) << ">";
           return ss.str();
         }()),
         imageType(type) {}

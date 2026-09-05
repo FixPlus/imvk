@@ -106,6 +106,7 @@ static void pinName(const imvk::graph::Value &value,
                     boost::static_string<50> &out) {
   if (value.infoOrNull() && !value.infoOrNull()->name().empty()) {
     out.append(value.infoOrNull()->name());
+    return;
   }
   out.append(value.type().name());
 }
