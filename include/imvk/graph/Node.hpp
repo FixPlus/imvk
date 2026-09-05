@@ -256,6 +256,72 @@ inline void Use::replaceBy(Value *val) {
   }
 }
 
+class Node;
+
+class VerifyErrorBase {
+public:
+  virtual std::string_view what() const = 0;
+  virtual ~VerifyErrorBase() = default;
+};
+
+class MissingUseValueError final : public VerifyErrorBase {
+public:
+  std::string_view what() const final { return "use has no value"; }
+};
+
+class InvalidTopologyError final : public VerifyErrorBase {
+public:
+  std::string_view what() const final {
+    return "value producer must precede its user in the workflow";
+  }
+};
+
+class UseTypeMismatchError final : public VerifyErrorBase {
+public:
+  std::string_view what() const final {
+    return "use and value types do not match";
+  }
+};
+
+class MultipleAcquireImageError final : public VerifyErrorBase {
+public:
+  std::string_view what() const final {
+    return "workflow contains more than one acquire_image node";
+  }
+};
+
+class MultiplePresentImageError final : public VerifyErrorBase {
+public:
+  std::string_view what() const final {
+    return "workflow contains more than one present_image node";
+  }
+};
+
+class MissingPresentImageError final : public VerifyErrorBase {
+public:
+  std::string_view what() const final {
+    return "acquire_image node requires a following present_image node";
+  }
+};
+
+class InvalidAcquirePresentOrderError final : public VerifyErrorBase {
+public:
+  std::string_view what() const final {
+    return "present_image node must follow acquire_image node";
+  }
+};
+
+struct VerifyError {
+  struct Location {
+    Node *node;
+    Use *use;
+    Value *value;
+  } location;
+  std::unique_ptr<VerifyErrorBase> error;
+};
+
+class AttributesAnalysis;
+
 class Node : public boost::intrusive::list_base_hook<> {
 public:
   struct Use {
@@ -315,6 +381,9 @@ public:
         });
     return ret;
   }
+
+  virtual std::optional<VerifyError>
+  verify(Context &ctx, const AttributesAnalysis &aa) const = 0;
   virtual std::string_view name() const = 0;
   virtual void dumpAttributes(std::ostream &os) const = 0;
   virtual bool hasVisibleSideEffects() const = 0;

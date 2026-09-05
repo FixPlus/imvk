@@ -105,6 +105,8 @@ private:
   boost::intrusive::list<Node> m_workflow;
 };
 
+std::optional<VerifyError> verifyWorkflow(const Workflow &wf);
+
 inline std::ostream &operator<<(std::ostream &os, const Workflow &flow) {
   flow.dump(os);
   return os;

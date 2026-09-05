@@ -383,13 +383,6 @@ static bool drawNode(imvk::graph::Node &node,
   return stateChanged;
 }
 
-static bool isComplete(const imvk::graph::Workflow &workflow) {
-  return std::ranges::all_of(workflow, [](const auto &node) {
-    return std::ranges::all_of(node.uses(),
-                               [](const auto &use) { return use.hasValue(); });
-  });
-}
-
 struct LinkCandidate {
   imvk::graph::Value *value = nullptr;
   imvk::graph::Use *use = nullptr;
@@ -601,6 +594,111 @@ void GraphEditor::onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
   m_matCtx->run(commands, frame);
 }
 
+void GraphEditor::m_request_rematerialization() {
+  if (auto error = imvk::graph::verifyWorkflow(m_currentWorkflow)) {
+    m_verificationLog = VerificationLogEntry{
+        error->error ? std::string(error->error->what())
+                     : std::string("unknown workflow verification error"),
+        error->location};
+    m_showVerificationLog = true;
+    return;
+  }
+
+  m_clear_verification_log();
+  m_needRematerialization = true;
+}
+
+void GraphEditor::m_clear_verification_log() {
+  m_verificationLog.reset();
+  m_showVerificationLog = false;
+}
+
+static std::optional<size_t> nodeIndex(const imvk::graph::Workflow &workflow,
+                                       const imvk::graph::Node *needle) {
+  size_t index = 0;
+  for (auto &node : workflow) {
+    if (&node == needle)
+      return index;
+    ++index;
+  }
+  return std::nullopt;
+}
+
+void GraphEditor::m_draw_verification_log() {
+  if (!m_showVerificationLog)
+    return;
+
+  ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Graph verification log", &m_showVerificationLog)) {
+    ImGui::End();
+    return;
+  }
+
+  if (!m_verificationLog) {
+    ImGui::TextDisabled("No workflow verification errors.");
+    ImGui::End();
+    return;
+  }
+
+  const auto &entry = *m_verificationLog;
+  const auto &location = entry.location;
+  ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f),
+                     "Workflow verification failed");
+  ImGui::Separator();
+  ImGui::TextWrapped("%s", entry.message.c_str());
+  ImGui::Spacing();
+
+  auto *focusNode = location.node;
+  if (!focusNode && location.use)
+    focusNode = &location.use->user();
+  if (!focusNode && location.value && !location.value->isNull())
+    focusNode = &location.value->node();
+
+  if (focusNode) {
+    boost::static_string<50> name;
+    displayName(focusNode->name(), name);
+    if (const auto index = nodeIndex(m_currentWorkflow, focusNode))
+      ImGui::Text("Node: %s (#%llu, id=%p)", name.c_str(),
+                  static_cast<unsigned long long>(*index),
+                  static_cast<void *>(focusNode));
+    else
+      ImGui::Text("Node: %s (id=%p)", name.c_str(),
+                  static_cast<void *>(focusNode));
+  }
+
+  if (location.use) {
+    boost::static_string<50> name;
+    pinName(*location.use, name);
+    ImGui::Text("Input pin: %s (id=%p)", name.c_str(),
+                static_cast<void *>(location.use));
+    if (location.use->hasValue())
+      ImGui::Text("Link: id=%p", static_cast<void *>(location.use));
+  }
+
+  if (location.value) {
+    boost::static_string<50> name;
+    pinName(*location.value, name);
+    ImGui::Text("Output pin: %s (id=%p)", name.c_str(),
+                static_cast<void *>(location.value));
+  }
+
+  if (focusNode) {
+    ImGui::Spacing();
+    if (ImGui::Button(location.use && location.use->hasValue()
+                          ? "Focus link"
+                          : "Focus node")) {
+      ed::ClearSelection();
+      if (location.use && location.use->hasValue())
+        ed::SelectLink(ed::LinkId(location.use));
+      else
+        ed::SelectNode(ed::NodeId(focusNode));
+      ed::NavigateToSelection(true);
+    }
+  }
+
+  ImGui::End();
+}
+
 void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
 
   ImGuiWindowFlags flags =
@@ -620,21 +718,20 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, windowRounding);
 
   auto &workflow = m_currentWorkflow;
-  const bool graphComplete = isComplete(workflow);
   ImGui::Text("fps: %.2f, nodes: %lld", m_me.window().clock().fps(),
               std::distance(workflow.begin(), workflow.end()));
   ImGui::SameLine();
-  ImGui::BeginDisabled(!m_hasUnmaterializedChanges || m_needRematerialization ||
-                       !graphComplete);
+  ImGui::BeginDisabled(!m_hasUnmaterializedChanges || m_needRematerialization);
   if (ImGui::Button("Rematerialize"))
-    m_needRematerialization = true;
+    m_request_rematerialization();
   ImGui::EndDisabled();
   ImGui::Separator();
   ed::SetCurrentEditor(m_ctx.get());
   ed::PushStyleVar(ed::StyleVar_PivotSize, ImVec2(3, 3));
   ed::Begin("Render graph", ImVec2(0, 0));
+  bool workflowChanged = false;
   for (auto &node : workflow)
-    m_hasUnmaterializedChanges |= drawNode(node, m_availableScenes);
+    workflowChanged |= drawNode(node, m_availableScenes);
   for (auto &node : workflow) {
     for (auto &&[index, use] : std::views::enumerate(node.uses())) {
       if (!use.hasValue())
@@ -642,8 +739,8 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
       ed::Link(ed::LinkId(&use), ed::PinId(&use.value()), ed::PinId(&use));
     }
   }
-  m_hasUnmaterializedChanges |= handleLinkCreation(workflow);
-  m_hasUnmaterializedChanges |= handleDeletion(workflow);
+  workflowChanged |= handleLinkCreation(workflow);
+  workflowChanged |= handleDeletion(workflow);
   ed::Suspend();
   if (ed::ShowBackgroundContextMenu())
     ImGui::OpenPopup("Create New Node");
@@ -652,7 +749,7 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
         ed::ScreenToCanvas(ImGui::GetMousePosOnOpeningCurrentPopup());
     if (auto *created = drawCreateNodeMenu(workflow, m_availableScenes)) {
       ed::SetNodePosition(ed::NodeId(created), position);
-      m_hasUnmaterializedChanges = true;
+      workflowChanged = true;
     }
     ImGui::EndPopup();
   }
@@ -664,12 +761,17 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   }
   ed::PopStyleVar(1);
   ed::End();
+  if (workflowChanged) {
+    m_hasUnmaterializedChanges = true;
+    m_clear_verification_log();
+  }
   ImGui::PopStyleVar(2);
   ImGui::End();
   ImGui::PopStyleVar(2);
   ImGui::Begin("scene");
   ImGui::Image(scene.resultBuffer(), ImGui::GetContentRegionAvail());
   ImGui::End();
+  m_draw_verification_log();
 }
 
 void GraphEditor::EditorDeleter::operator()(

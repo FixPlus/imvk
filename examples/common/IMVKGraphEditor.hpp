@@ -12,6 +12,8 @@
 #include "imvk/graphics/Engine.hpp"
 
 #include <map>
+#include <optional>
+#include <string>
 
 namespace ax::NodeEditor {
 struct EditorContext;
@@ -78,12 +80,20 @@ public:
   void onRecord(vkw::BufferRecorder &commands, const Frame &frame);
 
 private:
+  struct VerificationLogEntry {
+    std::string message;
+    imvk::graph::VerifyError::Location location;
+  };
+
   class EditorDeleter {
   public:
     void operator()(ax::NodeEditor::EditorContext *ctx) const;
   };
   void onGui(GraphScene &scene, const Frame &frame);
   void m_inject_into_workflow(imvk::graph::Workflow &wf);
+  void m_request_rematerialization();
+  void m_draw_verification_log();
+  void m_clear_verification_log();
   const MaterializationEnvironment &m_me;
   std::unique_ptr<ax::NodeEditor::EditorContext, EditorDeleter> m_ctx;
   imvk::graph::Scene m_scene;
@@ -94,6 +104,8 @@ private:
   bool m_needUntangleLayout = true;
   bool m_hasUnmaterializedChanges = false;
   bool m_needRematerialization = false;
+  bool m_showVerificationLog = false;
+  std::optional<VerificationLogEntry> m_verificationLog;
 };
 
 } // namespace imvk::examples

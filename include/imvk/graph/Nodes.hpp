@@ -32,6 +32,10 @@ public:
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
   std::string_view name() const final { return "constant"; }
   void dumpAttributes(std::ostream &os) const final { os << value; }
   bool hasVisibleSideEffects() const final { return false; }
@@ -57,6 +61,10 @@ public:
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
   std::string_view name() const final { return "constant"; }
   void dumpAttributes(std::ostream &os) const final { os << value; }
   bool hasVisibleSideEffects() const final { return false; }
@@ -83,6 +91,10 @@ public:
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
   std::string_view name() const final { return "dynamic"; }
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
@@ -121,6 +133,8 @@ public:
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final;
   std::string_view name() const final { return "make_image"; }
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
@@ -145,6 +159,10 @@ public:
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
   std::string_view name() const final { return "acquire_image"; }
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
 
@@ -178,6 +196,10 @@ public:
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
   std::string_view name() const final { return "get_extents"; }
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
@@ -241,6 +263,10 @@ public:
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
   std::string_view name() const final { return "clone"; }
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
@@ -317,6 +343,8 @@ public:
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final;
   std::string_view name() const final { return "copy"; }
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
@@ -369,6 +397,10 @@ public:
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
   std::string_view name() const final { return "barrier"; }
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
@@ -561,6 +593,8 @@ public:
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final;
   std::string_view name() const final { return "render_pass"; }
   void dumpAttributes(std::ostream &os) const final {}
   bool hasVisibleSideEffects() const final { return false; }
@@ -609,6 +643,10 @@ public:
       Context &ctx, const Value &result,
       std::span<const AttributesBase *> useAttributes) const override {
     return nullptr;
+  }
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
   }
   std::string_view name() const final { return "present_image"; }
   void dumpAttributes(std::ostream &os) const final {}
