@@ -6,11 +6,16 @@
 
 #include <boost/static_string/static_string.hpp>
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace ed = ax::NodeEditor;
@@ -75,7 +80,499 @@ void GraphEditor::m_inject_into_workflow(imvk::graph::Workflow &wf) {
   originalPresent.replaceBy(&renderedImage);
 }
 
-static void untangleLayout(imvk::graph::Workflow &wf) {}
+struct LayoutVertex {
+  imvk::graph::Node *node = nullptr;
+  size_t rank = 0;
+  size_t stableOrder = 0;
+  float width = 0.0f;
+  float height = 0.0f;
+  std::vector<size_t> predecessors;
+  std::vector<size_t> successors;
+
+  bool isVirtual() const { return node == nullptr; }
+};
+
+struct LayoutEdge {
+  size_t tail;
+  size_t head;
+};
+
+static double median(std::vector<double> values) {
+  if (values.empty())
+    return 0.0;
+  std::ranges::sort(values);
+  const auto middle = values.size() / 2;
+  if (values.size() % 2 != 0)
+    return values[middle];
+  return (values[middle - 1] + values[middle]) * 0.5;
+}
+
+// The weighted median from Fig. 10 of Gansner et al. It biases an even
+// median toward the side on which the adjacent vertices are packed tighter.
+static double orderingMedian(std::vector<size_t> positions) {
+  if (positions.empty())
+    return -1.0;
+  std::ranges::sort(positions);
+  const auto middle = positions.size() / 2;
+  if (positions.size() % 2 != 0)
+    return static_cast<double>(positions[middle]);
+  if (positions.size() == 2)
+    return (static_cast<double>(positions[0]) +
+            static_cast<double>(positions[1])) *
+           0.5;
+
+  const auto left = positions[middle - 1] - positions.front();
+  const auto right = positions.back() - positions[middle];
+  if (left + right == 0)
+    return (static_cast<double>(positions[middle - 1]) +
+            static_cast<double>(positions[middle])) *
+           0.5;
+  return (static_cast<double>(positions[middle - 1]) * right +
+          static_cast<double>(positions[middle]) * left) /
+         static_cast<double>(left + right);
+}
+
+static void untangleLayout(imvk::graph::Workflow &wf) {
+  constexpr float rankSeparation = 120.0f;
+  constexpr float nodeSeparation = 44.0f;
+  constexpr float virtualSeparation = 18.0f;
+  constexpr size_t orderingIterations = 24;
+  constexpr size_t positioningIterations = 8;
+
+  std::vector<imvk::graph::Node *> nodes;
+  std::unordered_map<imvk::graph::Node *, size_t> nodeIndices;
+  for (auto &node : wf) {
+    nodeIndices.emplace(&node, nodes.size());
+    nodes.push_back(&node);
+  }
+  if (nodes.empty())
+    return;
+
+  // Workflow links are already required to form a DAG. Keep parallel links:
+  // they represent independent visual edges and should influence ordering.
+  std::vector<LayoutEdge> graphEdges;
+  std::vector<std::vector<size_t>> successors(nodes.size());
+  std::vector<std::vector<size_t>> predecessors(nodes.size());
+  std::vector<size_t> predecessorCounts(nodes.size());
+  for (size_t consumer = 0; consumer < nodes.size(); ++consumer) {
+    for (const auto &use : nodes[consumer]->uses()) {
+      if (!use.hasValue())
+        continue;
+      const auto found = nodeIndices.find(&use.value().node());
+      if (found == nodeIndices.end() || found->second == consumer)
+        continue;
+      const auto producer = found->second;
+      graphEdges.push_back({producer, consumer});
+      successors[producer].push_back(consumer);
+      predecessors[consumer].push_back(producer);
+      ++predecessorCounts[consumer];
+    }
+  }
+
+  // Stable Kahn traversal followed by longest-path ranking implements the
+  // first pass of a Sugiyama layout. The fallback only matters for malformed
+  // externally supplied cyclic workflows and still guarantees no overlap.
+  std::vector<size_t> topologicalOrder;
+  std::vector<bool> emitted(nodes.size());
+  topologicalOrder.reserve(nodes.size());
+  while (topologicalOrder.size() != nodes.size()) {
+    size_t next = nodes.size();
+    for (size_t index = 0; index < nodes.size(); ++index) {
+      if (!emitted[index] && predecessorCounts[index] == 0) {
+        next = index;
+        break;
+      }
+    }
+    if (next == nodes.size())
+      break;
+    emitted[next] = true;
+    topologicalOrder.push_back(next);
+    for (const auto successor : successors[next])
+      --predecessorCounts[successor];
+  }
+
+  const bool isAcyclic = topologicalOrder.size() == nodes.size();
+  if (!isAcyclic) {
+    topologicalOrder.resize(nodes.size());
+    for (size_t index = 0; index < nodes.size(); ++index)
+      topologicalOrder[index] = index;
+  }
+
+  std::vector<size_t> ranks(nodes.size());
+  if (isAcyclic) {
+    for (const auto vertex : topologicalOrder) {
+      for (const auto successor : successors[vertex])
+        ranks[successor] = std::max(ranks[successor], ranks[vertex] + 1);
+    }
+
+    // Move vertices within their feasible rank interval toward the median of
+    // their neighbors. This is a compact approximation of the paper's
+    // network-simplex rank optimization and reduces unnecessarily long links.
+    for (size_t iteration = 0; iteration < 8; ++iteration) {
+      const bool reverse = iteration % 2 == 0;
+      for (size_t step = 0; step < topologicalOrder.size(); ++step) {
+        const auto orderIndex =
+            reverse ? topologicalOrder.size() - step - 1 : step;
+        const auto vertex = topologicalOrder[orderIndex];
+        size_t lower = 0;
+        size_t upper = std::numeric_limits<size_t>::max();
+        std::vector<double> adjacentRanks;
+        adjacentRanks.reserve(predecessors[vertex].size() +
+                              successors[vertex].size());
+        for (const auto predecessor : predecessors[vertex]) {
+          lower = std::max(lower, ranks[predecessor] + 1);
+          adjacentRanks.push_back(static_cast<double>(ranks[predecessor]));
+        }
+        for (const auto successor : successors[vertex]) {
+          if (ranks[successor] == 0)
+            continue;
+          upper = std::min(upper, ranks[successor] - 1);
+          adjacentRanks.push_back(static_cast<double>(ranks[successor]));
+        }
+        if (upper == std::numeric_limits<size_t>::max())
+          upper = std::max(lower, ranks[vertex]);
+        if (!adjacentRanks.empty() && lower <= upper) {
+          const auto desired = static_cast<size_t>(
+              std::max(0.0, std::round(median(std::move(adjacentRanks)))));
+          ranks[vertex] = std::clamp(desired, lower, upper);
+        }
+      }
+    }
+  } else {
+    for (size_t index = 0; index < nodes.size(); ++index)
+      ranks[index] = index;
+  }
+
+  // Remove empty ranks left by balancing. Relative order and all DAG
+  // constraints remain unchanged.
+  std::vector<size_t> occupiedRanks = ranks;
+  std::ranges::sort(occupiedRanks);
+  occupiedRanks.erase(std::unique(occupiedRanks.begin(), occupiedRanks.end()),
+                      occupiedRanks.end());
+  for (auto &rank : ranks)
+    rank = static_cast<size_t>(
+        std::lower_bound(occupiedRanks.begin(), occupiedRanks.end(), rank) -
+        occupiedRanks.begin());
+  const auto rankCount = occupiedRanks.size();
+
+  std::vector<LayoutVertex> vertices;
+  vertices.reserve(nodes.size() + graphEdges.size() * rankCount);
+  for (size_t index = 0; index < nodes.size(); ++index) {
+    auto size = ed::GetNodeSize(ed::NodeId(nodes[index]));
+    if (!std::isfinite(size.x) || size.x <= 0.0f)
+      size.x = 160.0f;
+    if (!std::isfinite(size.y) || size.y <= 0.0f)
+      size.y = 80.0f;
+    vertices.push_back(LayoutVertex{.node = nodes[index],
+                                    .rank = ranks[index],
+                                    .stableOrder = index,
+                                    .width = size.x,
+                                    .height = size.y});
+  }
+
+  // Replace every long edge with a chain through virtual vertices. Ordering
+  // those chains is what lets the median heuristic account for crossings made
+  // by links spanning more than one rank.
+  for (size_t edgeIndex = 0; edgeIndex < graphEdges.size(); ++edgeIndex) {
+    const auto [tail, head] = graphEdges[edgeIndex];
+    if (ranks[tail] >= ranks[head])
+      continue;
+    auto previous = tail;
+    for (auto rank = ranks[tail] + 1; rank < ranks[head]; ++rank) {
+      const auto virtualVertex = vertices.size();
+      vertices.push_back(LayoutVertex{
+          .rank = rank,
+          .stableOrder = nodes.size() + edgeIndex * rankCount + rank});
+      vertices[previous].successors.push_back(virtualVertex);
+      vertices[virtualVertex].predecessors.push_back(previous);
+      previous = virtualVertex;
+    }
+    vertices[previous].successors.push_back(head);
+    vertices[head].predecessors.push_back(previous);
+  }
+
+  std::vector<std::vector<size_t>> layers(rankCount);
+  for (size_t vertex = 0; vertex < vertices.size(); ++vertex)
+    layers[vertices[vertex].rank].push_back(vertex);
+  for (auto &layer : layers) {
+    std::ranges::stable_sort(layer, {}, [&](const auto vertex) {
+      return vertices[vertex].stableOrder;
+    });
+  }
+
+  std::vector<size_t> positions(vertices.size());
+  const auto refreshPositions = [&]() {
+    for (const auto &layer : layers) {
+      for (size_t position = 0; position < layer.size(); ++position)
+        positions[layer[position]] = position;
+    }
+  };
+  refreshPositions();
+
+  const auto reorderByMedian = [&](size_t rank, bool usePredecessors,
+                                   bool reverseTies) {
+    auto &layer = layers[rank];
+    struct WeightedVertex {
+      size_t vertex;
+      double weight;
+      size_t oldPosition;
+    };
+    std::vector<size_t> slots;
+    std::vector<WeightedVertex> weighted;
+    for (size_t position = 0; position < layer.size(); ++position) {
+      const auto vertex = layer[position];
+      const auto &adjacent = usePredecessors ? vertices[vertex].predecessors
+                                             : vertices[vertex].successors;
+      if (adjacent.empty())
+        continue;
+      std::vector<size_t> adjacentPositions;
+      adjacentPositions.reserve(adjacent.size());
+      for (const auto neighbor : adjacent)
+        adjacentPositions.push_back(positions[neighbor]);
+      slots.push_back(position);
+      weighted.push_back(
+          {vertex, orderingMedian(std::move(adjacentPositions)), position});
+    }
+    std::stable_sort(weighted.begin(), weighted.end(),
+                     [reverseTies](const auto &left, const auto &right) {
+                       if (left.weight != right.weight)
+                         return left.weight < right.weight;
+                       return reverseTies
+                                  ? left.oldPosition > right.oldPosition
+                                  : left.oldPosition < right.oldPosition;
+                     });
+    for (size_t index = 0; index < slots.size(); ++index)
+      layer[slots[index]] = weighted[index].vertex;
+    for (size_t position = 0; position < layer.size(); ++position)
+      positions[layer[position]] = position;
+  };
+
+  const auto pairCrossings = [&](size_t left, size_t right, bool leftFirst) {
+    std::uint64_t crossings = 0;
+    const auto countOnSide = [&](const auto &leftAdjacent,
+                                 const auto &rightAdjacent) {
+      std::uint64_t result = 0;
+      for (const auto leftNeighbor : leftAdjacent) {
+        for (const auto rightNeighbor : rightAdjacent) {
+          if (leftFirst)
+            result += positions[leftNeighbor] > positions[rightNeighbor];
+          else
+            result += positions[leftNeighbor] < positions[rightNeighbor];
+        }
+      }
+      return result;
+    };
+    crossings +=
+        countOnSide(vertices[left].predecessors, vertices[right].predecessors);
+    crossings +=
+        countOnSide(vertices[left].successors, vertices[right].successors);
+    return crossings;
+  };
+
+  const auto transpose = [&]() {
+    bool anyImprovement = false;
+    bool improved = true;
+    size_t pass = 0;
+    size_t maximumPasses = 1;
+    for (const auto &layer : layers)
+      maximumPasses += layer.size() * layer.size();
+    while (improved && pass++ < maximumPasses) {
+      improved = false;
+      for (auto &layer : layers) {
+        if (layer.size() < 2)
+          continue;
+        for (size_t position = 0; position + 1 < layer.size(); ++position) {
+          const auto left = layer[position];
+          const auto right = layer[position + 1];
+          if (pairCrossings(left, right, false) >=
+              pairCrossings(left, right, true))
+            continue;
+          std::swap(layer[position], layer[position + 1]);
+          positions[left] = position + 1;
+          positions[right] = position;
+          improved = true;
+          anyImprovement = true;
+        }
+      }
+    }
+    return anyImprovement;
+  };
+
+  const auto crossingCount = [&]() {
+    std::uint64_t result = 0;
+    for (size_t rank = 0; rank + 1 < layers.size(); ++rank) {
+      struct Segment {
+        size_t tail;
+        size_t head;
+      };
+      std::vector<Segment> segments;
+      for (const auto tail : layers[rank]) {
+        for (const auto head : vertices[tail].successors)
+          segments.push_back({positions[tail], positions[head]});
+      }
+      for (size_t first = 0; first < segments.size(); ++first) {
+        for (size_t second = first + 1; second < segments.size(); ++second) {
+          const auto tailOrder = segments[first].tail < segments[second].tail;
+          const auto headOrder = segments[first].head < segments[second].head;
+          if (segments[first].tail != segments[second].tail &&
+              segments[first].head != segments[second].head &&
+              tailOrder != headOrder)
+            ++result;
+        }
+      }
+    }
+    return result;
+  };
+
+  auto bestLayers = layers;
+  auto bestCrossings = crossingCount();
+  for (size_t iteration = 0; iteration < orderingIterations; ++iteration) {
+    const bool downward = iteration % 2 == 0;
+    if (downward) {
+      for (size_t rank = 1; rank < layers.size(); ++rank)
+        reorderByMedian(rank, true, iteration % 4 >= 2);
+    } else {
+      for (size_t rank = layers.size() - 1; rank-- > 0;)
+        reorderByMedian(rank, false, iteration % 4 >= 2);
+    }
+    transpose();
+    const auto crossings = crossingCount();
+    if (crossings < bestCrossings) {
+      bestCrossings = crossings;
+      bestLayers = layers;
+    }
+  }
+  layers = std::move(bestLayers);
+  refreshPositions();
+
+  std::vector<double> coordinates(vertices.size());
+  const auto centerSeparation = [&](size_t upper, size_t lower) {
+    const auto gap = vertices[upper].isVirtual() && vertices[lower].isVirtual()
+                         ? virtualSeparation
+                         : nodeSeparation;
+    return static_cast<double>(vertices[upper].height) * 0.5 + gap +
+           static_cast<double>(vertices[lower].height) * 0.5;
+  };
+
+  // Start each rank tightly packed and centered around the same axis.
+  for (const auto &layer : layers) {
+    if (layer.empty())
+      continue;
+    coordinates[layer.front()] = vertices[layer.front()].height * 0.5;
+    for (size_t index = 1; index < layer.size(); ++index) {
+      coordinates[layer[index]] =
+          coordinates[layer[index - 1]] +
+          centerSeparation(layer[index - 1], layer[index]);
+    }
+    const auto extent =
+        coordinates[layer.back()] + vertices[layer.back()].height * 0.5;
+    for (const auto vertex : layer)
+      coordinates[vertex] -= extent * 0.5;
+  }
+
+  // Project desired median coordinates onto the non-overlap constraints. This
+  // is weighted isotonic regression (PAVA) after subtracting the required
+  // cumulative separation from each coordinate.
+  const auto positionLayer = [&](size_t rank, bool usePredecessors,
+                                 bool useAllNeighbors) {
+    const auto &layer = layers[rank];
+    if (layer.empty())
+      return;
+    std::vector<double> offsets(layer.size());
+    std::vector<double> desired(layer.size());
+    std::vector<double> weights(layer.size(), 1.0);
+    for (size_t index = 1; index < layer.size(); ++index) {
+      offsets[index] =
+          offsets[index - 1] + centerSeparation(layer[index - 1], layer[index]);
+    }
+    for (size_t index = 0; index < layer.size(); ++index) {
+      const auto vertex = layer[index];
+      std::vector<double> adjacentCoordinates;
+      const auto append = [&](const auto &adjacent) {
+        for (const auto neighbor : adjacent)
+          adjacentCoordinates.push_back(coordinates[neighbor]);
+      };
+      if (useAllNeighbors) {
+        append(vertices[vertex].predecessors);
+        append(vertices[vertex].successors);
+      } else if (usePredecessors) {
+        append(vertices[vertex].predecessors);
+      } else {
+        append(vertices[vertex].successors);
+      }
+      desired[index] = adjacentCoordinates.empty()
+                           ? coordinates[vertex]
+                           : median(std::move(adjacentCoordinates));
+      const auto degree = vertices[vertex].predecessors.size() +
+                          vertices[vertex].successors.size();
+      weights[index] = 1.0 + static_cast<double>(degree);
+    }
+
+    struct Block {
+      size_t first;
+      size_t last;
+      double weight;
+      double weightedValue;
+      double mean() const { return weightedValue / weight; }
+    };
+    std::vector<Block> blocks;
+    blocks.reserve(layer.size());
+    for (size_t index = 0; index < layer.size(); ++index) {
+      blocks.push_back({index, index, weights[index],
+                        weights[index] * (desired[index] - offsets[index])});
+      while (blocks.size() >= 2 &&
+             blocks[blocks.size() - 2].mean() > blocks.back().mean()) {
+        auto right = blocks.back();
+        blocks.pop_back();
+        auto &left = blocks.back();
+        left.last = right.last;
+        left.weight += right.weight;
+        left.weightedValue += right.weightedValue;
+      }
+    }
+    for (const auto &block : blocks) {
+      for (size_t index = block.first; index <= block.last; ++index)
+        coordinates[layer[index]] = block.mean() + offsets[index];
+    }
+  };
+
+  for (size_t iteration = 0; iteration < positioningIterations; ++iteration) {
+    for (size_t rank = 1; rank < layers.size(); ++rank)
+      positionLayer(rank, true, false);
+    for (size_t rank = layers.size() - 1; rank-- > 0;)
+      positionLayer(rank, false, false);
+  }
+  for (size_t iteration = 0; iteration < 4; ++iteration) {
+    for (size_t rank = 0; rank < layers.size(); ++rank)
+      positionLayer(rank, false, true);
+  }
+
+  std::vector<float> rankWidths(rankCount);
+  for (const auto &vertex : vertices) {
+    if (!vertex.isVirtual())
+      rankWidths[vertex.rank] = std::max(rankWidths[vertex.rank], vertex.width);
+  }
+  std::vector<float> rankCenters(rankCount);
+  rankCenters.front() = rankWidths.front() * 0.5f;
+  for (size_t rank = 1; rank < rankCount; ++rank) {
+    rankCenters[rank] = rankCenters[rank - 1] + rankWidths[rank - 1] * 0.5f +
+                        rankSeparation + rankWidths[rank] * 0.5f;
+  }
+
+  double minimumTop = std::numeric_limits<double>::max();
+  for (size_t vertex = 0; vertex < nodes.size(); ++vertex) {
+    minimumTop = std::min(minimumTop,
+                          coordinates[vertex] - vertices[vertex].height * 0.5);
+  }
+  for (size_t vertex = 0; vertex < nodes.size(); ++vertex) {
+    const auto &layout = vertices[vertex];
+    ed::SetNodePosition(
+        ed::NodeId(layout.node),
+        ImVec2(rankCenters[layout.rank] - layout.width * 0.5f,
+               static_cast<float>(coordinates[vertex] - minimumTop -
+                                  layout.height * 0.5)));
+  }
+}
 
 static void displayName(std::string_view name, boost::static_string<50> &out) {
   out.append(name);
@@ -755,7 +1252,6 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   }
   ed::Resume();
   if (m_needUntangleLayout) {
-    /// TODO: implement
     untangleLayout(workflow);
     m_needUntangleLayout = false;
   }
