@@ -4,6 +4,8 @@
 #include <imgui.h>
 #include <imgui_node_editor.h>
 
+#include <boost/static_string/static_string.hpp>
+
 #include <cctype>
 #include <iostream>
 #include <optional>
@@ -75,10 +77,10 @@ void GraphEditor::m_inject_into_workflow(imvk::graph::Workflow &wf) {
 
 static void untangleLayout(imvk::graph::Workflow &wf) {}
 
-static std::string displayName(std::string_view name) {
-  std::string result{name};
+static void displayName(std::string_view name, boost::static_string<50> &out) {
+  out.append(name);
   bool capitalize = true;
-  for (auto &character : result) {
+  for (auto &character : out) {
     if (character == '_') {
       character = ' ';
       capitalize = true;
@@ -88,25 +90,24 @@ static std::string displayName(std::string_view name) {
       capitalize = false;
     }
   }
-  return result;
 }
 
-static std::string typeName(const imvk::graph::Type &type) {
-  std::ostringstream stream;
-  stream << type;
-  return stream.str();
+static void pinName(const imvk::graph::Use &use,
+                    boost::static_string<50> &out) {
+  if (use.info() && !use.info()->name().empty()) {
+    auto name = use.info()->name();
+    out.append(name);
+    return;
+  }
+  out.append(use.type().name());
 }
 
-static std::string pinName(const imvk::graph::Use &use) {
-  if (use.info() && !use.info()->name().empty())
-    return std::string{use.info()->name()};
-  return typeName(use.type());
-}
-
-static std::string pinName(const imvk::graph::Value &value) {
-  if (value.infoOrNull() && !value.infoOrNull()->name().empty())
-    return std::string{value.infoOrNull()->name()};
-  return typeName(value.type());
+static void pinName(const imvk::graph::Value &value,
+                    boost::static_string<50> &out) {
+  if (value.infoOrNull() && !value.infoOrNull()->name().empty()) {
+    out.append(value.infoOrNull()->name());
+  }
+  out.append(value.type().name());
 }
 
 enum class PinIconShape {
@@ -132,10 +133,12 @@ static PinIconStyle pinIconStyle(const imvk::graph::Type &type) {
     return {PinIconShape::diamond, IM_COL32(238, 184, 82, 255)};
   if (isa<imvk::graph::BufferTy>(&type))
     return {PinIconShape::roundSquare, IM_COL32(147, 112, 219, 255)};
+#if 0
   if (isa<imvk::graph::DescriptorTy>(&type))
     return {PinIconShape::triangle, IM_COL32(218, 85, 183, 255)};
   if (isa<imvk::graph::ArrayTy>(&type))
     return {PinIconShape::grid, IM_COL32(92, 210, 210, 255)};
+#endif
   return {PinIconShape::circle, IM_COL32(190, 190, 190, 255)};
 }
 
@@ -279,7 +282,8 @@ static bool drawNodeWidget(imvk::graph::Node &node,
 static bool drawNode(imvk::graph::Node &node,
                      const GraphEditor::SceneTable &availableScenes) {
   const auto nodeId = ed::NodeId(&node);
-  const auto title = displayName(node.name());
+  boost::static_string<50> title;
+  displayName(node.name(), title);
   const auto uses = node.uses();
   const auto results = node.results();
   const auto rowCount = std::max(uses.size(), results.size());
@@ -287,17 +291,29 @@ static bool drawNode(imvk::graph::Node &node,
   const auto iconSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
   const auto pinDecorationWidth = iconSize + iconSpacing;
   constexpr float pinGap = 32.0f;
+  boost::container::small_vector<boost::static_string<50>, 10> m_useNames;
+  boost::container::small_vector<boost::static_string<50>, 10> m_defNames;
+  std::ranges::transform(uses, std::back_inserter(m_useNames), [](auto &&use) {
+    boost::static_string<50> ret;
+    pinName(use, ret);
+    return ret;
+  });
+  std::ranges::transform(results, std::back_inserter(m_defNames),
+                         [](auto &&def) {
+                           boost::static_string<50> ret;
+                           pinName(def, ret);
+                           return ret;
+                         });
   float contentWidth =
       std::max(ImGui::CalcTextSize(title.c_str()).x, nodeWidgetWidth(node));
   for (size_t index = 0; index < rowCount; ++index) {
     const auto inputWidth =
-        index < uses.size()
-            ? ImGui::CalcTextSize(pinName(uses[index]).c_str()).x +
-                  pinDecorationWidth
-            : 0.0f;
+        index < uses.size() ? ImGui::CalcTextSize(m_useNames[index].c_str()).x +
+                                  pinDecorationWidth
+                            : 0.0f;
     const auto outputWidth =
         index < results.size()
-            ? ImGui::CalcTextSize(pinName(results[index]).c_str()).x +
+            ? ImGui::CalcTextSize(m_defNames[index].c_str()).x +
                   pinDecorationWidth
             : 0.0f;
     contentWidth = std::max(contentWidth, inputWidth + pinGap + outputWidth);
@@ -317,7 +333,7 @@ static bool drawNode(imvk::graph::Node &node,
 
   const bool stateChanged = drawNodeWidget(node, availableScenes, contentWidth);
 
-  auto drawUse = [](auto &&use, const std::string &name) {
+  auto drawUse = [](auto &&use, auto &&name) {
     ed::BeginPin(ed::PinId(&use), ed::PinKind::Input);
     ed::PinPivotAlignment(ImVec2(0.0f, 0.5f));
     ed::PinPivotSize(ImVec2(0.0f, 0.0f));
@@ -326,7 +342,7 @@ static bool drawNode(imvk::graph::Node &node,
     ImGui::TextUnformatted(name.c_str());
     ed::EndPin();
   };
-  auto drawResult = [](auto &&result, const std::string &name) {
+  auto drawResult = [](auto &&result, auto &&name) {
     ed::BeginPin(ed::PinId(&result), ed::PinKind::Output);
     ed::PinPivotAlignment(ImVec2(1.0f, 0.5f));
     ed::PinPivotSize(ImVec2(0.0f, 0.0f));
@@ -339,9 +355,9 @@ static bool drawNode(imvk::graph::Node &node,
   for (size_t index = 0; index < rowCount; ++index) {
     const auto rowStart = ImGui::GetCursorPosX();
     if (index < uses.size())
-      drawUse(uses[index], pinName(uses[index]));
+      drawUse(uses[index], m_useNames[index]);
     if (index < results.size()) {
-      const auto label = pinName(results[index]);
+      const auto label = m_defNames[index];
       if (index < uses.size())
         ImGui::SameLine();
       ImGui::SetCursorPosX(rowStart + contentWidth -
@@ -497,8 +513,8 @@ static imvk::graph::Use *findUse(imvk::graph::Workflow &workflow,
 }
 
 static bool handleDeletion(imvk::graph::Workflow &workflow) {
-  std::vector<imvk::graph::Node *> deletedNodes;
-  std::vector<imvk::graph::Use *> deletedLinks;
+  boost::container::small_vector<imvk::graph::Node *, 4> deletedNodes;
+  boost::container::small_vector<imvk::graph::Use *, 4> deletedLinks;
   if (ed::BeginDelete()) {
     ed::NodeId nodeId;
     while (ed::QueryDeletedNode(&nodeId)) {
@@ -615,8 +631,6 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ImGui::Separator();
   ed::SetCurrentEditor(m_ctx.get());
   ed::PushStyleVar(ed::StyleVar_PivotSize, ImVec2(3, 3));
-  // ed::PushStyleVar(ed::StyleVar_PinArrowSize, 4.0f);
-  // ed::PushStyleVar(ed::StyleVar_PinArrowWidth, 4.0f);
   ed::Begin("Render graph", ImVec2(0, 0));
   for (auto &node : workflow)
     m_hasUnmaterializedChanges |= drawNode(node, m_availableScenes);

@@ -3,14 +3,6 @@
 #include "imvk/graph/Context.hpp"
 
 namespace imvk::graph {
-const AttributesBase *ArrayTy::getUndefined(Context &ctx) const {
-  return &ctx.attributes().get<Attributes<ArrayTy>>();
-}
-
-const AttributesBase *DescriptorTy::getUndefined(Context &ctx) const {
-  return &ctx.attributes().get<Attributes<DescriptorTy>>();
-}
-
 const AttributesBase *BufferTy::getUndefined(Context &ctx) const {
   return &ctx.attributes().get<Attributes<BufferTy>>();
 }

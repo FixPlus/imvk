@@ -195,39 +195,6 @@ public:
   }
 };
 
-template <> class Attributes<ArrayTy> : public AttributesBase {
-public:
-  std::vector<const AttributesBase *> elements;
-  Attributes() = default;
-  Attributes(auto elems) {
-    elements.reserve(std::ranges::size(elems));
-    std::ranges::copy(elems, std::back_inserter(elements));
-  }
-  void dump(std::ostream &os) const final {
-    for (auto &&elem : elements) {
-      os << "[" << std::distance(&elem, elements.data()) << "]:\n";
-      elem->dump(os);
-    }
-  }
-  std::size_t hash() const final {
-    auto ret = typeid(Attributes<ArrayTy>).hash_code();
-    for (auto &&e : elements)
-      boost::hash_combine(ret, e->hash());
-    return ret;
-  }
-  bool operator==(const Attributes<ArrayTy> &another) const {
-    return elements.size() == another.elements.size() &&
-           std::ranges::all_of(
-               std::ranges::iota_view{0ul, elements.size()},
-               [&](auto i) { return *elements[i] == *another.elements[i]; });
-  }
-  bool operator==(const AttributesBase &another) const final {
-    if (auto *casted = dyn_cast<Attributes<ArrayTy>>(&another))
-      return *this == *casted;
-    return false;
-  }
-};
-
 template <> class Attributes<IntegerScalarTy> : public AttributesBase {
 public:
   Attribute<size_t> value;
@@ -288,25 +255,6 @@ public:
   }
   bool operator==(const AttributesBase &another) const final {
     if (auto *casted = dyn_cast<Attributes<BufferTy>>(&another))
-      return *this == *casted;
-    return false;
-  }
-};
-
-template <> class Attributes<DescriptorTy> : public AttributesBase {
-public:
-  // nothing for now.
-  Attributes() = default;
-  void dump(std::ostream &os) const final { os << "null\n"; }
-  std::size_t hash() const final {
-    auto ret = typeid(Attributes<DescriptorTy>).hash_code();
-    return ret;
-  }
-  bool operator==(const Attributes<DescriptorTy> &another) const {
-    return true;
-  }
-  bool operator==(const AttributesBase &another) const final {
-    if (auto *casted = dyn_cast<Attributes<DescriptorTy>>(&another))
       return *this == *casted;
     return false;
   }

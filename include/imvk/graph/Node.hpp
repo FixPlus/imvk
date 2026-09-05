@@ -50,21 +50,24 @@ inline std::ostream &operator<<(std::ostream &os, const AttributesBase &attr) {
 
 class Type {
 public:
-  Type() = default;
+  Type(auto &&name) : m_name(std::forward<decltype(name)>(name)) {}
   Type(Type &&) = default;
   Type &operator=(Type &&) = default;
   Type(const Type &) = delete;
   Type &operator=(const Type &) = delete;
 
-  virtual void dump(std::ostream &os) const = 0;
+  std::string_view name() const { return m_name; }
   virtual const AttributesBase *getUndefined(Context &ctx) const = 0;
   virtual std::size_t hash() const = 0;
   virtual bool operator==(const Type &another) const = 0;
   virtual ~Type() = default;
+
+private:
+  std::string m_name;
 };
 
 inline std::ostream &operator<<(std::ostream &os, const Type &t) {
-  t.dump(os);
+  os << t.name();
   return os;
 }
 

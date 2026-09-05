@@ -14,10 +14,9 @@ inline std::ostream &operator<<(std::ostream &os, VkExtent3D extents) {
   return os << "[ " << extents.width << ", " << extents.height << ", "
             << extents.depth << " ]";
 }
-namespace imvk {
-class Descriptor;
-}
+
 namespace imvk::graph {
+
 class ImageTy : public Type {
 public:
   VkImageType imageType;
@@ -33,12 +32,16 @@ public:
       return "undef";
     }
   }
-  ImageTy(VkImageType type) : imageType(type) {}
+  ImageTy(VkImageType type)
+      : Type([&]() {
+          std::stringstream ss;
+          ss << "image<" << imageTypeToStr(imageType) << ">";
+          return ss.str();
+        }()),
+        imageType(type) {}
 
   const AttributesBase *getUndefined(Context &ctx) const final;
-  void dump(std::ostream &os) const final {
-    os << "image<" << imageTypeToStr(imageType) << ">";
-  }
+
   std::size_t hash() const final {
     std::size_t ret = typeid(ImageTy).hash_code();
     boost::hash_combine(ret, imageType);
@@ -104,6 +107,7 @@ public:
     return new ImageDescriptorUseInfo{*this};
   }
 };
+
 class DescriptorUseInfo {
 public:
   DescriptorUseInfo(std::unique_ptr<UseInfo> &&info)
@@ -120,65 +124,31 @@ private:
 
 class IntegerScalarTy : public Type {
 public:
+  IntegerScalarTy() : Type("int64") {}
   const AttributesBase *getUndefined(Context &ctx) const final;
   std::size_t hash() const final { return typeid(IntegerScalarTy).hash_code(); }
   bool operator==(const Type &another) const final {
     return dynamic_cast<const IntegerScalarTy *>(&another);
   }
-  void dump(std::ostream &os) const final { os << "int64"; }
 };
 
 class ExtentsTy : public Type {
 public:
+  ExtentsTy() : Type("ext3d") {}
   const AttributesBase *getUndefined(Context &ctx) const final;
   std::size_t hash() const final { return typeid(ExtentsTy).hash_code(); }
   bool operator==(const Type &another) const final {
     return dynamic_cast<const ExtentsTy *>(&another);
   }
-  void dump(std::ostream &os) const final { os << "ext3d"; }
 };
 
 class BufferTy : public Type {
 public:
+  BufferTy() : Type("buffer") {}
   const AttributesBase *getUndefined(Context &ctx) const final;
   std::size_t hash() const final { return typeid(BufferTy).hash_code(); }
   bool operator==(const Type &another) const final {
     return dynamic_cast<const BufferTy *>(&another);
-  }
-  void dump(std::ostream &os) const final { os << "buffer"; }
-};
-
-class DescriptorTy : public Type {
-public:
-  const AttributesBase *getUndefined(Context &ctx) const final;
-  std::size_t hash() const final { return typeid(DescriptorTy).hash_code(); }
-  bool operator==(const Type &another) const final {
-    return dynamic_cast<const DescriptorTy *>(&another);
-  }
-  void dump(std::ostream &os) const final { os << "descriptor"; }
-};
-
-class ArrayTy : public Type {
-public:
-  const Type *elementType;
-
-  ArrayTy(const Type &et) : elementType(&et) {}
-  const AttributesBase *getUndefined(Context &ctx) const final;
-  void dump(std::ostream &os) const final {
-    os << "array<" << *elementType << ">";
-  }
-
-  std::size_t hash() const final {
-    std::size_t ret = typeid(ArrayTy).hash_code();
-    boost::hash_combine(ret, elementType->hash());
-
-    return ret;
-  }
-  bool operator==(const Type &another) const final {
-    auto *rhs = dynamic_cast<const ArrayTy *>(&another);
-    if (!rhs)
-      return false;
-    return *elementType == *rhs->elementType;
   }
 };
 
