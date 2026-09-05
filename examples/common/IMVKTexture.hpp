@@ -39,12 +39,12 @@ class SampledViewImpl final
           fon_type::cow, SampledViewImpl> {
 public:
   template <std::convertible_to<Texture> T>
-  SampledViewImpl(FramedEngine &eng, T &&texture,
+  SampledViewImpl(FramedEngine &eng, T &&texture, bool noSampler = false,
                   VkFilter filter = VK_FILTER_LINEAR)
       : FONode<std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
                fon_type::cow, SampledViewImpl>(
             eng, doConstructNew(eng, texture->get(), filter), FOUses{texture}),
-        m_filter(filter) {}
+        m_filter(filter), m_noSampler(noSampler) {}
 
   void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                        unsigned binding) const;
@@ -56,8 +56,11 @@ public:
                  const vkw::Image<vkw::COLOR, vkw::I2D> &image,
                  VkFilter filter);
 
+  bool noSampler() const { return m_noSampler; }
+
 private:
   VkFilter m_filter;
+  bool m_noSampler;
 };
 
 class SampledView : public FONodeView<SampledViewImpl> {

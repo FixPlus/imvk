@@ -101,11 +101,15 @@ public:
 
 class ImageDescriptorUseInfo : public ImageUseInfo {
 public:
-  ImageDescriptorUseInfo();
+  ImageDescriptorUseInfo(VkDescriptorType type);
   vkw::DescriptorSetLayoutBinding descriptorInfo() const;
+  VkDescriptorType type() const { return m_type; }
   ImageDescriptorUseInfo *clone() const override {
-    return new ImageDescriptorUseInfo{*this};
+    return new ImageDescriptorUseInfo{m_type};
   }
+
+private:
+  VkDescriptorType m_type;
 };
 
 class DescriptorUseInfo {
@@ -115,7 +119,12 @@ public:
   const UseInfo &useInfo() const { return *m_useInfo; }
 
   static DescriptorUseInfo sampledImage() {
-    return DescriptorUseInfo(std::make_unique<ImageDescriptorUseInfo>());
+    return DescriptorUseInfo(std::make_unique<ImageDescriptorUseInfo>(
+        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE));
+  }
+  static DescriptorUseInfo combinedImageSampler() {
+    return DescriptorUseInfo(std::make_unique<ImageDescriptorUseInfo>(
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
   }
 
 private:

@@ -40,6 +40,9 @@ public:
     }
   }
 
+  static void setNoAlpha();
+  static void setAlpha();
+
   void gui(boost::compat::function_ref<void(void)> recorder);
 
   void draw(PipelineManager &pipeMngr, vkw::RenderPassRecorder &commands,
@@ -47,6 +50,10 @@ public:
   ~GUI();
 
 private:
+  struct RenderState {
+    GUI *gui;
+    PipelineManager *pipeMngr;
+  };
   struct VertexInfo
       : public vkw::AttributeBase<vkw::VertexAttributeType::VEC2F,
                                   vkw::VertexAttributeType::VEC2F,
@@ -72,7 +79,17 @@ private:
   StageSet<GeometryStage> m_geometry;
   StageSet<ProjectionStage> m_proj;
   StageLayout<MaterialStage> m_materialLayout;
-  StageSet<LightingStage> m_lighting = nullptr;
+  struct Lightings {
+    Lightings(GraphicsEngine &engine, ShaderLoader &sl,
+              const vkw::RenderingFormatInfo &info);
+    struct Samplers {
+      StageSet<LightingStage> linear;
+      StageSet<LightingStage> nearest;
+    };
+    Samplers alpha;
+    Samplers noAlpha;
+  };
+  std::optional<Lightings> m_lightings;
   std::vector<StageSet<MaterialStage>> m_images;
   using VertexBuffer = VertexBuffer<VertexInfo, fon_type::swap_mut>;
   VertexBuffer m_vertices;

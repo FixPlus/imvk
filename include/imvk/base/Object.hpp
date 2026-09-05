@@ -712,6 +712,9 @@ public:
   using Base::operator*;
   using Base::operator->;
   using Base::operator bool;
+  bool operator==(const FONodeView<Derived> &another) const {
+    return this->get() == another.get();
+  }
 
   operator FONodeRef() const { return &*(*this); }
 };

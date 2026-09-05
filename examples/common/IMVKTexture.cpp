@@ -15,9 +15,11 @@ void SampledView::descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                                   FONodeBase &obj, unsigned binding) {
   auto &impl = static_cast<SampledViewImpl &>(obj);
   auto &&[view, sampler] = impl.get();
-  vkw::DescriptorWrite write{binding,
-                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
-  write.addImage(sampler, view.operator VkImageView(),
+  vkw::DescriptorWrite write{
+      binding, impl.noSampler() ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                                : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
+  write.addImage(!impl.noSampler() ? sampler : nullptr,
+                 view.operator VkImageView(),
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   set.write(write);
 }

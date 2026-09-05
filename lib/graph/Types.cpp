@@ -71,8 +71,11 @@ ImageDefInfo ImageAttachmentUseInfo::defFromThis() const {
   return ImageDefInfo{info};
 }
 
-ImageDescriptorUseInfo::ImageDescriptorUseInfo()
-    : ImageUseInfo([]() {
+ImageDescriptorUseInfo::ImageDescriptorUseInfo(VkDescriptorType type)
+    : ImageUseInfo([=]() {
+        assert(type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
+               type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE &&
+                   "unsupported image descriptor");
         ImageAccessInfo info{};
         info.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         info.accessFlags = VK_ACCESS_SHADER_READ_BIT;
@@ -80,10 +83,10 @@ ImageDescriptorUseInfo::ImageDescriptorUseInfo()
                           VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
         info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
         return info;
-      }()) {}
+      }()),
+      m_type(type) {}
 vkw::DescriptorSetLayoutBinding ImageDescriptorUseInfo::descriptorInfo() const {
   return vkw::DescriptorSetLayoutBinding{
-      0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-      VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT};
+      0, m_type, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT};
 }
 } // namespace imvk::graph

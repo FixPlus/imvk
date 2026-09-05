@@ -17,6 +17,47 @@ public:
 
 namespace {
 
+class GUISamplerImpl
+    : public FONode<vkw::Sampler, fon_type::cow, GUISamplerImpl> {
+public:
+  GUISamplerImpl(FramedEngine &engine, VkFilter filter)
+      : FONode<vkw::Sampler, fon_type::cow, GUISamplerImpl>(
+            engine, doConstructNew(engine, filter)),
+        m_filter(filter) {}
+
+  static vkw::Sampler doConstructNew(FramedEngine &engine, VkFilter filter) {
+    VkSamplerCreateInfo info{};
+    info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.magFilter = filter;
+    info.minFilter = filter;
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.pNext = nullptr;
+    return vkw::Sampler{engine.context().device(), info};
+  }
+  vkw::Sampler constructNew(FramedEngine &engine) {
+    return doConstructNew(engine, m_filter);
+  }
+
+private:
+  VkFilter m_filter;
+};
+
+class GUISampler : public FONodeView<GUISamplerImpl> {
+public:
+  GUISampler(auto &&...args)
+      : FONodeView<GUISamplerImpl>(std::forward<decltype(args)>(args)...) {}
+  static void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
+                              FONodeBase &obj, unsigned binding) {
+    auto &casted = static_cast<GUISamplerImpl &>(obj);
+    vkw::DescriptorWrite write{binding, VK_DESCRIPTOR_TYPE_SAMPLER};
+    write.addImage(casted.get(), nullptr,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    set.write(write);
+  }
+};
+
 class GLFWPlatform : public GUIPlatform {
 public:
   GLFWPlatform(ImGuiContext *ctx, Window &window) : m_ctx(ctx) {
@@ -79,12 +120,81 @@ GUI::GUI(Window &window, GraphicsEngine &engine, CopyEngine &ce,
   IO.BackendRendererName = "imgui_impl_imvk";
   IO.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
   IO.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+  auto &platformIO = ImGui::GetPlatformIO();
+  platformIO.DrawCallback_ResetRenderState = [](const ImDrawList *,
+                                                const ImDrawCmd *) {
+    auto *state = reinterpret_cast<RenderState *>(
+        ImGui::GetPlatformIO().Renderer_RenderState);
+    state->pipeMngr->bind(state->gui->m_lightings->alpha.nearest);
+    state->pipeMngr->bindPipeline();
+  };
+  platformIO.DrawCallback_SetSamplerLinear = [](const ImDrawList *,
+                                                const ImDrawCmd *) {
+    auto *state = reinterpret_cast<RenderState *>(
+        ImGui::GetPlatformIO().Renderer_RenderState);
+    auto &pm = *state->pipeMngr;
+    auto &gui = *state->gui;
+    if (pm.current<LightingStage>() == gui.m_lightings->alpha.linear ||
+        pm.current<LightingStage>() == gui.m_lightings->alpha.nearest) {
+      pm.bind(gui.m_lightings->alpha.linear);
+    } else {
+      pm.bind(gui.m_lightings->noAlpha.linear);
+    }
+    state->pipeMngr->bindPipeline();
+  };
+  platformIO.DrawCallback_SetSamplerNearest = [](const ImDrawList *,
+                                                 const ImDrawCmd *) {
+    auto *state = reinterpret_cast<RenderState *>(
+        ImGui::GetPlatformIO().Renderer_RenderState);
+    auto &pm = *state->pipeMngr;
+    auto &gui = *state->gui;
+    if (pm.current<LightingStage>() == gui.m_lightings->alpha.linear ||
+        pm.current<LightingStage>() == gui.m_lightings->alpha.nearest) {
+      pm.bind(gui.m_lightings->alpha.nearest);
+    } else {
+      pm.bind(gui.m_lightings->noAlpha.nearest);
+    }
+    state->pipeMngr->bindPipeline();
+  };
 }
 
+void GUI::setNoAlpha() {
+  ImDrawList *draw_list = ImGui::GetWindowDrawList();
+  draw_list->AddCallback([](const ImDrawList *, const ImDrawCmd *) {
+    auto *state = reinterpret_cast<RenderState *>(
+        ImGui::GetPlatformIO().Renderer_RenderState);
+    auto &pm = *state->pipeMngr;
+    auto &gui = *state->gui;
+    if (pm.current<LightingStage>() == gui.m_lightings->noAlpha.linear ||
+        pm.current<LightingStage>() == gui.m_lightings->alpha.linear) {
+      pm.bind(gui.m_lightings->noAlpha.linear);
+    } else {
+      pm.bind(gui.m_lightings->noAlpha.nearest);
+    }
+    state->pipeMngr->bindPipeline();
+  });
+}
+
+void GUI::setAlpha() {
+  ImDrawList *draw_list = ImGui::GetWindowDrawList();
+  draw_list->AddCallback([](const ImDrawList *, const ImDrawCmd *) {
+    auto *state = reinterpret_cast<RenderState *>(
+        ImGui::GetPlatformIO().Renderer_RenderState);
+    auto &pm = *state->pipeMngr;
+    auto &gui = *state->gui;
+    if (pm.current<LightingStage>() == gui.m_lightings->noAlpha.linear ||
+        pm.current<LightingStage>() == gui.m_lightings->alpha.linear) {
+      pm.bind(gui.m_lightings->alpha.linear);
+    } else {
+      pm.bind(gui.m_lightings->alpha.nearest);
+    }
+    state->pipeMngr->bindPipeline();
+  });
+}
 GUI::~GUI() = default;
 
-void GUI::updateRenderingInfo(const vkw::RenderingFormatInfo &info,
-                              const imvk::graph::FramebufferInfo &fbInfo) {
+GUI::Lightings::Lightings(GraphicsEngine &engine, ShaderLoader &sl,
+                          const vkw::RenderingFormatInfo &info) {
   VkPipelineColorBlendAttachmentState state{};
   state.blendEnable = VK_TRUE;
   state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -95,9 +205,39 @@ void GUI::updateRenderingInfo(const vkw::RenderingFormatInfo &info,
   state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
   state.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
   state.alphaBlendOp = VK_BLEND_OP_ADD;
-  StageLayout<LightingStage> layout{m_engine, m_sl, "identity", info,
-                                    std::array{state}};
-  m_lighting = StageSetBuilder{m_engine, std::move(layout)};
+  StageLayout<LightingStage> alphaLayout{engine, sl, "ui", info,
+                                         std::array{state}};
+  StageLayout<LightingStage> noAlphaLayout{engine, sl, "ui", info};
+  alpha.linear = [&]() {
+    auto builder = StageSetBuilder<LightingStage>(engine, alphaLayout);
+    builder.addDescriptorSet(4).addDescriptor(
+        GUISampler(engine, VK_FILTER_LINEAR), 0);
+    return builder;
+  }();
+  alpha.nearest = [&]() {
+    auto builder = StageSetBuilder<LightingStage>(engine, alphaLayout);
+    builder.addDescriptorSet(4).addDescriptor(
+        GUISampler(engine, VK_FILTER_NEAREST), 0);
+    return builder;
+  }();
+  noAlpha.linear = [&]() {
+    auto builder = StageSetBuilder<LightingStage>(engine, noAlphaLayout);
+    builder.addDescriptorSet(4).addDescriptor(
+        GUISampler(engine, VK_FILTER_LINEAR), 0);
+    return builder;
+  }();
+  noAlpha.nearest = [&]() {
+    auto builder = StageSetBuilder<LightingStage>(engine, noAlphaLayout);
+    builder.addDescriptorSet(4).addDescriptor(
+        GUISampler(engine, VK_FILTER_NEAREST), 0);
+    return builder;
+  }();
+}
+
+void GUI::updateRenderingInfo(const vkw::RenderingFormatInfo &info,
+                              const imvk::graph::FramebufferInfo &fbInfo) {
+
+  m_lightings.emplace(m_engine, m_sl, info);
   auto fb = fbInfo->get();
   if (fb.isSwapchain)
     m_platform = std::make_unique<GLFWPlatform>(m_ctx.get(), m_window);
@@ -144,7 +284,7 @@ void GUI::m_actualizeTexture(ImTextureData &tex) {
     if (tex.GetTexID() != ImTextureID_Invalid)
       removeImage(tex.GetTexID());
     tex.SetTexID(
-        addImage(SampledView{m_engine, std::move(image), VK_FILTER_NEAREST})
+        addImage(SampledView{m_engine, std::move(image), /* no sampler */ true})
             .first);
     tex.SetStatus(ImTextureStatus_OK);
   }
@@ -178,10 +318,15 @@ void GUI::draw(PipelineManager &pipeMngr, vkw::RenderPassRecorder &commands,
 
   auto boundTexture = io.Fonts->TexRef.GetTexID();
 
-  assert(m_lighting &&
+  assert(m_lightings &&
          "calling gui::draw() without attaching to specific scene");
-  pipeMngr.bind(m_geometry, m_proj, m_getSetForTex(boundTexture), m_lighting);
+  auto defaultLighting = m_lightings->alpha.nearest;
+  pipeMngr.bind(m_geometry, m_proj, m_getSetForTex(boundTexture),
+                defaultLighting);
   pipeMngr.bindPipeline();
+  // todo: not exception safe.
+  RenderState rState{this, &pipeMngr};
+  ImGui::GetPlatformIO().Renderer_RenderState = &rState;
 
   struct PushConstBlock {
     glm::vec2 scale;
@@ -204,6 +349,10 @@ void GUI::draw(PipelineManager &pipeMngr, vkw::RenderPassRecorder &commands,
     const ImDrawList *cmd_list = imDrawData->CmdLists[i];
     for (int32_t j = 0; j < cmd_list->CmdBuffer.Size; j++) {
       const ImDrawCmd *pcmd = &cmd_list->CmdBuffer[j];
+      if (pcmd->UserCallback) {
+        pcmd->UserCallback(cmd_list, pcmd);
+        continue;
+      }
 
       auto currentTextureID = pcmd->GetTexID();
 
@@ -226,6 +375,7 @@ void GUI::draw(PipelineManager &pipeMngr, vkw::RenderPassRecorder &commands,
     }
     vertexOffset += cmd_list->VtxBuffer.Size;
   }
+  ImGui::GetPlatformIO().Renderer_RenderState = nullptr;
 }
 
 void GUI::m_fillBuffers(const imvk::Frame &frame) {

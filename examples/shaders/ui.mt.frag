@@ -8,10 +8,11 @@ layout(location = 2) in vec3 inWorldPos;
 layout(location = 3) in vec3 inWorldNormal;
 layout(location = 4) in vec3 inViewPos;
 
-layout(set = 3, binding = 0) uniform sampler2D fontSampler;
+layout(set = 3, binding = 0) uniform texture2D tex;
+layout(set = 4, binding = 0) uniform sampler texSampler;
 
 SurfaceInfo Material() {
   SurfaceInfo ret;
-  ret.albedo = inColor * texture(fontSampler, inUVW.xy);
+  ret.albedo = inColor * texture(sampler2D(tex, texSampler), inUVW.xy);
   return ret;
 }

@@ -186,11 +186,14 @@ inline void intrusive_ptr_release(SwapchainImageNode *p) {
   intrusive_ptr_release(static_cast<FONodeBase *>(p));
 }
 
-class ImageSampledAdaptorImpl
-    : public FONode<vkw::Sampler, fon_type::cow, ImageSampledAdaptorImpl> {
+class CombinedImageSamplerAdaptorImpl
+    : public FONode<vkw::Sampler, fon_type::cow,
+                    CombinedImageSamplerAdaptorImpl> {
 public:
-  using Base = FONode<vkw::Sampler, fon_type::cow, ImageSampledAdaptorImpl>;
-  ImageSampledAdaptorImpl(FramedEngine &engine, const MatImageView &view)
+  using Base =
+      FONode<vkw::Sampler, fon_type::cow, CombinedImageSamplerAdaptorImpl>;
+  CombinedImageSamplerAdaptorImpl(FramedEngine &engine,
+                                  const MatImageView &view)
       : Base(engine, vkw::Sampler(m_createSampler(engine)),
              FOUses{&view->node()}) {
     if (view->type() == fon_type::ext) {
@@ -216,8 +219,44 @@ public:
   vkw::Sampler constructNew(FramedEngine &engine) {
     return m_createSampler(engine);
   }
-  VkImageLayout m_layout;
 };
+
+class CombinedImageSamplerAdaptor
+    : public FONodeView<CombinedImageSamplerAdaptorImpl> {
+public:
+  CombinedImageSamplerAdaptor(auto &&...args)
+      : FONodeView<CombinedImageSamplerAdaptorImpl>(
+            std::forward<decltype(args)>(args)...) {}
+  static void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
+                              FONodeBase &obj, unsigned binding) {
+    auto &casted = static_cast<CombinedImageSamplerAdaptorImpl &>(obj);
+    auto *view = dynamic_cast<MatImageViewBase *>(&obj.getUseRaw(0));
+    assert(view);
+    vkw::DescriptorWrite write{binding,
+                               VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
+    write.addImage(casted.get(), view->view(frame),
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    set.write(write);
+  }
+};
+
+class ImageSampledAdaptorImpl
+    : public FONode<char, fon_type::cow, ImageSampledAdaptorImpl> {
+public:
+  using Base = FONode<char, fon_type::cow, ImageSampledAdaptorImpl>;
+  ImageSampledAdaptorImpl(FramedEngine &engine, const MatImageView &view)
+      : Base(engine, char(0), FOUses{&view->node()}) {
+    if (view->type() == fon_type::ext) {
+      throw std::runtime_error(
+          "Cannot create descriptor adaptor for external object");
+    }
+    auto &node = view->node();
+    if (node.isDestroyed())
+      node.construct();
+  }
+  char constructNew(FramedEngine &engine) { return 0; }
+};
+
 class ImageSampledAdaptor : public FONodeView<ImageSampledAdaptorImpl> {
 public:
   ImageSampledAdaptor(auto &&...args)
@@ -228,9 +267,8 @@ public:
     auto &casted = static_cast<ImageSampledAdaptorImpl &>(obj);
     auto *view = dynamic_cast<MatImageViewBase *>(&obj.getUseRaw(0));
     assert(view);
-    vkw::DescriptorWrite write{binding,
-                               VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
-    write.addImage(casted.get(), view->view(frame),
+    vkw::DescriptorWrite write{binding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE};
+    write.addImage(nullptr, view->view(frame),
                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     set.write(write);
   }
@@ -596,12 +634,28 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
   }
   sceneInfo.framebufferInfo = FramebufferInfo{ctx.env().engine(), refImage};
 
+  auto createImageDescriptor =
+      [&](const ImageDescriptorUseInfo &info,
+          const MatImageView &view) -> imvk::Descriptor {
+    switch (info.type()) {
+    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+      return Descriptor{ctx.env().engine(),
+                        CombinedImageSamplerAdaptor(ctx.env().engine(), view)};
+    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+      return Descriptor{ctx.env().engine(),
+                        ImageSampledAdaptor(ctx.env().engine(), view)};
+    default:
+      assert(0 && "unipmlemented descriptor type");
+    }
+    std::terminate();
+  };
+
   for (auto &&use : uses() | std::views::drop(m_firstDescriptor)) {
     assert(isa<ImageDescriptorUseInfo>(use.info()));
     auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
     auto view = ctx.get<MatImageView>(use.value());
-    sceneInfo.descriptors.emplace_back(
-        ctx.env().engine(), ImageSampledAdaptor(ctx.env().engine(), view));
+    sceneInfo.descriptors.emplace_back(ctx.env().engine(),
+                                       createImageDescriptor(info, view));
   }
   auto matScene = std::invoke(m_scene->materialization, ctx.env(), sceneInfo);
 

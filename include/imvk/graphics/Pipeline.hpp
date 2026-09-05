@@ -77,6 +77,10 @@ public:
     return m_boundPipeline.layout()->use(m_frame);
   }
 
+  template <typename T> StageSet<T> current() const {
+    return std::get<StageSet<T>>(m_sets);
+  }
+
 private:
   GraphicsPipelinePool<Stages...> &m_pool;
   vkw::RenderPassRecorder &m_recorder;
