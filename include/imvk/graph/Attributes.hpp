@@ -216,6 +216,27 @@ public:
   }
 };
 
+template <> class Attributes<FormatTy> : public AttributesBase {
+public:
+  Attribute<VkFormat> value;
+  Attributes() = default;
+  Attributes(Attribute<VkFormat> val) : value(val) {}
+  void dump(std::ostream &os) const final { os << value << "\n"; }
+  std::size_t hash() const final {
+    auto ret = typeid(Attributes<FormatTy>).hash_code();
+    boost::hash_combine(ret, value.hash());
+    return ret;
+  }
+  bool operator==(const Attributes<FormatTy> &another) const {
+    return value == another.value;
+  }
+  bool operator==(const AttributesBase &another) const final {
+    if (auto *casted = dyn_cast<Attributes<FormatTy>>(&another))
+      return *this == *casted;
+    return false;
+  }
+};
+
 template <> class Attributes<ExtentsTy> : public AttributesBase {
 public:
   Attribute<VkExtent3D> extents;

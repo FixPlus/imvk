@@ -111,6 +111,8 @@ public:
 
 using MatIntegerScalar = MatHostValue<size_t>;
 
+using MatFormat = MatHostValue<VkFormat>;
+
 using MatExtents = MatHostValue<VkExtent3D>;
 
 struct ImageValueBinding {
@@ -168,7 +170,7 @@ public:
 private:
   const MaterializationEnvironment &m_env;
   std::tuple<MatMap<MatImage>, MatMap<MatImageView>, MatMap<MatIntegerScalar>,
-             MatMap<MatExtents>>
+             MatMap<MatFormat>, MatMap<MatExtents>>
       m_mats;
   std::unordered_map<Value *, ImageValueChain> m_chains;
   std::unordered_map<Node *, MatNode> m_nodes;

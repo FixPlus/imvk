@@ -3,13 +3,16 @@
 
 #include <imgui.h>
 #include <imgui_node_editor.h>
+#include <vulkan/vk_enum_string_helper.h>
 
 #include <boost/static_string/static_string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -723,6 +726,8 @@ sceneName(const imvk::graph::Scene &scene,
 static float nodeWidgetWidth(const imvk::graph::Node &node) {
   if (isa<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(&node))
     return 120.0f;
+  if (isa<imvk::graph::Constant<imvk::graph::FormatTy>>(&node))
+    return 360.0f;
   if (isa<imvk::graph::Constant<imvk::graph::ExtentsTy>>(&node))
     return 210.0f;
   if (isa<imvk::graph::RenderPass>(&node))
@@ -730,9 +735,109 @@ static float nodeWidgetWidth(const imvk::graph::Node &node) {
   return 0.0f;
 }
 
+static const std::vector<VkFormat> &vulkanFormats() {
+  static const auto formats = [] {
+    // VkFormat's core values and the extension ranges defined by Vulkan 1.4.
+    constexpr std::array ranges{
+        std::pair{0, 184},
+        std::pair{1000054000, 1000054007},
+        std::pair{1000066000, 1000066013},
+        std::pair{1000156000, 1000156033},
+        std::pair{1000330000, 1000330003},
+        std::pair{1000340000, 1000340001},
+        std::pair{1000460000, 1000460000},
+        std::pair{1000464000, 1000464000},
+        std::pair{1000470000, 1000470001},
+        std::pair{1000609000, 1000609013},
+    };
+    std::vector<VkFormat> result;
+    for (const auto [first, last] : ranges) {
+      for (int value = first; value <= last; ++value) {
+        auto format = static_cast<VkFormat>(value);
+        const std::string_view name = string_VkFormat(format);
+        if (name.starts_with("VK_FORMAT_"))
+          result.push_back(format);
+      }
+    }
+    return result;
+  }();
+  return formats;
+}
+
+static bool containsCaseInsensitive(std::string_view text,
+                                    std::string_view filter) {
+  return std::search(text.begin(), text.end(), filter.begin(), filter.end(),
+                     [](char lhs, char rhs) {
+                       return std::toupper(static_cast<unsigned char>(lhs)) ==
+                              std::toupper(static_cast<unsigned char>(rhs));
+                     }) != text.end();
+}
+
+static std::optional<VkFormat> formatByName(std::string_view input) {
+  auto found = std::ranges::find_if(vulkanFormats(), [&](VkFormat format) {
+    const std::string_view name = string_VkFormat(format);
+    return name.size() == input.size() && containsCaseInsensitive(name, input);
+  });
+  if (found == vulkanFormats().end())
+    return std::nullopt;
+  return *found;
+}
+
+struct FormatInputState {
+  std::array<char, 128> text{};
+  VkFormat value = VK_FORMAT_MAX_ENUM;
+};
+
+struct NodePopupState {
+  ImVec2 anchor{};
+  float width = 0.0f;
+  bool openRequested = false;
+  bool inputDeactivated = false;
+  FormatInputState *formatInput = nullptr;
+};
+
+static void setFormatInputText(std::array<char, 128> &text, VkFormat format) {
+  std::strncpy(text.data(), string_VkFormat(format), text.size() - 1);
+  text.back() = '\0';
+}
+
+static bool drawFormatInput(imvk::graph::Constant<imvk::graph::FormatTy> &node,
+                            float width, NodePopupState &popup) {
+  static std::unordered_map<size_t, FormatInputState> states;
+  auto &inputState = states[node.results().front().index()];
+  auto &[text, synchronizedValue] = inputState;
+  if (synchronizedValue != node.getValue()) {
+    setFormatInputText(text, node.getValue());
+    synchronizedValue = node.getValue();
+  }
+
+  ImGui::SetNextItemWidth(width);
+  const bool submitted = ImGui::InputText("##value", text.data(), text.size(),
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+  const bool deactivated = ImGui::IsItemDeactivatedAfterEdit();
+  popup.anchor = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+  popup.width = width;
+  popup.openRequested = ImGui::IsItemActivated();
+  popup.inputDeactivated = deactivated;
+  popup.formatInput = &inputState;
+
+  bool changed = false;
+  if (submitted || deactivated) {
+    if (auto format = formatByName(text.data())) {
+      if (*format != node.getValue()) {
+        node.setValue(*format);
+        synchronizedValue = *format;
+        changed = true;
+      }
+      setFormatInputText(text, *format);
+    }
+  }
+  return changed;
+}
+
 static bool drawNodeWidget(imvk::graph::Node &node,
                            const GraphEditor::SceneTable &availableScenes,
-                           float contentWidth) {
+                           float contentWidth, NodePopupState &popup) {
   bool changed = false;
   ImGui::PushID(&node);
   if (auto *constant =
@@ -745,6 +850,10 @@ static bool drawNodeWidget(imvk::graph::Node &node,
       changed = true;
     }
   } else if (auto *constant =
+                 dyn_cast<imvk::graph::Constant<imvk::graph::FormatTy>>(
+                     &node)) {
+    changed = drawFormatInput(*constant, contentWidth, popup);
+  } else if (auto *constant =
                  dyn_cast<imvk::graph::Constant<imvk::graph::ExtentsTy>>(
                      &node)) {
     auto value = constant->getValue();
@@ -756,24 +865,77 @@ static bool drawNodeWidget(imvk::graph::Node &node,
     }
   } else if (auto *renderPass = dyn_cast<imvk::graph::RenderPass>(&node)) {
     const auto currentName = sceneName(renderPass->scene(), availableScenes);
-    ImGui::SetNextItemWidth(contentWidth);
-    if (ImGui::BeginCombo("##scene", currentName.data())) {
+    popup.openRequested =
+        ImGui::Button(currentName.data(), ImVec2(contentWidth, 0.0f));
+    popup.anchor = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+    popup.width = contentWidth;
+  }
+  ImGui::PopID();
+  return changed;
+}
+
+static bool drawNodePopup(imvk::graph::Node &node,
+                          const GraphEditor::SceneTable &availableScenes,
+                          NodePopupState &popup) {
+  bool changed = false;
+  const auto screenAnchor = ed::CanvasToScreen(popup.anchor);
+  // Popups must be created outside node-editor's transformed canvas space.
+  ed::Suspend();
+  ImGui::PushID(&node);
+  ImGui::SetNextWindowPos(screenAnchor, ImGuiCond_Always);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(popup.width, 0.0f),
+                                      ImVec2(popup.width, 240.0f));
+
+  if (auto *constant =
+          dyn_cast<imvk::graph::Constant<imvk::graph::FormatTy>>(&node)) {
+    if (popup.openRequested)
+      ImGui::OpenPopup("##format_suggestions");
+    const bool popupOpen = ImGui::BeginPopup(
+        "##format_suggestions", ImGuiWindowFlags_NoFocusOnAppearing);
+    if (popupOpen) {
+      auto &[text, synchronizedValue] = *popup.formatInput;
+      const std::string_view filter{text.data()};
+      for (const auto format : vulkanFormats()) {
+        const auto *name = string_VkFormat(format);
+        if (!containsCaseInsensitive(name, filter))
+          continue;
+        const bool selected = format == constant->getValue();
+        if (ImGui::Selectable(name, selected)) {
+          if (!selected) {
+            constant->setValue(format);
+            changed = true;
+          }
+          synchronizedValue = format;
+          setFormatInputText(text, format);
+          ImGui::CloseCurrentPopup();
+        }
+      }
+      ImGui::EndPopup();
+    }
+    if (popup.inputDeactivated && !popupOpen &&
+        !formatByName(popup.formatInput->text.data()))
+      setFormatInputText(popup.formatInput->text, constant->getValue());
+  } else if (auto *renderPass = dyn_cast<imvk::graph::RenderPass>(&node)) {
+    if (popup.openRequested)
+      ImGui::OpenPopup("##scene");
+    if (ImGui::BeginPopup("##scene")) {
       for (const auto &[name, sceneRef] : availableScenes) {
         const auto &scene = sceneRef.get();
         const bool selected = &scene == &renderPass->scene();
         const bool compatible = renderPass->acceptsScene(scene);
         ImGui::BeginDisabled(!compatible);
-        if (ImGui::Selectable(name.c_str(), selected) && !selected) {
+        if (ImGui::Selectable(name.c_str(), selected) && !selected)
           changed = renderPass->setScene(scene);
-        }
         ImGui::EndDisabled();
         if (selected)
           ImGui::SetItemDefaultFocus();
       }
-      ImGui::EndCombo();
+      ImGui::EndPopup();
     }
   }
+
   ImGui::PopID();
+  ed::Resume();
   return changed;
 }
 
@@ -829,7 +991,9 @@ static bool drawNode(imvk::graph::Node &node,
   const auto titleEnd = ImGui::GetItemRectMax();
   ImGui::Dummy(ImVec2(0.0f, 4.0f));
 
-  const bool stateChanged = drawNodeWidget(node, availableScenes, contentWidth);
+  NodePopupState popup;
+  bool stateChanged =
+      drawNodeWidget(node, availableScenes, contentWidth, popup);
 
   auto drawUse = [](auto &&use, auto &&name) {
     ed::BeginPin(ed::PinId(&use), ed::PinKind::Input);
@@ -877,6 +1041,8 @@ static bool drawNode(imvk::graph::Node &node,
                       IM_COL32(255, 255, 255, 32));
   }
   ed::PopStyleVar();
+  if (popup.width > 0.0f)
+    stateChanged |= drawNodePopup(node, availableScenes, popup);
   return stateChanged;
 }
 
@@ -1046,6 +1212,9 @@ drawCreateNodeMenu(imvk::graph::Workflow &workflow,
       create.template
       operator()<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(
           size_t{0});
+    if (ImGui::MenuItem("Format"))
+      create.template operator()<imvk::graph::Constant<imvk::graph::FormatTy>>(
+          VK_FORMAT_UNDEFINED);
     if (ImGui::MenuItem("Extents"))
       create.template operator()<imvk::graph::Constant<imvk::graph::ExtentsTy>>(
           VkExtent3D{1, 1, 1});

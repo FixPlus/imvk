@@ -181,7 +181,7 @@ createCopyExtents(imvk::graph::WorkflowBuilder &builder,
           .front();
   auto &fmt =
       builder
-          .create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(format)
+          .create<imvk::graph::Constant<imvk::graph::FormatTy>>(format)
           ->results()
           .front();
   auto &extents =

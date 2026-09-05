@@ -141,6 +141,16 @@ public:
   }
 };
 
+class FormatTy : public Type {
+public:
+  FormatTy() : Type("format") {}
+  const AttributesBase *getUndefined(Context &ctx) const final;
+  std::size_t hash() const final { return typeid(FormatTy).hash_code(); }
+  bool operator==(const Type &another) const final {
+    return dynamic_cast<const FormatTy *>(&another);
+  }
+};
+
 class ExtentsTy : public Type {
 public:
   ExtentsTy() : Type("ext3d") {}

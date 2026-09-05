@@ -48,6 +48,35 @@ private:
   }
 };
 
+template <> class Constant<FormatTy> : public Node {
+public:
+  Constant(Context &ctx, VkFormat v)
+      : Node(ctx, Node::EmptyUses,
+             std::array{Node::Def{&ctx.types().get<FormatTy>(),
+                                  new BasicDefInfo{"value"}}}),
+        value(v) {}
+  VkFormat value;
+  VkFormat getValue() const { return value; }
+  void setValue(VkFormat newValue) { value = newValue; }
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
+  std::string_view name() const final { return "constant"; }
+  void dumpAttributes(std::ostream &os) const final { os << value; }
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+
+private:
+  Constant(VkFormat v) : value(v) {}
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new Constant(value)};
+  }
+};
+
 template <> class Constant<ExtentsTy> : public Node {
 public:
   Constant(Context &ctx, VkExtent3D v)
@@ -107,13 +136,40 @@ private:
   }
 };
 
+template <> class Dynamic<FormatTy> : public Node {
+public:
+  Dynamic(Context &ctx, auto &&p)
+      : Node(ctx, Node::EmptyUses,
+             std::array{Node::Def{&ctx.types().get<FormatTy>(),
+                                  new BasicDefInfo{"value"}}}),
+        producer(std::forward<decltype(p)>(p)) {}
+  std::function<VkFormat()> producer;
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
+  std::string_view name() const final { return "dynamic"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+
+private:
+  Dynamic(std::function<VkFormat()> p) : producer(std::move(p)) {}
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new Dynamic(producer)};
+  }
+};
+
 class MakeImage : public Node {
 public:
   MakeImage(Context &ctx, const ImageTy &type)
       : Node(ctx,
              std::array{Node::Use{nullptr, &ctx.types().get<ExtentsTy>(),
                                   new BasicUseInfo{"extents"}},
-                        Node::Use{nullptr, &ctx.types().get<IntegerScalarTy>(),
+                         Node::Use{nullptr, &ctx.types().get<FormatTy>(),
                                   new BasicUseInfo{"format"}},
                         Node::Use{nullptr, &ctx.types().get<IntegerScalarTy>(),
                                   new BasicUseInfo{"layers"}},
@@ -125,7 +181,8 @@ public:
             Value &layers, Value &mips)
       : Node(ctx,
              std::array{Node::Use{&extents, new BasicUseInfo{"extents"}},
-                        Node::Use{&format, new BasicUseInfo{"format"}},
+                         Node::Use{&format, &ctx.types().get<FormatTy>(),
+                                   new BasicUseInfo{"format"}},
                         Node::Use{&layers, new BasicUseInfo{"layers"}},
                         Node::Use{&mips, new BasicUseInfo{"mip levels"}}},
              std::array{Node::Def{

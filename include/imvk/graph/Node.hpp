@@ -331,6 +331,8 @@ public:
 
     Use(Value *value, UseInfo *info)
         : value(value), type(value ? &value->type() : nullptr), info(info) {}
+    Use(Value *value, const Type *type, UseInfo *info)
+        : value(value), type(type), info(info) {}
     Use(std::nullptr_t, const Type *type, UseInfo *info)
         : value(nullptr), type(type), info(info) {}
   };

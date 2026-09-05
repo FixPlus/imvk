@@ -8,6 +8,11 @@ bool Constant<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
       results().front(), MatIntegerScalar(ctx.env().engine(), value));
   return true;
 }
+bool Constant<FormatTy>::materialize(MaterializationContext &ctx) {
+  ctx.materialize<MatFormat>(results().front(),
+                             MatFormat(ctx.env().engine(), value));
+  return true;
+}
 bool Constant<ExtentsTy>::materialize(MaterializationContext &ctx) {
   ctx.materialize<MatExtents>(results().front(),
                               MatExtents(ctx.env().engine(), value));
@@ -17,6 +22,19 @@ bool Constant<ExtentsTy>::materialize(MaterializationContext &ctx) {
 bool Dynamic<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
 
   auto dynVal = MatIntegerScalar(ctx.env().engine());
+  ctx.materialize(results().front(), dynVal);
+  ctx.materializeNode(
+      *this, [dynVal = std::move(dynVal), this](vkw::BufferRecorder &recorder,
+                                                const imvk::Frame &frame) {
+        auto newVal = producer();
+        if (newVal != dynVal->get())
+          dynVal.reset(frame.engine(), newVal);
+      });
+  return true;
+}
+
+bool Dynamic<FormatTy>::materialize(MaterializationContext &ctx) {
+  auto dynVal = MatFormat(ctx.env().engine());
   ctx.materialize(results().front(), dynVal);
   ctx.materializeNode(
       *this, [dynVal = std::move(dynVal), this](vkw::BufferRecorder &recorder,
@@ -43,7 +61,7 @@ class RegularImageNode final
       public MatImageBase {
 public:
   RegularImageNode(FramedEngine &engine, const MaterializationContext &ctx,
-                   const MatExtents &extents, const MatIntegerScalar &format,
+                   const MatExtents &extents, const MatFormat &format,
                    const MatIntegerScalar &layers,
                    const MatIntegerScalar &levels,
                    const VkImageCreateInfo &info)
@@ -60,7 +78,7 @@ public:
 
   void m_updateInfo() {
     m_info.extent = getUse<MatExtents>(0)->get();
-    m_info.format = static_cast<VkFormat>(getUse<MatIntegerScalar>(1)->get());
+    m_info.format = getUse<MatFormat>(1)->get();
     m_info.arrayLayers = getUse<MatIntegerScalar>(2)->get();
     m_info.mipLevels = getUse<MatIntegerScalar>(3)->get();
   }
@@ -302,6 +320,14 @@ const AttributesBase *Constant<IntegerScalarTy>::getAttributes(
       constant<size_t>(value));
 }
 
+const AttributesBase *Constant<FormatTy>::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  assert(&result == results().data());
+  return &ctx.attributes().get<Attributes<FormatTy>>(
+      constant<VkFormat>(value));
+}
+
 const AttributesBase *Constant<ExtentsTy>::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
@@ -326,8 +352,8 @@ const AttributesBase *MakeImage::getAttributes(
   assert(useAttributes.size() == 4);
   auto extents =
       static_cast<const Attributes<ExtentsTy> &>(*useAttributes[0]).extents;
-  Attribute<VkFormat> format =
-      static_cast<const Attributes<IntegerScalarTy> &>(*useAttributes[1]).value;
+  auto format =
+      static_cast<const Attributes<FormatTy> &>(*useAttributes[1]).value;
   auto layers =
       static_cast<const Attributes<IntegerScalarTy> &>(*useAttributes[2]).value;
   auto levels =
@@ -367,6 +393,14 @@ const AttributesBase *Dynamic<IntegerScalarTy>::getAttributes(
       dynamic<size_t>(result));
 }
 
+const AttributesBase *Dynamic<FormatTy>::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  assert(&result == results().data());
+  return &ctx.attributes().get<Attributes<FormatTy>>(
+      dynamic<VkFormat>(result));
+}
+
 bool MakeImage::materialize(MaterializationContext &ctx) {
   auto &engine = ctx.env().engine();
   auto &value = results().front();
@@ -376,7 +410,7 @@ bool MakeImage::materialize(MaterializationContext &ctx) {
   ctx.materializeImageChain(
       value, engine.createNode<RegularImageNode>(
                  ctx, ctx.get<MatExtents>(uses()[0].value()),
-                 ctx.get<MatIntegerScalar>(uses()[1].value()),
+                 ctx.get<MatFormat>(uses()[1].value()),
                  ctx.get<MatIntegerScalar>(uses()[2].value()),
                  ctx.get<MatIntegerScalar>(uses()[3].value()), templ));
   return true;

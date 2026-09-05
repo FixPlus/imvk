@@ -11,6 +11,10 @@ const AttributesBase *IntegerScalarTy::getUndefined(Context &ctx) const {
   return &ctx.attributes().get<Attributes<IntegerScalarTy>>();
 }
 
+const AttributesBase *FormatTy::getUndefined(Context &ctx) const {
+  return &ctx.attributes().get<Attributes<FormatTy>>();
+}
+
 const AttributesBase *ImageTy::getUndefined(Context &ctx) const {
   return &ctx.attributes().get<Attributes<ImageTy>>();
 }
