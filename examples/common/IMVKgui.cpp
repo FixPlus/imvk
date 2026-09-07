@@ -31,7 +31,7 @@ public:
     info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     info.magFilter = filter;
-    info.minFilter = filter;
+    info.minFilter = VK_FILTER_LINEAR;
     info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     info.pNext = nullptr;
     return vkw::Sampler{engine.context().device(), info};

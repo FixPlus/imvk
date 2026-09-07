@@ -735,7 +735,7 @@ static float nodeWidgetWidth(const imvk::graph::Node &node) {
   if (isa<imvk::graph::RenderPass>(&node))
     return 160.0f;
   if (isa<imvk::graph::Barrier<imvk::graph::ImageTy>>(&node))
-    return 460.0f;
+    return 300.0f;
   return 0.0f;
 }
 
