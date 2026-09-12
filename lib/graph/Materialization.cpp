@@ -1,5 +1,6 @@
 #include "imvk/graph/Materialization.hpp"
 #include "imvk/graph/Nodes.hpp"
+#include "imvk/graph/Passes.hpp"
 #include <iostream>
 namespace imvk::graph {
 
@@ -373,6 +374,7 @@ void MaterializationContext::materializeNode(Node &n, MatNode &&action) {
 MaterializationContext::MaterializationContext(
     const MaterializationEnvironment &env, Workflow &wf)
     : m_env(env) {
+  InsertFormatConversionsPass{}.run(wf);
   {
     auto imageChains = materializeImageValueChains(wf);
     for (auto &&chain : imageChains) {

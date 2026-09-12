@@ -4,9 +4,15 @@ project(imvk)
 
 set(CMAKE_CXX_STANDARD 23)
 
+include(CTest)
+
 find_package(vkw 0.0.3 REQUIRED)
 
 add_subdirectory(lib)
 set(IMVK_ASSETS_PATH ${CMAKE_CURRENT_SOURCE_DIR}/assets)
 cmake_path(ABSOLUTE_PATH IMVK_ASSETS_PATH)
 add_subdirectory(examples)
+
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()

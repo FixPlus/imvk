@@ -120,6 +120,11 @@ struct FormatConstraintInfo {
   /// format in vulkan specification.
   bool isCompatible(VkFormat format) const;
 
+  bool empty() const {
+    return std::ranges::none_of(channels,
+                                [](const auto &c) { return c.has_value(); });
+  }
+
   bool isNullChannel(Channel ch) const {
     if (auto cnst = channels[static_cast<unsigned>(ch)]) {
       return cnst->bitwidth && *cnst->bitwidth == 0;
