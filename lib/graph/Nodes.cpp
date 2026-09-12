@@ -369,8 +369,7 @@ const AttributesBase *Constant<FormatTy>::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
   assert(&result == results().data());
-  return &ctx.attributes().get<Attributes<FormatTy>>(
-      constant<VkFormat>(value));
+  return &ctx.attributes().get<Attributes<FormatTy>>(constant<VkFormat>(value));
 }
 
 const AttributesBase *Constant<ExtentsTy>::getAttributes(
@@ -416,8 +415,8 @@ const AttributesBase *ConvertFormat::getAttributes(
       static_cast<const Attributes<ImageTy> &>(*useAttributes[0]);
   const auto format =
       static_cast<const Attributes<FormatTy> &>(*useAttributes[1]).value;
-  return &ctx.attributes().get<Attributes<ImageTy>>(
-      image.extents, format, image.layers, image.levels);
+  return &ctx.attributes().get<Attributes<ImageTy>>(image.extents, format,
+                                                    image.layers, image.levels);
 }
 
 const AttributesBase *AssumeCompatibleFormat::getAttributes(
@@ -463,8 +462,7 @@ const AttributesBase *Dynamic<FormatTy>::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
   assert(&result == results().data());
-  return &ctx.attributes().get<Attributes<FormatTy>>(
-      dynamic<VkFormat>(result));
+  return &ctx.attributes().get<Attributes<FormatTy>>(dynamic<VkFormat>(result));
 }
 
 bool MakeImage::materialize(MaterializationContext &ctx) {
@@ -525,40 +523,53 @@ bool ConvertFormat::materialize(MaterializationContext &ctx) {
   auto src = ctx.get<MatImage>(uses()[0].value());
   auto format = ctx.get<MatFormat>(uses()[1].value());
   const auto outputUsage = ctx.chainImageTemplate(value).usage;
-  auto dst =
-      engine.createNode<ConvertedImageNode>(src, format, outputUsage);
+  auto dst = engine.createNode<ConvertedImageNode>(src, format, outputUsage);
   ctx.materializeImageChain(value, dst);
 
-  ctx.materializeNode(
-      *this, [src = std::move(src), dst = std::move(dst)](
-                 vkw::BufferRecorder &recorder, const imvk::Frame &frame) {
-        const auto srcImage = src->useImage(frame);
-        const auto dstImage = dst->useImage(frame);
-        const auto &srcInfo = src->info();
-        const auto &dstInfo = dst->info();
+  VkImageMemoryBarrier barrier{};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+  VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+  VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 
-        boost::container::small_vector<VkImageBlit, 4> blits;
-        blits.reserve(srcInfo.mipLevels);
-        for (uint32_t level = 0; level < srcInfo.mipLevels; ++level) {
-          const auto extent = mipExtent(srcInfo.extent, level);
-          auto srcSubresource = completeSubresourceRangeLayers(srcInfo);
-          srcSubresource.mipLevel = level;
-          auto dstSubresource = completeSubresourceRangeLayers(dstInfo);
-          dstSubresource.mipLevel = level;
+  ctx.materializeNode(*this, [src = std::move(src), dst = std::move(dst),
+                              barrier](vkw::BufferRecorder &recorder,
+                                       const imvk::Frame &frame) mutable {
+    const auto srcImage = src->useImage(frame);
+    const auto dstImage = dst->useImage(frame);
+    const auto &srcInfo = src->info();
+    const auto &dstInfo = dst->info();
+    barrier.image = dstImage;
+    barrier.subresourceRange = completeSubresourceRange(dstInfo);
 
-          VkImageBlit blit{};
-          blit.srcSubresource = srcSubresource;
-          blit.srcOffsets[1] = {static_cast<int32_t>(extent.width),
-                                static_cast<int32_t>(extent.height),
-                                static_cast<int32_t>(extent.depth)};
-          blit.dstSubresource = dstSubresource;
-          blit.dstOffsets[1] = blit.srcOffsets[1];
-          blits.push_back(blit);
-        }
+    boost::container::small_vector<VkImageBlit, 4> blits;
+    blits.reserve(srcInfo.mipLevels);
+    for (uint32_t level = 0; level < srcInfo.mipLevels; ++level) {
+      const auto extent = mipExtent(srcInfo.extent, level);
+      auto srcSubresource = completeSubresourceRangeLayers(srcInfo);
+      srcSubresource.mipLevel = level;
+      auto dstSubresource = completeSubresourceRangeLayers(dstInfo);
+      dstSubresource.mipLevel = level;
 
-        auto transfer = recorder.beginTransferPass();
-        transfer.blitImage(srcImage, dstImage, blits, VK_FILTER_NEAREST);
-      });
+      VkImageBlit blit{};
+      blit.srcSubresource = srcSubresource;
+      blit.srcOffsets[1] = {static_cast<int32_t>(extent.width),
+                            static_cast<int32_t>(extent.height),
+                            static_cast<int32_t>(extent.depth)};
+      blit.dstSubresource = dstSubresource;
+      blit.dstOffsets[1] = blit.srcOffsets[1];
+      blits.push_back(blit);
+    }
+
+    auto transfer = recorder.beginTransferPass();
+    transfer.imageMemoryBarrier(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                std::array{barrier});
+    transfer.blitImage(srcImage, dstImage, blits, VK_FILTER_NEAREST);
+  });
   return true;
 }
 
