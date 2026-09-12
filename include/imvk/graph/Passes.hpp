@@ -15,4 +15,9 @@ public:
   bool run(Workflow &workflow) const final;
 };
 
+class RemoveAssumeCompatibleFormatsPass final : public WorkflowPass {
+public:
+  bool run(Workflow &workflow) const final;
+};
+
 } // namespace imvk::graph

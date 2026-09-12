@@ -375,6 +375,7 @@ MaterializationContext::MaterializationContext(
     const MaterializationEnvironment &env, Workflow &wf)
     : m_env(env) {
   InsertFormatConversionsPass{}.run(wf);
+  RemoveAssumeCompatibleFormatsPass{}.run(wf);
   {
     auto imageChains = materializeImageValueChains(wf);
     for (auto &&chain : imageChains) {

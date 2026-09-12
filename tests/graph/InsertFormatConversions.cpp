@@ -85,6 +85,12 @@ size_t conversionCount(Workflow &workflow) {
       workflow, [](Node &node) { return isa<ConvertFormat>(&node); });
 }
 
+size_t assumptionCount(Workflow &workflow) {
+  return std::ranges::count_if(workflow, [](Node &node) {
+    return isa<AssumeCompatibleFormat>(&node);
+  });
+}
+
 bool check(bool condition, std::string_view message) {
   if (!condition)
     std::cerr << message << '\n';
@@ -170,13 +176,45 @@ bool testIncompatibleGroups() {
                "incompatible constraint groups did not get two conversions");
 }
 
+bool testAssumeCompatibleFormat() {
+  using NumericFormat = FormatConstraintInfo::NumericFormat;
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &image = builder.create<ImageSource>(std::nullopt)->results().front();
+  auto *assumption = builder.create<AssumeCompatibleFormat>(image);
+  auto &assumedImage = assumption->results().front();
+  auto *sink =
+      builder.create<Sink>(assumedImage, constraint(32, NumericFormat::SFLOAT));
+
+  AttributesAnalysis attributes{workflow};
+  const auto &inputAttributes = attributes.getAttributesFor(image);
+  const auto &outputAttributes = attributes.getAttributesFor(assumedImage);
+
+  return check(&inputAttributes == &outputAttributes,
+               "assumption did not preserve image attributes") &&
+         check(!InsertFormatConversionsPass{}.run(workflow),
+               "assumed-compatible image inserted a conversion") &&
+         check(conversionCount(workflow) == 0,
+               "assumed-compatible image has a conversion") &&
+         check(RemoveAssumeCompatibleFormatsPass{}.run(workflow),
+               "assumption lowering did not change the workflow") &&
+         check(assumptionCount(workflow) == 0,
+               "assumption lowering did not erase the marker") &&
+         check(&sink->uses().front().value() == &image,
+               "assumption lowering did not restore the original image") &&
+         check(!RemoveAssumeCompatibleFormatsPass{}.run(workflow),
+               "second assumption lowering changed the workflow");
+}
+
 } // namespace
 } // namespace imvk::graph
 
 int main() {
   using namespace imvk::graph;
   return testCompatibleConstant() && testSharedConversionAndIdempotence() &&
-                 testDynamicFormatIsConverted() && testIncompatibleGroups()
+                 testDynamicFormatIsConverted() && testIncompatibleGroups() &&
+                 testAssumeCompatibleFormat()
              ? 0
              : 1;
 }

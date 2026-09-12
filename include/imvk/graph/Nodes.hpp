@@ -292,6 +292,44 @@ public:
 template <typename T> class Clone {};
 template <typename T> class Copy {};
 
+class AssumeCompatibleFormat : public Node {
+public:
+  AssumeCompatibleFormat(Context &ctx)
+      : Node(ctx,
+             std::array{
+                 Node::Use{nullptr,
+                           &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                           new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+             std::array{Node::Def{
+                 &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+  AssumeCompatibleFormat(Context &ctx, Value &image)
+      : Node(ctx,
+             std::array{Node::Use{
+                 &image, new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+             std::array{Node::Def{
+                 &image.type(),
+                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
+  std::string_view name() const final { return "assume_compatible_format"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+
+private:
+  AssumeCompatibleFormat() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new AssumeCompatibleFormat()};
+  }
+};
+
 class ConvertFormat : public Node {
 public:
   ConvertFormat(Context &ctx)

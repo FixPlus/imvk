@@ -420,6 +420,14 @@ const AttributesBase *ConvertFormat::getAttributes(
       image.extents, format, image.layers, image.levels);
 }
 
+const AttributesBase *AssumeCompatibleFormat::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  assert(&result == results().data());
+  assert(useAttributes.size() == 1);
+  return useAttributes.front();
+}
+
 const AttributesBase *Copy<ImageTy>::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
@@ -552,6 +560,11 @@ bool ConvertFormat::materialize(MaterializationContext &ctx) {
         transfer.blitImage(srcImage, dstImage, blits, VK_FILTER_NEAREST);
       });
   return true;
+}
+
+bool AssumeCompatibleFormat::materialize(MaterializationContext &ctx) {
+  // Analysis-only marker removed before image-chain materialization.
+  return false;
 }
 
 bool Clone<ImageTy>::materialize(MaterializationContext &ctx) {

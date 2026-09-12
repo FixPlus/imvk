@@ -60,6 +60,8 @@ findConversionsToInsert(Workflow &workflow, const AttributesAnalysis &attributes
     for (auto &value : node.results()) {
       if (!isa<ImageTy>(&value.type()))
         continue;
+      if (isa<AssumeCompatibleFormat>(&value.node()))
+        continue;
 
       const auto sourceFormat =
           attributes.getAttributesFor<Attributes<ImageTy>>(value)
@@ -115,6 +117,23 @@ bool InsertFormatConversionsPass::run(Workflow &workflow) const {
     }
     changed = true;
   }
+}
+
+bool RemoveAssumeCompatibleFormatsPass::run(Workflow &workflow) const {
+  boost::container::small_vector<AssumeCompatibleFormat *, 4> assumptions;
+  for (auto &node : workflow) {
+    if (auto *assumption = dyn_cast<AssumeCompatibleFormat>(&node))
+      assumptions.push_back(assumption);
+  }
+
+  for (auto *assumption : assumptions) {
+    assert(assumption->uses().size() == 1);
+    assert(assumption->results().size() == 1);
+    auto &input = assumption->uses().front().value();
+    assumption->results().front().replaceAllUsesWith(&input);
+    workflow.erase(assumption);
+  }
+  return !assumptions.empty();
 }
 
 } // namespace imvk::graph
