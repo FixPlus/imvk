@@ -64,6 +64,75 @@ struct ImageAccessInfo {
   bool operator==(const ImageAccessInfo &) const = default;
 };
 
+/// @brief FormatConstraintInfo defines image format constraints that use
+/// expects. It declares per-channel constraint regarding it's presense and
+/// expected bitwidth and numeric format. Image value can only be used in
+/// specified node's use if constraints of that use are compatible with
+/// associated value's format. (e.g. depth image cannot be used as
+/// color attachment).
+struct FormatConstraintInfo {
+  enum class Channel : unsigned { R = 0, G = 1, B = 2, A = 3, D = 4, S = 5 };
+  enum class NumericFormat : unsigned {
+    UNORM,
+    SNORM,
+    USCALED,
+    SSCALED,
+    UINT,
+    SINT,
+    UFLOAT,
+    SFLOAT,
+    SRGB,
+    SFIXED5,
+    BOOL
+  };
+  struct ChannelConstraint {
+    std::optional<unsigned> bitwidth;
+    std::optional<NumericFormat> numericFormat;
+    ChannelConstraint() = default;
+    ChannelConstraint(unsigned bw) : bitwidth(bw) {}
+    ChannelConstraint(NumericFormat nf) : numericFormat(nf) {}
+    ChannelConstraint(unsigned bw, NumericFormat nf)
+        : bitwidth(bw), numericFormat(nf) {}
+  };
+
+  std::array<std::optional<ChannelConstraint>, 6> channels;
+
+  void addChannelConstraint(Channel ch, NumericFormat numericFormat) {
+    channels[static_cast<unsigned>(ch)].emplace(numericFormat);
+  }
+
+  void addChannelConstraint(Channel ch, unsigned bitwidth,
+                            NumericFormat numericFormat) {
+    channels[static_cast<unsigned>(ch)].emplace(bitwidth, numericFormat);
+  }
+
+  void addChannelConstraint(Channel ch, unsigned bitwidth) {
+    channels[static_cast<unsigned>(ch)].emplace(bitwidth);
+  }
+  void addChannelConstraint(Channel ch) {
+    channels[static_cast<unsigned>(ch)].emplace();
+  }
+
+  bool hasChannelContraint(Channel ch) const {
+    return channels[static_cast<unsigned>(ch)].has_value();
+  }
+  /// @brief compatibility of constraints is based on compatibility rules for
+  /// format in vulkan specification.
+  bool isCompatible(VkFormat format) const;
+
+  bool isNullChannel(Channel ch) const {
+    if (auto cnst = channels[static_cast<unsigned>(ch)]) {
+      return cnst->bitwidth && *cnst->bitwidth == 0;
+    }
+    return false;
+  }
+  std::optional<unsigned> channelBitwidth(Channel ch) const {
+    if (!hasChannelContraint(ch))
+      return std::nullopt;
+    return channels[static_cast<unsigned>(ch)]->bitwidth;
+  }
+};
+
 class ImageUseInfo : public UseInfo {
 public:
   ImageUseInfo() = default;
@@ -72,6 +141,7 @@ public:
   ImageUseInfo(ImageAccessInfo acc, size_t pass, std::string name = {})
       : UseInfo(std::move(name)), access(acc), passthrough(pass) {}
   ImageAccessInfo access;
+  FormatConstraintInfo formatConstraint;
   std::optional<size_t> passthrough;
   ImageUseInfo *clone() const override { return new ImageUseInfo(*this); }
 };

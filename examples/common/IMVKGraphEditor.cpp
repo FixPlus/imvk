@@ -1259,6 +1259,8 @@ drawCreateNodeMenu(imvk::graph::Workflow &workflow,
     create.template operator()<imvk::graph::AcquireImage>();
   if (ImGui::MenuItem("Get Extents"))
     create.template operator()<imvk::graph::GetExtents>();
+  if (ImGui::MenuItem("Convert Image Format"))
+    create.template operator()<imvk::graph::ConvertFormat>();
   if (ImGui::MenuItem("Clone Image"))
     create.template operator()<imvk::graph::Clone<imvk::graph::ImageTy>>();
   if (ImGui::MenuItem("Copy Image"))

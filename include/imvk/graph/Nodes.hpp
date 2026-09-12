@@ -292,6 +292,74 @@ public:
 template <typename T> class Clone {};
 template <typename T> class Copy {};
 
+class ConvertFormat : public Node {
+public:
+  ConvertFormat(Context &ctx)
+      : Node(ctx,
+             std::array{
+                 Node::Use{
+                     nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                     new ImageUseInfo{
+                         ImageAccessInfo{
+                             .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
+                             .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
+                         "image"}},
+                 Node::Use{nullptr, &ctx.types().get<FormatTy>(),
+                           new BasicUseInfo{"format"}}},
+             std::array{Node::Def{
+                 &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 new ImageDefInfo{
+                     ImageAccessInfo{
+                         .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
+                         .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                     "image"}}}) {}
+  ConvertFormat(Context &ctx, Value &image, Value &format)
+      : Node(ctx,
+             std::array{
+                 Node::Use{
+                     &image,
+                     new ImageUseInfo{
+                         ImageAccessInfo{
+                             .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
+                             .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
+                         "image"}},
+                 Node::Use{&format, &ctx.types().get<FormatTy>(),
+                           new BasicUseInfo{"format"}}},
+             std::array{Node::Def{
+                 &image.type(),
+                 new ImageDefInfo{
+                     ImageAccessInfo{
+                         .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
+                         .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                     "image"}}}) {}
+
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
+  std::string_view name() const final { return "convert_format"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+
+private:
+  ConvertFormat() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new ConvertFormat()};
+  }
+};
+
 template <> class Clone<ImageTy> : public Node {
 public:
   Clone(Context &ctx)

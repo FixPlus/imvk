@@ -150,6 +150,51 @@ inline void intrusive_ptr_release(CopyImageNode *p) {
   intrusive_ptr_release(static_cast<FONodeBase *>(p));
 }
 
+class ConvertedImageNode final
+    : public FONode<RegularImage, fon_type::swap, ConvertedImageNode>,
+      public MatImageBase {
+public:
+  ConvertedImageNode(FramedEngine &engine, const MatImage &src,
+                     const MatFormat &format, VkImageUsageFlags usage)
+      : FONode<RegularImage, fon_type::swap, ConvertedImageNode>(
+            engine, FOUses{&src->node(), format}),
+        MatImageBase(fon_type::swap), m_usage(usage) {}
+  FOReconstructible &node() override { return *this; }
+  VkImage image(FrameID id) const final { return get(id); }
+  VkImage useImage(const Frame &id) final { return use(id); }
+  const VkImageCreateInfo &info() const final {
+    assert(!isDestroyed());
+    return m_info;
+  }
+
+  RegularImage constructNew(FramedEngine &engine, FrameID frame) {
+    auto *src = dynamic_cast<MatImageBase *>(&getUseRaw(0));
+    assert(src);
+    m_info = src->info();
+    m_info.format = getUse<MatFormat>(1)->get();
+    m_info.usage = m_usage;
+    vkw::AllocationCreateInfo allocInfo{.usage = VMA_MEMORY_USAGE_GPU_ONLY};
+    return RegularImage(engine.context().getDeviceAllocator(), allocInfo,
+                        m_info);
+  }
+  void onUseAction(const Frame &frame, RegularImage &obj) {
+    // do nothing
+  }
+
+private:
+  VkImageCreateInfo m_info{};
+  VkImageUsageFlags m_usage;
+};
+
+inline void intrusive_ptr_add_ref(ConvertedImageNode *p) {
+  assert(p);
+  intrusive_ptr_add_ref(static_cast<FONodeBase *>(p));
+}
+inline void intrusive_ptr_release(ConvertedImageNode *p) {
+  assert(p);
+  intrusive_ptr_release(static_cast<FONodeBase *>(p));
+}
+
 class SwapchainImageNode final
     : public FONode<VkImage, fon_type::ext, SwapchainImageNode>,
       public MatImageBase {
@@ -362,6 +407,19 @@ const AttributesBase *MakeImage::getAttributes(
                                                     levels);
 }
 
+const AttributesBase *ConvertFormat::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  assert(&result == results().data());
+  assert(useAttributes.size() == 2);
+  const auto &image =
+      static_cast<const Attributes<ImageTy> &>(*useAttributes[0]);
+  const auto format =
+      static_cast<const Attributes<FormatTy> &>(*useAttributes[1]).value;
+  return &ctx.attributes().get<Attributes<ImageTy>>(
+      image.extents, format, image.layers, image.levels);
+}
+
 const AttributesBase *Copy<ImageTy>::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
@@ -440,6 +498,62 @@ completeSubresourceRange(const VkImageCreateInfo &info) {
   ret.layerCount = info.arrayLayers;
   return ret;
 }
+
+static VkExtent3D mipExtent(VkExtent3D extent, uint32_t level) {
+  while (level--) {
+    extent.width = std::max(1u, extent.width / 2);
+    extent.height = std::max(1u, extent.height / 2);
+    extent.depth = std::max(1u, extent.depth / 2);
+  }
+  return extent;
+}
+
+bool ConvertFormat::materialize(MaterializationContext &ctx) {
+  auto &value = results().front();
+  if (!ctx.startsImageChain(value))
+    return false;
+
+  auto &engine = ctx.env().engine();
+  auto src = ctx.get<MatImage>(uses()[0].value());
+  auto format = ctx.get<MatFormat>(uses()[1].value());
+  const auto outputUsage = ctx.chainImageTemplate(value).usage;
+  auto dst =
+      engine.createNode<ConvertedImageNode>(src, format, outputUsage);
+  ctx.materializeImageChain(value, dst);
+
+  ctx.materializeNode(
+      *this, [src = std::move(src), dst = std::move(dst)](
+                 vkw::BufferRecorder &recorder, const imvk::Frame &frame) {
+        const auto srcImage = src->useImage(frame);
+        const auto dstImage = dst->useImage(frame);
+        const auto &srcInfo = src->info();
+        const auto &dstInfo = dst->info();
+
+        boost::container::small_vector<VkImageBlit, 4> blits;
+        blits.reserve(srcInfo.mipLevels);
+        for (uint32_t level = 0; level < srcInfo.mipLevels; ++level) {
+          const auto extent = mipExtent(srcInfo.extent, level);
+          auto srcSubresource = completeSubresourceRangeLayers(srcInfo);
+          srcSubresource.mipLevel = level;
+          auto dstSubresource = completeSubresourceRangeLayers(dstInfo);
+          dstSubresource.mipLevel = level;
+
+          VkImageBlit blit{};
+          blit.srcSubresource = srcSubresource;
+          blit.srcOffsets[1] = {static_cast<int32_t>(extent.width),
+                                static_cast<int32_t>(extent.height),
+                                static_cast<int32_t>(extent.depth)};
+          blit.dstSubresource = dstSubresource;
+          blit.dstOffsets[1] = blit.srcOffsets[1];
+          blits.push_back(blit);
+        }
+
+        auto transfer = recorder.beginTransferPass();
+        transfer.blitImage(srcImage, dstImage, blits, VK_FILTER_NEAREST);
+      });
+  return true;
+}
+
 bool Clone<ImageTy>::materialize(MaterializationContext &ctx) {
   auto &engine = ctx.env().engine();
   auto &value = results().front();
