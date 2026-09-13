@@ -63,11 +63,21 @@ std::optional<
     std::pair<Value *, boost::container::small_vector<ConstrainedUse, 4>>>
 findConversionsToInsert(Workflow &workflow,
                         const AttributesAnalysis &attributes) {
+  auto hasAssumedCompatibleFormat = [](const Value &value) {
+    const Value *current = &value;
+    while (true) {
+      if (isa<AssumeCompatibleFormat>(&current->node()))
+        return true;
+      if (!isa<AssumeCompatibleExtents>(&current->node()))
+        return false;
+      current = &current->node().uses().front().value();
+    }
+  };
   for (auto &node : workflow) {
     for (auto &value : node.results()) {
       if (!isa<ImageTy>(&value.type()))
         continue;
-      if (isa<AssumeCompatibleFormat>(&value.node()))
+      if (hasAssumedCompatibleFormat(value))
         continue;
 
       const auto sourceFormat =
@@ -95,9 +105,22 @@ std::optional<
     std::pair<Value *, boost::container::small_vector<TypeConstrainedUse, 4>>>
 findTypeConversionsToInsert(Workflow &workflow,
                             const AttributesAnalysis &attributes) {
+  auto hasAssumedCompatibleExtents = [](const Value &value) {
+    const Value *current = &value;
+    while (true) {
+      if (isa<AssumeCompatibleExtents>(&current->node()))
+        return true;
+      if (!isa<AssumeCompatibleFormat>(&current->node()) &&
+          !isa<ConvertFormat>(&current->node()))
+        return false;
+      current = &current->node().uses().front().value();
+    }
+  };
   for (auto &node : workflow) {
     for (auto &value : node.results()) {
       if (!isa<ImageTy>(&value.type()))
+        continue;
+      if (hasAssumedCompatibleExtents(value))
         continue;
 
       const auto &sourceAttributes =
@@ -197,6 +220,23 @@ bool RemoveAssumeCompatibleFormatsPass::run(Workflow &workflow) const {
   boost::container::small_vector<AssumeCompatibleFormat *, 4> assumptions;
   for (auto &node : workflow) {
     if (auto *assumption = dyn_cast<AssumeCompatibleFormat>(&node))
+      assumptions.push_back(assumption);
+  }
+
+  for (auto *assumption : assumptions) {
+    assert(assumption->uses().size() == 1);
+    assert(assumption->results().size() == 1);
+    auto &input = assumption->uses().front().value();
+    assumption->results().front().replaceAllUsesWith(&input);
+    workflow.erase(assumption);
+  }
+  return !assumptions.empty();
+}
+
+bool RemoveAssumeCompatibleExtentsPass::run(Workflow &workflow) const {
+  boost::container::small_vector<AssumeCompatibleExtents *, 4> assumptions;
+  for (auto &node : workflow) {
+    if (auto *assumption = dyn_cast<AssumeCompatibleExtents>(&node))
       assumptions.push_back(assumption);
   }
 

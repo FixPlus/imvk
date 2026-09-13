@@ -113,6 +113,11 @@ size_t assumptionCount(Workflow &workflow) {
       workflow, [](Node &node) { return isa<AssumeCompatibleFormat>(&node); });
 }
 
+size_t extentsAssumptionCount(Workflow &workflow) {
+  return std::ranges::count_if(
+      workflow, [](Node &node) { return isa<AssumeCompatibleExtents>(&node); });
+}
+
 bool check(bool condition, std::string_view message) {
   if (!condition)
     std::cerr << message << '\n';
@@ -221,6 +226,97 @@ bool testAssumeCompatibleFormat() {
                "assumption lowering did not restore the original image") &&
          check(!RemoveAssumeCompatibleFormatsPass{}.run(workflow),
                "second assumption lowering changed the workflow");
+}
+
+bool testAssumeCompatibleExtents() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &image =
+      builder
+          .create<ImageSource>(std::optional{VK_FORMAT_R8G8B8A8_UNORM},
+                               VK_IMAGE_TYPE_1D)
+          ->results()
+          .front();
+  auto *assumption = builder.create<AssumeCompatibleExtents>(image);
+  auto &assumedImage = assumption->results().front();
+  auto *sink = builder.create<Sink>(assumedImage, FormatConstraintInfo{},
+                                    VK_IMAGE_VIEW_TYPE_2D);
+
+  AttributesAnalysis attributes{workflow};
+  const auto &inputAttributes = attributes.getAttributesFor(image);
+  const auto &outputAttributes = attributes.getAttributesFor(assumedImage);
+  Workflow cloned{workflow};
+
+  return check(&inputAttributes == &outputAttributes,
+               "extents assumption did not preserve image attributes") &&
+         check(std::ranges::any_of(cloned,
+                                   [](const Node &node) {
+                                     return isa<AssumeCompatibleExtents>(&node);
+                                   }),
+               "extents assumption was not cloned") &&
+         check(!InsertImageTypeConversionsPass{}.run(workflow),
+               "assumed-compatible extents inserted a resize") &&
+         check(imageTypeConversionCount(workflow) == 0,
+               "assumed-compatible extents have a resize") &&
+         check(RemoveAssumeCompatibleExtentsPass{}.run(workflow),
+               "extents assumption lowering did not change the workflow") &&
+         check(extentsAssumptionCount(workflow) == 0,
+               "extents assumption lowering did not erase the marker") &&
+         check(
+             &sink->uses().front().value() == &image,
+             "extents assumption lowering did not restore the source image") &&
+         check(!RemoveAssumeCompatibleExtentsPass{}.run(workflow),
+               "second extents assumption lowering changed the workflow");
+}
+
+bool testAssumeCompatibleExtentsThroughFormatConversion() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &image = builder
+                    .create<ImageSource>(std::optional{VK_FORMAT_D32_SFLOAT},
+                                         VK_IMAGE_TYPE_1D)
+                    ->results()
+                    .front();
+  auto &assumedImage =
+      builder.create<AssumeCompatibleExtents>(image)->results().front();
+  builder.create<Present>(assumedImage);
+
+  return check(
+             InsertFormatConversionsPass{}.run(workflow),
+             "format conversion was not inserted through extents assumption") &&
+         check(!InsertImageTypeConversionsPass{}.run(workflow),
+               "format conversion hid the extents assumption") &&
+         check(conversionCount(workflow) == 1,
+               "extents assumption suppressed format conversion") &&
+         check(imageTypeConversionCount(workflow) == 0,
+               "extents assumption inserted a resize after format conversion");
+}
+
+bool testNestedCompatibilityAssumptions() {
+  using NumericFormat = FormatConstraintInfo::NumericFormat;
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &image = builder.create<ImageSource>(std::nullopt, VK_IMAGE_TYPE_1D)
+                    ->results()
+                    .front();
+  auto &formatAssumed =
+      builder.create<AssumeCompatibleFormat>(image)->results().front();
+  auto &extentsAssumed =
+      builder.create<AssumeCompatibleExtents>(formatAssumed)->results().front();
+  builder.create<Sink>(extentsAssumed, constraint(32, NumericFormat::SFLOAT),
+                       VK_IMAGE_VIEW_TYPE_2D);
+
+  return check(!InsertFormatConversionsPass{}.run(workflow),
+               "extents assumption hid a nested format assumption") &&
+         check(!InsertImageTypeConversionsPass{}.run(workflow),
+               "format assumption hid a nested extents assumption") &&
+         check(conversionCount(workflow) == 0,
+               "nested assumptions inserted a format conversion") &&
+         check(imageTypeConversionCount(workflow) == 0,
+               "nested assumptions inserted a resize");
 }
 
 bool testScreenExtentsAttributes() {
@@ -785,6 +881,9 @@ int main() {
   return testCompatibleConstant() && testSharedConversionAndIdempotence() &&
                  testDynamicFormatIsConverted() && testIncompatibleGroups() &&
                  testAssumeCompatibleFormat() &&
+                 testAssumeCompatibleExtents() &&
+                 testAssumeCompatibleExtentsThroughFormatConversion() &&
+                 testNestedCompatibilityAssumptions() &&
                  testScreenExtentsAttributes() &&
                  testScreenImageDoesNotNeedTypeConversion() &&
                  testPresentFormatConstraint() &&

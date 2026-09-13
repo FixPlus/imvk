@@ -25,4 +25,9 @@ public:
   bool run(Workflow &workflow) const final;
 };
 
+class RemoveAssumeCompatibleExtentsPass final : public WorkflowPass {
+public:
+  bool run(Workflow &workflow) const final;
+};
+
 } // namespace imvk::graph

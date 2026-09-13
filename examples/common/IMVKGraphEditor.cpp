@@ -1299,6 +1299,8 @@ drawCreateNodeMenu(imvk::graph::Workflow &workflow,
     create.template operator()<imvk::graph::ScreenExtents>();
   if (ImGui::MenuItem("Assume Compatible Image Format"))
     create.template operator()<imvk::graph::AssumeCompatibleFormat>();
+  if (ImGui::MenuItem("Assume Compatible Image Extents"))
+    create.template operator()<imvk::graph::AssumeCompatibleExtents>();
   if (ImGui::MenuItem("Resize Image"))
     create.template operator()<imvk::graph::ResizeImage>();
   if (ImGui::MenuItem("Convert Image Format"))

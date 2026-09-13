@@ -436,6 +436,7 @@ MaterializationContext::MaterializationContext(
   InsertFormatConversionsPass{}.run(wf);
   InsertImageTypeConversionsPass{}.run(wf);
   RemoveAssumeCompatibleFormatsPass{}.run(wf);
+  RemoveAssumeCompatibleExtentsPass{}.run(wf);
   {
     auto imageChains = materializeImageValueChains(wf);
     for (auto &&chain : imageChains) {

@@ -534,6 +534,14 @@ const AttributesBase *AssumeCompatibleFormat::getAttributes(
   return useAttributes.front();
 }
 
+const AttributesBase *AssumeCompatibleExtents::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  assert(&result == results().data());
+  assert(useAttributes.size() == 1);
+  return useAttributes.front();
+}
+
 const AttributesBase *Copy<ImageTy>::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
@@ -761,6 +769,11 @@ bool ConvertFormat::materialize(MaterializationContext &ctx) {
 }
 
 bool AssumeCompatibleFormat::materialize(MaterializationContext &ctx) {
+  // Analysis-only marker removed before image-chain materialization.
+  return false;
+}
+
+bool AssumeCompatibleExtents::materialize(MaterializationContext &ctx) {
   // Analysis-only marker removed before image-chain materialization.
   return false;
 }

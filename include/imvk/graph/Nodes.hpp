@@ -330,6 +330,44 @@ private:
   }
 };
 
+class AssumeCompatibleExtents : public Node {
+public:
+  AssumeCompatibleExtents(Context &ctx)
+      : Node(ctx,
+             std::array{
+                 Node::Use{nullptr,
+                           &ctx.types().get<ImageTy>(),
+                           new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+             std::array{Node::Def{
+                 &ctx.types().get<ImageTy>(),
+                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+  AssumeCompatibleExtents(Context &ctx, Value &image)
+      : Node(ctx,
+             std::array{Node::Use{
+                 &image, new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+             std::array{Node::Def{
+                 &image.type(),
+                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
+  std::string_view name() const final { return "assume_compatible_extents"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+
+private:
+  AssumeCompatibleExtents() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new AssumeCompatibleExtents()};
+  }
+};
+
 class ResizeImage : public Node {
 public:
   ResizeImage(Context &ctx, std::optional<VkImageType> imageType = std::nullopt)
