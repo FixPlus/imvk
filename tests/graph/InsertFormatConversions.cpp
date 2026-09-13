@@ -230,6 +230,124 @@ bool testScreenExtentsAttributes() {
                "screen extents dynamic attribute references another value");
 }
 
+bool testPresentFormatConstraint() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &image =
+      builder
+          .create<ImageSource>(std::optional{VK_FORMAT_R8G8B8A8_UNORM})
+          ->results()
+          .front();
+  auto *present = builder.create<Present>(image);
+  const auto *info = dyn_cast<const ImageUseInfo>(present->uses().front().info());
+
+  return check(info, "present image use has no image information") &&
+         check(info->formatConstraint.isCompatible(VK_FORMAT_R8G8B8A8_UNORM),
+               "present rejects R8G8B8A8 UNORM") &&
+         check(info->formatConstraint.isCompatible(VK_FORMAT_B8G8R8A8_UNORM),
+               "present rejects B8G8R8A8 UNORM") &&
+         check(!info->formatConstraint.isCompatible(VK_FORMAT_R8G8B8A8_UINT),
+               "present accepts an integer color format") &&
+         check(!info->formatConstraint.isCompatible(VK_FORMAT_R8G8B8_UNORM),
+               "present accepts a format without alpha") &&
+         check(!info->formatConstraint.isCompatible(VK_FORMAT_D32_SFLOAT),
+               "present accepts a depth format");
+}
+
+bool testPresentInsertsConversion() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &image = builder
+                    .create<ImageSource>(std::optional{VK_FORMAT_D32_SFLOAT})
+                    ->results()
+                    .front();
+  auto *present = builder.create<Present>(image);
+
+  const bool changed = InsertFormatConversionsPass{}.run(workflow);
+  auto &presentedValue = present->uses().front().value();
+  const AttributesAnalysis attributes{workflow};
+  const auto &presentedAttributes =
+      attributes.getAttributesFor<Attributes<ImageTy>>(presentedValue);
+  const auto format = presentedAttributes.format.getConstant();
+  const auto &constraint =
+      static_cast<const ImageUseInfo &>(*present->uses().front().info())
+          .formatConstraint;
+
+  return check(changed, "present did not convert an incompatible format") &&
+         check(conversionCount(workflow) == 1,
+               "present inserted an unexpected conversion count") &&
+         check(isa<ConvertFormat>(&presentedValue.node()),
+               "present does not consume the converted value") &&
+         check(format.has_value(), "present conversion format is not constant") &&
+         check(format && constraint.isCompatible(*format),
+               "present conversion result does not satisfy its constraint");
+}
+
+bool testPresentedImageChain() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &presentedImage =
+      builder
+          .create<ImageSource>(std::optional{VK_FORMAT_R8G8B8A8_UNORM})
+          ->results()
+          .front();
+  auto &offscreenImage =
+      builder
+          .create<ImageSource>(std::optional{VK_FORMAT_R8G8B8A8_UNORM})
+          ->results()
+          .front();
+  builder.create<Present>(presentedImage);
+
+  auto chains = materializeImageValueChains(workflow);
+  const auto presentedCount =
+      std::ranges::count_if(chains, [](const auto &chain) {
+        return chain.presented;
+      });
+  const auto offscreenChain =
+      std::ranges::find_if(chains, [&](const auto &chain) {
+        return chain.chain.front().def == &offscreenImage;
+      });
+
+  return check(presentedCount == 1,
+               "image-chain analysis did not find one presented chain") &&
+         check(offscreenChain != chains.end(),
+               "image-chain analysis lost the offscreen chain") &&
+         check(offscreenChain != chains.end() && !offscreenChain->presented,
+               "offscreen chain was marked as presented");
+}
+
+bool testPresentVerification() {
+  {
+    Context ctx;
+    Workflow workflow{ctx};
+    WorkflowBuilder builder{workflow, workflow.end()};
+    builder.create<ImageSource>(
+        std::optional{VK_FORMAT_R8G8B8A8_UNORM});
+    if (!check(!verifyWorkflow(workflow),
+               "headless workflow failed verification"))
+      return false;
+  }
+
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &image =
+      builder
+          .create<ImageSource>(std::optional{VK_FORMAT_R8G8B8A8_UNORM})
+          ->results()
+          .front();
+  builder.create<Present>(image);
+  builder.create<Present>(image);
+  auto error = verifyWorkflow(workflow);
+  return check(error.has_value(),
+               "workflow with multiple present nodes passed verification") &&
+         check(error && isa<MultiplePresentImageError>(error->error.get()),
+               "multiple present nodes produced the wrong verification error");
+}
+
 } // namespace
 } // namespace imvk::graph
 
@@ -237,7 +355,10 @@ int main() {
   using namespace imvk::graph;
   return testCompatibleConstant() && testSharedConversionAndIdempotence() &&
                  testDynamicFormatIsConverted() && testIncompatibleGroups() &&
-                 testAssumeCompatibleFormat() && testScreenExtentsAttributes()
+                 testAssumeCompatibleFormat() && testScreenExtentsAttributes() &&
+                 testPresentFormatConstraint() &&
+                 testPresentInsertsConversion() && testPresentedImageChain() &&
+                 testPresentVerification()
              ? 0
              : 1;
 }

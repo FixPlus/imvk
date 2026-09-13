@@ -173,8 +173,9 @@ private:
 };
 
 static imvk::graph::Value &
-createCopyExtents(imvk::graph::WorkflowBuilder &builder,
-                  imvk::graph::Value &extentSource, VkFormat format) {
+createScreenCompatibleImage(imvk::graph::Context &ctx,
+                            imvk::graph::WorkflowBuilder &builder,
+                            imvk::graph::Value &extents, VkFormat format) {
   auto &c1 =
       builder.create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(1)
           ->results()
@@ -183,12 +184,11 @@ createCopyExtents(imvk::graph::WorkflowBuilder &builder,
       builder.create<imvk::graph::Constant<imvk::graph::FormatTy>>(format)
           ->results()
           .front();
-  auto &extents =
-      builder.create<imvk::graph::GetExtents>(extentSource)->results().front();
+
   return builder
       .create<imvk::graph::MakeImage>(
-          static_cast<const imvk::graph::ImageTy &>(extentSource.type()),
-          extents, fmt, c1, c1)
+          ctx.types().get<imvk::graph::ImageTy>(VK_IMAGE_TYPE_2D), extents, fmt,
+          c1, c1)
       ->results()
       .front();
 }
@@ -199,12 +199,15 @@ static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
   using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
   imvk::graph::Workflow workflow{ctx};
   imvk::graph::WorkflowBuilder builder{workflow, workflow.end()};
-  imvk::graph::Value &image =
-      builder.create<imvk::graph::AcquireImage>()->results().front();
-  imvk::graph::Value &offscreenBuffer =
-      createCopyExtents(builder, image, VK_FORMAT_R8G8B8A8_UNORM);
+  auto &extents =
+      builder.create<imvk::graph::ScreenExtents>()->results().front();
+  imvk::graph::Value &image = createScreenCompatibleImage(
+      ctx, builder, extents, VK_FORMAT_R8G8B8A8_UNORM);
+
+  imvk::graph::Value &offscreenBuffer = createScreenCompatibleImage(
+      ctx, builder, extents, VK_FORMAT_R8G8B8A8_UNORM);
   imvk::graph::Value &depthBuffer =
-      createCopyExtents(builder, image, VK_FORMAT_D32_SFLOAT);
+      createScreenCompatibleImage(ctx, builder, extents, VK_FORMAT_D32_SFLOAT);
   imvk::graph::Value &texture =
       builder
           .create<imvk::graph::RenderPass>(std::array{&offscreenBuffer},

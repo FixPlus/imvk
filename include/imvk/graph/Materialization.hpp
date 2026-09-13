@@ -124,6 +124,7 @@ struct ImageValueBinding {
 struct ImageValueChain {
   VkImageCreateInfo imageInfo{};
   boost::container::small_vector<ImageValueBinding, 2> chain;
+  bool presented = false;
 };
 
 std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf);
@@ -146,8 +147,9 @@ public:
   template <typename T> using MatMap = std::unordered_map<Value *, T>;
 
   bool startsImageChain(Value &val);
+  bool isPresentedImageChain(Value &val);
   const VkImageCreateInfo &chainImageTemplate(Value &val);
-  void materializeImageChain(Value &val, MatImage &&image);
+  void materializeImageChain(Value &val, const MatImage &image);
   void materializeNode(Node &n, MatNode &&action);
 
   template <typename T> const T &get(Value &v) const {

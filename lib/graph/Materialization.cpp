@@ -235,6 +235,15 @@ static void fillInInfo(ImageValueChain &chain, const AttributesAnalysis &aa) {
     binding.viewInfo = commonView;
   }
 }
+
+static bool isPresented(const ImageValueChain &chain) {
+  return std::ranges::any_of(chain.chain, [](const auto &binding) {
+    return std::ranges::any_of(binding.def->users(), [](const auto &use) {
+      return isa<Present>(&use.user());
+    });
+  });
+}
+
 std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf) {
   auto aa = AttributesAnalysis{wf};
   std::unordered_set<Value *> visited;
@@ -340,6 +349,7 @@ std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf) {
       auto *currentValue = &val;
       while (currentValue = processValue(*currentValue, nextChain))
         ;
+      nextChain.presented = isPresented(nextChain);
       fillInInfo(nextChain, aa);
     }
   }
@@ -349,6 +359,10 @@ std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf) {
 bool MaterializationContext::startsImageChain(Value &val) {
   return m_chains.contains(&val);
 }
+bool MaterializationContext::isPresentedImageChain(Value &val) {
+  assert(m_chains.contains(&val));
+  return m_chains.at(&val).presented;
+}
 const VkImageCreateInfo &
 MaterializationContext::chainImageTemplate(Value &val) {
   assert(m_chains.contains(&val));
@@ -356,7 +370,7 @@ MaterializationContext::chainImageTemplate(Value &val) {
 }
 
 void MaterializationContext::materializeImageChain(Value &val,
-                                                   MatImage &&image) {
+                                                   const MatImage &image) {
   assert(m_chains.contains(&val));
   auto &chain = m_chains.at(&val);
   assert(!chain.chain.empty());

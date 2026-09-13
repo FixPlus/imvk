@@ -283,31 +283,10 @@ public:
   }
 };
 
-class MultipleAcquireImageError final : public VerifyErrorBase {
-public:
-  std::string_view what() const final {
-    return "workflow contains more than one acquire_image node";
-  }
-};
-
 class MultiplePresentImageError final : public VerifyErrorBase {
 public:
   std::string_view what() const final {
     return "workflow contains more than one present_image node";
-  }
-};
-
-class MissingPresentImageError final : public VerifyErrorBase {
-public:
-  std::string_view what() const final {
-    return "acquire_image node requires a following present_image node";
-  }
-};
-
-class InvalidAcquirePresentOrderError final : public VerifyErrorBase {
-public:
-  std::string_view what() const final {
-    return "present_image node must follow acquire_image node";
   }
 };
 

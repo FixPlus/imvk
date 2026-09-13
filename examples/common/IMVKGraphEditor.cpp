@@ -44,44 +44,42 @@ GraphEditor::GraphEditor(const MaterializationEnvironment &me,
   m_matCtx.emplace(m_me, m_materializedWorkflow);
 }
 void GraphEditor::m_inject_into_workflow(imvk::graph::Workflow &wf) {
-  auto foundAquireImage = std::ranges::find_if(
-      wf, [&](auto &&node) { return isa<graph::AcquireImage>(&node); });
   auto foundPresent = std::ranges::find_if(
       wf, [&](auto &&node) { return isa<graph::Present>(&node); });
-  if (foundAquireImage == wf.end()) {
-    assert(foundPresent == wf.end() && "cannot have present without acquire");
-    // this is headless workflow. just insert work at the end.
-    auto builder = imvk::graph::WorkflowBuilder{wf, wf.end()};
-    auto &image =
-        builder.create<imvk::graph::AcquireImage>()->results().front();
-    auto &renderedImage =
-        builder
-            .create<imvk::graph::RenderPass>(
-                std::array{&image}, imvk::graph::Node::EmptyValues, m_scene)
-            ->results()
-            .front();
-    builder.create<imvk::graph::Present>(renderedImage);
+  if (foundPresent == wf.end()) {
+    // Headless workflows do not have an image to display in the editor.
     return;
   }
-  assert(foundPresent != wf.end() && "cannot have acquire without present");
-  auto &originalSwapchain = foundAquireImage->results().front();
-  auto &swapChainClone =
-      imvk::graph::WorkflowBuilder{wf, *std::next(foundAquireImage)}
-          .create<imvk::graph::Clone<imvk::graph::ImageTy>>(
-              foundAquireImage->results().front())
-          ->results()
-          .front();
-
-  originalSwapchain.replaceAllUsesWith(&swapChainClone);
-  swapChainClone.node().uses().front().replaceBy(&originalSwapchain);
 
   auto &originalPresent = foundPresent->uses().front();
-  auto &renderedImage = imvk::graph::WorkflowBuilder{wf, *foundPresent}
-                            .create<imvk::graph::RenderPass>(
-                                std::array{&originalSwapchain},
-                                std::array{&originalPresent.value()}, m_scene)
-                            ->results()
-                            .front();
+  auto builder = imvk::graph::WorkflowBuilder{wf, *foundPresent};
+  auto &extents =
+      builder.create<imvk::graph::ScreenExtents>()->results().front();
+  auto &format =
+      builder
+          .create<imvk::graph::Constant<imvk::graph::FormatTy>>(
+              VK_FORMAT_R8G8B8A8_UNORM)
+          ->results()
+          .front();
+  auto &one =
+      builder.create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(1)
+          ->results()
+          .front();
+  auto &screenImage =
+      builder
+          .create<imvk::graph::MakeImage>(
+              wf.context().types().get<imvk::graph::ImageTy>(
+                  VK_IMAGE_TYPE_2D),
+              extents, format, one, one)
+          ->results()
+          .front();
+  auto &renderedImage =
+      builder
+          .create<imvk::graph::RenderPass>(
+              std::array{&screenImage}, std::array{&originalPresent.value()},
+              m_scene)
+          ->results()
+          .front();
   originalPresent.replaceBy(&renderedImage);
 }
 
@@ -1255,8 +1253,6 @@ drawCreateNodeMenu(imvk::graph::Workflow &workflow,
   }
   if (ImGui::MenuItem("Make Image"))
     create.template operator()<imvk::graph::MakeImage>(imageType);
-  if (ImGui::MenuItem("Acquire Image"))
-    create.template operator()<imvk::graph::AcquireImage>();
   if (ImGui::MenuItem("Get Extents"))
     create.template operator()<imvk::graph::GetExtents>();
   if (ImGui::MenuItem("Screen Extents"))

@@ -230,33 +230,6 @@ private:
   }
 };
 
-class AcquireImage : public Node {
-public:
-  AcquireImage(Context &ctx)
-      : Node(ctx, Node::EmptyUses,
-             std::array{Node::Def{
-                 &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
-                 new ImageDefInfo{ImageAccessInfo{}, "swapchain image"}}}) {}
-  const AttributesBase *
-  getAttributes(Context &ctx, const Value &result,
-                std::span<const AttributesBase *> useAttributes) const override;
-  std::string_view name() const final { return "acquire_image"; }
-  std::optional<VerifyError> verify(Context &ctx,
-                                    const AttributesAnalysis &aa) const final {
-    return std::nullopt;
-  }
-  void dumpAttributes(std::ostream &os) const final {}
-  bool hasVisibleSideEffects() const final { return false; }
-
-  bool materialize(MaterializationContext &ctx) final;
-
-private:
-  AcquireImage() = default;
-  std::unique_ptr<Node> doClone() const override {
-    return std::unique_ptr<Node>{new AcquireImage()};
-  }
-};
-
 // Attribute read nodes.
 
 class GetExtents : public Node {
@@ -809,23 +782,11 @@ public:
       : Node(ctx,
              std::array{Node::Use{
                  nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
-                 new ImageUseInfo{
-                     ImageAccessInfo{.accessFlags = 0,
-                                     .stageFlags =
-                                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                     .layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR},
-                     "image"}}},
+                 makeImageUseInfo()}},
              Node::EmptyResults) {}
   Present(Context &ctx, Value &image)
       : Node(ctx,
-             std::array{Node::Use{
-                 &image,
-                 new ImageUseInfo{
-                     ImageAccessInfo{.accessFlags = 0,
-                                     .stageFlags =
-                                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                     .layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR},
-                     "image"}}},
+             std::array{Node::Use{&image, makeImageUseInfo()}},
              Node::EmptyResults) {}
   const AttributesBase *getAttributes(
       Context &ctx, const Value &result,
@@ -842,6 +803,26 @@ public:
   bool materialize(MaterializationContext &ctx) final;
 
 private:
+  static ImageUseInfo *makeImageUseInfo() {
+    auto *info = new ImageUseInfo{
+        ImageAccessInfo{.accessFlags = 0,
+                        .stageFlags = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                        .layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR},
+        "image"};
+    using Channel = FormatConstraintInfo::Channel;
+    using NumericFormat = FormatConstraintInfo::NumericFormat;
+    info->formatConstraint.addChannelConstraint(Channel::R, 8,
+                                                NumericFormat::UNORM);
+    info->formatConstraint.addChannelConstraint(Channel::G, 8,
+                                                NumericFormat::UNORM);
+    info->formatConstraint.addChannelConstraint(Channel::B, 8,
+                                                NumericFormat::UNORM);
+    info->formatConstraint.addChannelConstraint(Channel::A, 8,
+                                                NumericFormat::UNORM);
+    info->formatConstraint.addChannelConstraint(Channel::D, 0);
+    info->formatConstraint.addChannelConstraint(Channel::S, 0);
+    return info;
+  }
   Present() = default;
   std::unique_ptr<Node> doClone() const override {
     return std::unique_ptr<Node>{new Present()};

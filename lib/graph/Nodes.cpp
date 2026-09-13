@@ -363,16 +363,6 @@ const AttributesBase *RenderPass::getAttributes(
   return useAttributes[*imageDefInfo.passthrough];
 }
 
-const AttributesBase *AcquireImage::getAttributes(
-    Context &ctx, const Value &result,
-    std::span<const AttributesBase *> useAttributes) const {
-  assert(&result == results().data());
-  return &ctx.attributes().get<Attributes<ImageTy>>(
-      dynamic<VkExtent3D>(results().front()),
-      dynamic<VkFormat>(results().front()), dynamic<size_t>(results().front()),
-      constant<size_t>(1));
-}
-
 const AttributesBase *Constant<IntegerScalarTy>::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
@@ -496,6 +486,11 @@ bool MakeImage::materialize(MaterializationContext &ctx) {
   if (!ctx.startsImageChain(value))
     return false;
   auto templ = ctx.chainImageTemplate(value);
+  if (ctx.isPresentedImageChain(value)) {
+    ctx.materializeImageChain(
+        value, engine.createNode<SwapchainImageNode>(ctx, templ));
+    return true;
+  }
   ctx.materializeImageChain(
       value, engine.createNode<RegularImageNode>(
                  ctx, ctx.get<MatExtents>(uses()[0].value()),
@@ -548,7 +543,12 @@ bool ConvertFormat::materialize(MaterializationContext &ctx) {
   auto src = ctx.get<MatImage>(uses()[0].value());
   auto format = ctx.get<MatFormat>(uses()[1].value());
   const auto outputUsage = ctx.chainImageTemplate(value).usage;
-  auto dst = engine.createNode<ConvertedImageNode>(src, format, outputUsage);
+  MatImage dst;
+  if (ctx.isPresentedImageChain(value))
+    dst = engine.createNode<SwapchainImageNode>(
+        ctx, ctx.chainImageTemplate(value));
+  else
+    dst = engine.createNode<ConvertedImageNode>(src, format, outputUsage);
   ctx.materializeImageChain(value, dst);
 
   VkImageMemoryBarrier barrier{};
@@ -610,7 +610,11 @@ bool Clone<ImageTy>::materialize(MaterializationContext &ctx) {
     return false;
   auto templ = ctx.chainImageTemplate(value);
   auto src = ctx.get<MatImage>(uses().front().value());
-  auto dst = engine.createNode<CopyImageNode>(src, templ);
+  MatImage dst;
+  if (ctx.isPresentedImageChain(value))
+    dst = engine.createNode<SwapchainImageNode>(ctx, templ);
+  else
+    dst = engine.createNode<CopyImageNode>(src, templ);
 
   ctx.materializeImageChain(value, dst);
   return true;
@@ -636,16 +640,6 @@ bool Copy<ImageTy>::materialize(MaterializationContext &ctx) {
                                   viewDst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                   std::array{region});
       });
-  return true;
-}
-
-bool AcquireImage::materialize(MaterializationContext &ctx) {
-  auto &engine = ctx.env().engine();
-  auto &value = results().front();
-  assert(ctx.startsImageChain(value));
-  auto &templ = ctx.chainImageTemplate(value);
-  ctx.materializeImageChain(value,
-                            engine.createNode<SwapchainImageNode>(ctx, templ));
   return true;
 }
 

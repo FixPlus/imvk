@@ -46,29 +46,14 @@ std::optional<VerifyError> verifyWorkflow(const Workflow &wf) {
       return error;
   }
 
-  AcquireImage *acquire = nullptr;
   Present *present = nullptr;
-  bool presentPrecedesAcquire = false;
   for (auto &node : workflow) {
-    if (auto *currentAcquire = dyn_cast<AcquireImage>(&node)) {
-      if (acquire)
-        return makeVerifyError<MultipleAcquireImageError>(currentAcquire);
-      acquire = currentAcquire;
-      presentPrecedesAcquire = present != nullptr;
-    }
-
     if (auto *currentPresent = dyn_cast<Present>(&node)) {
       if (present)
         return makeVerifyError<MultiplePresentImageError>(currentPresent);
       present = currentPresent;
     }
   }
-
-  if (acquire && !present)
-    return makeVerifyError<MissingPresentImageError>(acquire);
-
-  if (acquire && presentPrecedesAcquire)
-    return makeVerifyError<InvalidAcquirePresentOrderError>(present);
 
   return std::nullopt;
 }
