@@ -231,6 +231,9 @@ static void fillInInfo(ImageValueChain &chain, const AttributesAnalysis &aa) {
     imageInfo.extent = *extents;
     imageInfo.imageType = imageTypeForExtents(*extents);
   }
+  if (const auto *resize = dyn_cast<ResizeImage>(&definingOp.node());
+      resize && resize->getImageType())
+    imageInfo.imageType = *resize->getImageType();
   if (auto levels = definingAttrs.levels.getConstant())
     imageInfo.mipLevels = *levels;
   if (auto layers = definingAttrs.layers.getConstant())

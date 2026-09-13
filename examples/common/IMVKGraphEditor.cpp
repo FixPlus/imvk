@@ -720,6 +720,21 @@ sceneName(const imvk::graph::Scene &scene,
   return found->first;
 }
 
+static std::string_view imageTypeName(std::optional<VkImageType> imageType) {
+  if (!imageType)
+    return "Auto";
+  switch (*imageType) {
+  case VK_IMAGE_TYPE_1D:
+    return "1D";
+  case VK_IMAGE_TYPE_2D:
+    return "2D";
+  case VK_IMAGE_TYPE_3D:
+    return "3D";
+  default:
+    return "Unknown";
+  }
+}
+
 static float nodeWidgetWidth(const imvk::graph::Node &node) {
   if (isa<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(&node))
     return 120.0f;
@@ -727,6 +742,8 @@ static float nodeWidgetWidth(const imvk::graph::Node &node) {
     return 360.0f;
   if (isa<imvk::graph::Constant<imvk::graph::ExtentsTy>>(&node))
     return 210.0f;
+  if (isa<imvk::graph::ResizeImage>(&node))
+    return 160.0f;
   if (isa<imvk::graph::RenderPass>(&node))
     return 160.0f;
   if (isa<imvk::graph::Barrier<imvk::graph::ImageTy>>(&node))
@@ -875,6 +892,16 @@ static bool drawNodeWidget(imvk::graph::Node &node,
     } else {
       ImGui::Text("%u x %u x %u", value.width, value.height, value.depth);
     }
+  } else if (auto *resize = dyn_cast<imvk::graph::ResizeImage>(&node)) {
+    const auto currentName = imageTypeName(resize->getImageType());
+    if (editable) {
+      popup.openRequested =
+          ImGui::Button(currentName.data(), ImVec2(contentWidth, 0.0f));
+      popup.anchor = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+      popup.width = contentWidth;
+    } else {
+      ImGui::TextUnformatted(currentName.data());
+    }
   } else if (auto *renderPass = dyn_cast<imvk::graph::RenderPass>(&node)) {
     const auto currentName = sceneName(renderPass->scene(), availableScenes);
     if (editable) {
@@ -942,6 +969,24 @@ static bool drawNodePopup(imvk::graph::Node &node,
     if (popup.inputDeactivated && !popupOpen &&
         !formatByName(popup.formatInput->text.data()))
       setFormatInputText(popup.formatInput->text, constant->getValue());
+  } else if (auto *resize = dyn_cast<imvk::graph::ResizeImage>(&node)) {
+    if (popup.openRequested)
+      ImGui::OpenPopup("##image_type");
+    if (ImGui::BeginPopup("##image_type")) {
+      constexpr std::array<std::optional<VkImageType>, 4> imageTypes{
+          std::nullopt, VK_IMAGE_TYPE_1D, VK_IMAGE_TYPE_2D, VK_IMAGE_TYPE_3D};
+      for (const auto imageType : imageTypes) {
+        const bool selected = imageType == resize->getImageType();
+        if (ImGui::Selectable(imageTypeName(imageType).data(), selected) &&
+            !selected) {
+          resize->setImageType(imageType);
+          changed = true;
+        }
+        if (selected)
+          ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndPopup();
+    }
   } else if (auto *renderPass = dyn_cast<imvk::graph::RenderPass>(&node)) {
     if (popup.openRequested)
       ImGui::OpenPopup("##scene");

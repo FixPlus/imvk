@@ -508,6 +508,42 @@ bool testResizeImageChain() {
                "resize image chain changed the format");
 }
 
+bool testExplicitResizeImageType() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &source =
+      builder.create<ImageSource>(std::optional{VK_FORMAT_R8G8B8A8_UNORM})
+          ->results()
+          .front();
+  auto &extents = builder.create<Constant<ExtentsTy>>(VkExtent3D{1, 1, 1})
+                      ->results()
+                      .front();
+  auto *resize = builder.create<ResizeImage>(source, extents, VK_IMAGE_TYPE_2D);
+
+  Workflow cloned{workflow};
+  const auto clonedResize = std::ranges::find_if(
+      cloned, [](const Node &node) { return isa<ResizeImage>(&node); });
+
+  auto chains = materializeImageValueChains(workflow);
+  const auto resizedChain =
+      std::ranges::find_if(chains, [&](const auto &chain) {
+        return chain.chain.front().def == &resize->results().front();
+      });
+
+  return check(resize->getImageType() == VK_IMAGE_TYPE_2D,
+               "resize image did not retain the explicit image type") &&
+         check(
+             clonedResize != cloned.end() &&
+                 dyn_cast<const ResizeImage>(&*clonedResize)->getImageType() ==
+                     VK_IMAGE_TYPE_2D,
+             "resize image clone did not retain the explicit image type") &&
+         check(resizedChain != chains.end(),
+               "explicitly typed resize image did not start an image chain") &&
+         check(resizedChain->imageInfo.imageType == VK_IMAGE_TYPE_2D,
+               "resize image chain ignored the explicit image type");
+}
+
 } // namespace
 } // namespace imvk::graph
 
@@ -515,12 +551,14 @@ int main() {
   using namespace imvk::graph;
   return testCompatibleConstant() && testSharedConversionAndIdempotence() &&
                  testDynamicFormatIsConverted() && testIncompatibleGroups() &&
-                 testAssumeCompatibleFormat() && testScreenExtentsAttributes() &&
+                 testAssumeCompatibleFormat() &&
+                 testScreenExtentsAttributes() &&
                  testPresentFormatConstraint() &&
                  testPresentInsertsConversion() && testPresentedImageChain() &&
                  testPresentVerification() && testUnifiedImageType() &&
                  testImageTypeInference() && testImageChainTypeInference() &&
-                 testResizeImageAttributes() && testResizeImageChain()
+                 testResizeImageAttributes() && testResizeImageChain() &&
+                 testExplicitResizeImageType()
              ? 0
              : 1;
 }

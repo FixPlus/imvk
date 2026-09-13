@@ -218,10 +218,11 @@ class ResizedImageNode final
       public MatImageBase {
 public:
   ResizedImageNode(FramedEngine &engine, const MatImage &src,
-                   const MatExtents &extents, VkImageUsageFlags usage)
+                   const MatExtents &extents, VkImageUsageFlags usage,
+                   std::optional<VkImageType> imageType)
       : FONode<RegularImage, fon_type::swap, ResizedImageNode>(
             engine, FOUses{&src->node(), extents}),
-        MatImageBase(fon_type::swap), m_usage(usage) {}
+        MatImageBase(fon_type::swap), m_usage(usage), m_imageType(imageType) {}
   FOReconstructible &node() override { return *this; }
   VkImage image(FrameID id) const final { return get(id); }
   VkImage useImage(const Frame &id) final { return use(id); }
@@ -235,7 +236,7 @@ public:
     assert(src);
     m_info = src->info();
     m_info.extent = getUse<MatExtents>(1)->get();
-    m_info.imageType = imageTypeForExtents(m_info.extent);
+    m_info.imageType = m_imageType.value_or(imageTypeForExtents(m_info.extent));
     m_info.usage = m_usage;
     vkw::AllocationCreateInfo allocInfo{.usage = VMA_MEMORY_USAGE_GPU_ONLY};
     return RegularImage(engine.context().getDeviceAllocator(), allocInfo,
@@ -248,6 +249,7 @@ public:
 private:
   VkImageCreateInfo m_info{};
   VkImageUsageFlags m_usage;
+  std::optional<VkImageType> m_imageType;
 };
 
 inline void intrusive_ptr_add_ref(ResizedImageNode *p) {
@@ -603,13 +605,16 @@ bool ResizeImage::materialize(MaterializationContext &ctx) {
   auto &engine = ctx.env().engine();
   auto src = ctx.get<MatImage>(uses()[0].value());
   auto extents = ctx.get<MatExtents>(uses()[1].value());
-  const auto outputUsage = ctx.chainImageTemplate(value).usage;
+  auto outputTemplate = ctx.chainImageTemplate(value);
+  if (m_imageType)
+    outputTemplate.imageType = *m_imageType;
+  const auto outputUsage = outputTemplate.usage;
   MatImage dst;
   if (ctx.isPresentedImageChain(value))
-    dst = engine.createNode<SwapchainImageNode>(
-        ctx, ctx.chainImageTemplate(value));
+    dst = engine.createNode<SwapchainImageNode>(ctx, outputTemplate);
   else
-    dst = engine.createNode<ResizedImageNode>(src, extents, outputUsage);
+    dst = engine.createNode<ResizedImageNode>(src, extents, outputUsage,
+                                              m_imageType);
   ctx.materializeImageChain(value, dst);
 
   VkImageMemoryBarrier barrier{};

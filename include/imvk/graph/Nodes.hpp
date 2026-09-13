@@ -332,7 +332,7 @@ private:
 
 class ResizeImage : public Node {
 public:
-  ResizeImage(Context &ctx)
+  ResizeImage(Context &ctx, std::optional<VkImageType> imageType = std::nullopt)
       : Node(ctx,
              std::array{
                  Node::Use{
@@ -354,8 +354,10 @@ public:
                          .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
                          .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                          .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
-                     "image"}}}) {}
-  ResizeImage(Context &ctx, Value &image, Value &extents)
+                     "image"}}}),
+        m_imageType(imageType) {}
+  ResizeImage(Context &ctx, Value &image, Value &extents,
+              std::optional<VkImageType> imageType = std::nullopt)
       : Node(ctx,
              std::array{
                  Node::Use{
@@ -377,7 +379,13 @@ public:
                          .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
                          .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                          .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
-                     "image"}}}) {}
+                     "image"}}}),
+        m_imageType(imageType) {}
+
+  std::optional<VkImageType> getImageType() const { return m_imageType; }
+  void setImageType(std::optional<VkImageType> imageType) {
+    m_imageType = imageType;
+  }
 
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
@@ -392,10 +400,12 @@ public:
   bool materialize(MaterializationContext &ctx) final;
 
 private:
-  ResizeImage() = default;
+  explicit ResizeImage(std::optional<VkImageType> imageType)
+      : m_imageType(imageType) {}
   std::unique_ptr<Node> doClone() const override {
-    return std::unique_ptr<Node>{new ResizeImage()};
+    return std::unique_ptr<Node>{new ResizeImage(m_imageType)};
   }
+  std::optional<VkImageType> m_imageType;
 };
 
 class ConvertFormat : public Node {
