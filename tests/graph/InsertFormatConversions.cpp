@@ -207,6 +207,29 @@ bool testAssumeCompatibleFormat() {
                "second assumption lowering changed the workflow");
 }
 
+bool testScreenExtentsAttributes() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto *screenExtents = builder.create<ScreenExtents>();
+  auto &result = screenExtents->results().front();
+  AttributesAnalysis attributes{workflow};
+  const auto &resultAttributes =
+      attributes.getAttributesFor<Attributes<ExtentsTy>>(result);
+
+  return check(screenExtents->uses().empty(),
+               "screen extents unexpectedly has inputs") &&
+         check(screenExtents->results().size() == 1,
+               "screen extents does not have one result") &&
+         check(isa<ExtentsTy>(&result.type()),
+               "screen extents result has the wrong type") &&
+         check(resultAttributes.extents.status() ==
+                   Attribute<VkExtent3D>::Status::dynamic,
+               "screen extents attribute is not dynamic") &&
+         check(resultAttributes.extents.getDynamicValue() == &result,
+               "screen extents dynamic attribute references another value");
+}
+
 } // namespace
 } // namespace imvk::graph
 
@@ -214,7 +237,7 @@ int main() {
   using namespace imvk::graph;
   return testCompatibleConstant() && testSharedConversionAndIdempotence() &&
                  testDynamicFormatIsConverted() && testIncompatibleGroups() &&
-                 testAssumeCompatibleFormat()
+                 testAssumeCompatibleFormat() && testScreenExtentsAttributes()
              ? 0
              : 1;
 }

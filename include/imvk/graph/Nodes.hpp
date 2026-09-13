@@ -107,6 +107,31 @@ private:
   }
 };
 
+class ScreenExtents : public Node {
+public:
+  ScreenExtents(Context &ctx)
+      : Node(ctx, Node::EmptyUses,
+             std::array{Node::Def{&ctx.types().get<ExtentsTy>(),
+                                  new BasicDefInfo{"extents"}}}) {}
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
+  std::string_view name() const final { return "screen_extents"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+
+private:
+  ScreenExtents() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new ScreenExtents()};
+  }
+};
+
 template <typename Ty> class Dynamic {};
 
 template <> class Dynamic<IntegerScalarTy> : public Node {

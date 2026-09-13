@@ -19,6 +19,22 @@ bool Constant<ExtentsTy>::materialize(MaterializationContext &ctx) {
   return true;
 }
 
+bool ScreenExtents::materialize(MaterializationContext &ctx) {
+  auto &engine = ctx.env().engine();
+  auto swapchain = engine.swapchain();
+  ctx.materialize<MatExtents>(
+      results().front(),
+      MatExtents(
+          engine,
+          [](FramedEngine &engine, MatHostValueImpl<VkExtent3D> &) {
+            auto &swapchain =
+                static_cast<GraphicsEngine &>(engine).swapchain().get();
+            return swapchain.images().front().rawExtents();
+          },
+          FOUses{std::move(swapchain)}));
+  return true;
+}
+
 bool Dynamic<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
 
   auto dynVal = MatIntegerScalar(ctx.env().engine());
@@ -378,6 +394,15 @@ const AttributesBase *Constant<ExtentsTy>::getAttributes(
   assert(&result == results().data());
   return &ctx.attributes().get<Attributes<ExtentsTy>>(
       constant<VkExtent3D>(value));
+}
+
+const AttributesBase *ScreenExtents::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  assert(&result == results().data());
+  assert(useAttributes.empty());
+  return &ctx.attributes().get<Attributes<ExtentsTy>>(
+      dynamic<VkExtent3D>(result));
 }
 const AttributesBase *GetExtents::getAttributes(
     Context &ctx, const Value &result,
