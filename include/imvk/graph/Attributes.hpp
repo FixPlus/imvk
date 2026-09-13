@@ -247,17 +247,22 @@ public:
 template <> class Attributes<ExtentsTy> : public AttributesBase {
 public:
   Attribute<VkExtent3D> extents;
+  Attribute<VkImageType> imageType;
 
   Attributes() = default;
-  Attributes(Attribute<VkExtent3D> val) : extents(val) {}
-  void dump(std::ostream &os) const final { os << extents << "\n"; }
+  Attributes(Attribute<VkExtent3D> val, Attribute<VkImageType> type)
+      : extents(val), imageType(type) {}
+  void dump(std::ostream &os) const final {
+    os << extents << "\nimage type: " << imageType << "\n";
+  }
   std::size_t hash() const final {
     auto ret = typeid(Attributes<ExtentsTy>).hash_code();
     boost::hash_combine(ret, extents.hash());
+    boost::hash_combine(ret, imageType.hash());
     return ret;
   }
   bool operator==(const Attributes<ExtentsTy> &another) const {
-    return extents == another.extents;
+    return extents == another.extents && imageType == another.imageType;
   }
   bool operator==(const AttributesBase &another) const final {
     if (auto *casted = dyn_cast<Attributes<ExtentsTy>>(&another))

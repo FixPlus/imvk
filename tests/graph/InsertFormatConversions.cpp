@@ -243,7 +243,47 @@ bool testScreenExtentsAttributes() {
                    Attribute<VkExtent3D>::Status::dynamic,
                "screen extents attribute is not dynamic") &&
          check(resultAttributes.extents.getDynamicValue() == &result,
-               "screen extents dynamic attribute references another value");
+               "screen extents dynamic attribute references another value") &&
+         check(resultAttributes.imageType.getConstant() == VK_IMAGE_TYPE_2D,
+               "screen extents do not carry a 2D image type hint");
+}
+
+bool testScreenImageDoesNotNeedTypeConversion() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &extents = builder.create<ScreenExtents>()->results().front();
+  auto &format = builder.create<Constant<FormatTy>>(VK_FORMAT_R8G8B8A8_UNORM)
+                     ->results()
+                     .front();
+  auto &one = builder.create<Constant<IntegerScalarTy>>(1)->results().front();
+  auto &image =
+      builder.create<MakeImage>(extents, format, one, one)->results().front();
+  Scene scene;
+  scene.attachments.emplace_back(ImageAttachmentUseInfo::Kind::color,
+                                 ImageAttachmentUseInfo::LoadOp::clear);
+  auto &rendered =
+      builder.create<RenderPass>(std::array{&image}, Node::EmptyValues, scene)
+          ->results()
+          .front();
+  builder.create<Present>(rendered);
+
+  const AttributesAnalysis attributes{workflow};
+  const bool converted = InsertImageTypeConversionsPass{}.run(workflow);
+  auto chains = materializeImageValueChains(workflow);
+  const auto presentedChain =
+      std::ranges::find_if(chains, [&](const auto &chain) {
+        return chain.chain.front().def == &image;
+      });
+  return check(attributes.getAttributesFor<Attributes<ImageTy>>(rendered)
+                       .imageType.getConstant() == VK_IMAGE_TYPE_2D,
+               "screen render pass did not preserve the 2D extent hint") &&
+         check(!converted,
+               "screen render pass inserted a spurious type conversion") &&
+         check(imageTypeConversionCount(workflow) == 0,
+               "screen render pass has a type conversion") &&
+         check(presentedChain != chains.end() && presentedChain->presented,
+               "screen render pass was detached from the presented chain");
 }
 
 bool testPresentFormatConstraint() {
@@ -746,6 +786,7 @@ int main() {
                  testDynamicFormatIsConverted() && testIncompatibleGroups() &&
                  testAssumeCompatibleFormat() &&
                  testScreenExtentsAttributes() &&
+                 testScreenImageDoesNotNeedTypeConversion() &&
                  testPresentFormatConstraint() &&
                  testPresentInsertsConversion() && testCompatibleImageType() &&
                  testSharedImageTypeConversionAndIdempotence() &&

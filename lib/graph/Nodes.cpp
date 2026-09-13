@@ -83,7 +83,10 @@ public:
                    const VkImageCreateInfo &info)
       : FONode<RegularImage, fon_type::swap, RegularImageNode>(
             engine, FOUses{extents, format, layers, levels}),
-        MatImageBase(fon_type::swap), m_info(info) {}
+        MatImageBase(fon_type::swap), m_info(info),
+        m_imageType(info.imageType == VK_IMAGE_TYPE_MAX_ENUM
+                        ? std::nullopt
+                        : std::optional{info.imageType}) {}
   FOReconstructible &node() override { return *this; }
   VkImage image(FrameID id) const final { return get(id); }
   VkImage useImage(const Frame &id) final { return use(id); }
@@ -94,7 +97,7 @@ public:
 
   void m_updateInfo() {
     m_info.extent = getUse<MatExtents>(0)->get();
-    m_info.imageType = imageTypeForExtents(m_info.extent);
+    m_info.imageType = m_imageType.value_or(imageTypeForExtents(m_info.extent));
     m_info.format = getUse<MatFormat>(1)->get();
     m_info.arrayLayers = getUse<MatIntegerScalar>(2)->get();
     m_info.mipLevels = getUse<MatIntegerScalar>(3)->get();
@@ -109,6 +112,7 @@ public:
     // do nothing
   }
   VkImageCreateInfo m_info;
+  std::optional<VkImageType> m_imageType;
 };
 
 inline void intrusive_ptr_add_ref(RegularImageNode *p) {
@@ -433,7 +437,7 @@ const AttributesBase *Constant<ExtentsTy>::getAttributes(
     std::span<const AttributesBase *> useAttributes) const {
   assert(&result == results().data());
   return &ctx.attributes().get<Attributes<ExtentsTy>>(
-      constant<VkExtent3D>(value));
+      constant<VkExtent3D>(value), constant(imageTypeForExtents(value)));
 }
 
 const AttributesBase *ScreenExtents::getAttributes(
@@ -442,7 +446,7 @@ const AttributesBase *ScreenExtents::getAttributes(
   assert(&result == results().data());
   assert(useAttributes.empty());
   return &ctx.attributes().get<Attributes<ExtentsTy>>(
-      dynamic<VkExtent3D>(result));
+      dynamic<VkExtent3D>(result), constant(VK_IMAGE_TYPE_2D));
 }
 const AttributesBase *GetExtents::getAttributes(
     Context &ctx, const Value &result,
@@ -451,11 +455,16 @@ const AttributesBase *GetExtents::getAttributes(
   assert(useAttributes.size() == 1);
   auto *imgAttr = dyn_cast<const Attributes<ImageTy>>(useAttributes.front());
   assert(imgAttr);
-  return &ctx.attributes().get<Attributes<ExtentsTy>>(imgAttr->extents);
+  return &ctx.attributes().get<Attributes<ExtentsTy>>(imgAttr->extents,
+                                                      imgAttr->imageType);
 }
 
 static Attribute<VkImageType>
-imageTypeForExtents(const Attribute<VkExtent3D> &extents) {
+imageTypeForExtents(const Attributes<ExtentsTy> &extentsAttributes) {
+  if (extentsAttributes.imageType.status() !=
+      Attribute<VkImageType>::Status::undefined)
+    return extentsAttributes.imageType;
+  const auto &extents = extentsAttributes.extents;
   using Status = Attribute<VkExtent3D>::Status;
   switch (extents.status()) {
   case Status::undefined:
@@ -475,8 +484,9 @@ const AttributesBase *MakeImage::getAttributes(
     std::span<const AttributesBase *> useAttributes) const {
   assert(&result == results().data());
   assert(useAttributes.size() == 4);
-  auto extents =
-      static_cast<const Attributes<ExtentsTy> &>(*useAttributes[0]).extents;
+  const auto &extentsAttributes =
+      static_cast<const Attributes<ExtentsTy> &>(*useAttributes[0]);
+  const auto extents = extentsAttributes.extents;
   auto format =
       static_cast<const Attributes<FormatTy> &>(*useAttributes[1]).value;
   auto layers =
@@ -484,7 +494,7 @@ const AttributesBase *MakeImage::getAttributes(
   auto levels =
       static_cast<const Attributes<IntegerScalarTy> &>(*useAttributes[3]).value;
   return &ctx.attributes().get<Attributes<ImageTy>>(
-      extents, format, imageTypeForExtents(extents), layers, levels);
+      extents, format, imageTypeForExtents(extentsAttributes), layers, levels);
 }
 
 const AttributesBase *ConvertFormat::getAttributes(
@@ -507,10 +517,11 @@ const AttributesBase *ResizeImage::getAttributes(
   assert(useAttributes.size() == 2);
   const auto &image =
       static_cast<const Attributes<ImageTy> &>(*useAttributes[0]);
-  const auto extents =
-      static_cast<const Attributes<ExtentsTy> &>(*useAttributes[1]).extents;
-  const auto imageType =
-      m_imageType ? constant(*m_imageType) : imageTypeForExtents(extents);
+  const auto &extentsAttributes =
+      static_cast<const Attributes<ExtentsTy> &>(*useAttributes[1]);
+  const auto extents = extentsAttributes.extents;
+  const auto imageType = m_imageType ? constant(*m_imageType)
+                                     : imageTypeForExtents(extentsAttributes);
   return &ctx.attributes().get<Attributes<ImageTy>>(
       extents, image.format, imageType, image.layers, image.levels);
 }

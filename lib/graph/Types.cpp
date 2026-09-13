@@ -114,7 +114,8 @@ const AttributesBase *ImageTy::getUndefined(Context &ctx) const {
   return &ctx.attributes().get<Attributes<ImageTy>>();
 }
 const AttributesBase *ExtentsTy::getUndefined(Context &ctx) const {
-  return &ctx.attributes().get<Attributes<ExtentsTy>>();
+  return &ctx.attributes().get<Attributes<ExtentsTy>>(undefined<VkExtent3D>(),
+                                                      undefined<VkImageType>());
 }
 
 ImageAttachmentUseInfo::ImageAttachmentUseInfo(Kind k, LoadOp l)
