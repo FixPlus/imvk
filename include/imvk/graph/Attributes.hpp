@@ -149,16 +149,20 @@ template <> class Attributes<ImageTy> : public AttributesBase {
 public:
   Attribute<VkExtent3D> extents;
   Attribute<VkFormat> format;
+  Attribute<VkImageType> imageType;
   Attribute<size_t> layers;
   Attribute<size_t> levels;
 
   Attributes() = default;
   Attributes(Attribute<VkExtent3D> exts, Attribute<VkFormat> fmt,
-             Attribute<size_t> lays, Attribute<size_t> lvls)
-      : extents(exts), format(fmt), layers(lays), levels(lvls) {}
+             Attribute<VkImageType> type, Attribute<size_t> lays,
+             Attribute<size_t> lvls)
+      : extents(exts), format(fmt), imageType(type), layers(lays),
+        levels(lvls) {}
   void dump(std::ostream &os) const final {
     os << "extents: " << extents << "\n";
     os << "format: " << format << "\n";
+    os << "image type: " << imageType << "\n";
     os << "layers: " << layers << "\n";
     os << "levels: " << levels << "\n";
   }
@@ -166,13 +170,15 @@ public:
     auto ret = typeid(Attributes<ImageTy>).hash_code();
     boost::hash_combine(ret, extents.hash());
     boost::hash_combine(ret, format.hash());
+    boost::hash_combine(ret, imageType.hash());
     boost::hash_combine(ret, layers.hash());
     boost::hash_combine(ret, levels.hash());
     return ret;
   }
   bool operator==(const Attributes<ImageTy> &another) const {
     return extents == another.extents && format == another.format &&
-           layers == another.layers && levels == another.levels;
+           imageType == another.imageType && layers == another.layers &&
+           levels == another.levels;
   }
 
   bool compatibleWith(const Attributes<ImageTy> &another) const {
@@ -184,6 +190,7 @@ public:
       return false;
     };
     return extents == another.extents && format == another.format &&
+           imageType == another.imageType &&
            isCompatible(layers, another.layers) &&
            isCompatible(levels, another.levels);
   }

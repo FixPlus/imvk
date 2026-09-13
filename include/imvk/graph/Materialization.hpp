@@ -129,6 +129,8 @@ struct ImageValueChain {
 
 VkImageType imageTypeForExtents(VkExtent3D extents);
 VkImageViewType imageViewTypeForImage(const VkImageCreateInfo &info);
+std::optional<VkImageType> imageTypeForViewType(VkImageViewType viewType);
+bool imageViewTypeAcceptsLayers(VkImageViewType viewType, size_t layers);
 
 std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf);
 

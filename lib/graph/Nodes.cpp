@@ -454,6 +454,22 @@ const AttributesBase *GetExtents::getAttributes(
   return &ctx.attributes().get<Attributes<ExtentsTy>>(imgAttr->extents);
 }
 
+static Attribute<VkImageType>
+imageTypeForExtents(const Attribute<VkExtent3D> &extents) {
+  using Status = Attribute<VkExtent3D>::Status;
+  switch (extents.status()) {
+  case Status::undefined:
+    return undefined<VkImageType>();
+  case Status::constant:
+    return constant(graph::imageTypeForExtents(*extents.getConstant()));
+  case Status::dynamic:
+    return dynamic<VkImageType>(*extents.getDynamicValue());
+  case Status::overdefined:
+    return overdefined<VkImageType>();
+  }
+  return undefined<VkImageType>();
+}
+
 const AttributesBase *MakeImage::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
@@ -467,8 +483,8 @@ const AttributesBase *MakeImage::getAttributes(
       static_cast<const Attributes<IntegerScalarTy> &>(*useAttributes[2]).value;
   auto levels =
       static_cast<const Attributes<IntegerScalarTy> &>(*useAttributes[3]).value;
-  return &ctx.attributes().get<Attributes<ImageTy>>(extents, format, layers,
-                                                    levels);
+  return &ctx.attributes().get<Attributes<ImageTy>>(
+      extents, format, imageTypeForExtents(extents), layers, levels);
 }
 
 const AttributesBase *ConvertFormat::getAttributes(
@@ -480,8 +496,8 @@ const AttributesBase *ConvertFormat::getAttributes(
       static_cast<const Attributes<ImageTy> &>(*useAttributes[0]);
   const auto format =
       static_cast<const Attributes<FormatTy> &>(*useAttributes[1]).value;
-  return &ctx.attributes().get<Attributes<ImageTy>>(image.extents, format,
-                                                    image.layers, image.levels);
+  return &ctx.attributes().get<Attributes<ImageTy>>(
+      image.extents, format, image.imageType, image.layers, image.levels);
 }
 
 const AttributesBase *ResizeImage::getAttributes(
@@ -493,8 +509,10 @@ const AttributesBase *ResizeImage::getAttributes(
       static_cast<const Attributes<ImageTy> &>(*useAttributes[0]);
   const auto extents =
       static_cast<const Attributes<ExtentsTy> &>(*useAttributes[1]).extents;
+  const auto imageType =
+      m_imageType ? constant(*m_imageType) : imageTypeForExtents(extents);
   return &ctx.attributes().get<Attributes<ImageTy>>(
-      extents, image.format, image.layers, image.levels);
+      extents, image.format, imageType, image.layers, image.levels);
 }
 
 const AttributesBase *AssumeCompatibleFormat::getAttributes(
@@ -871,7 +889,9 @@ bool RenderPass::acceptsScene(const Scene &scene) const {
            uses() | std::views::take(m_firstDescriptor), scene.attachments)) {
     const auto *current = dyn_cast<ImageAttachmentUseInfo>(use.info());
     if (!current || current->kind != candidate.kind ||
-        current->load != candidate.load || current->access != candidate.access)
+        current->load != candidate.load ||
+        current->access != candidate.access ||
+        current->viewTypeConstraint != candidate.viewTypeConstraint)
       return false;
   }
   for (auto &&[use, candidate] : std::views::zip(
@@ -882,7 +902,9 @@ bool RenderPass::acceptsScene(const Scene &scene) const {
     const auto *candidateImage = dyn_cast<ImageUseInfo>(&candidate.useInfo());
     if ((currentImage || candidateImage) &&
         (!currentImage || !candidateImage ||
-         currentImage->access != candidateImage->access))
+          currentImage->access != candidateImage->access ||
+          currentImage->viewTypeConstraint !=
+              candidateImage->viewTypeConstraint))
       return false;
   }
   return true;

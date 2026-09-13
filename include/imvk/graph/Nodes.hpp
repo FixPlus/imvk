@@ -901,6 +901,7 @@ private:
                                                 NumericFormat::UNORM);
     info->formatConstraint.addChannelConstraint(Channel::D, 0);
     info->formatConstraint.addChannelConstraint(Channel::S, 0);
+    info->viewTypeConstraint = VK_IMAGE_VIEW_TYPE_2D;
     return info;
   }
   Present() = default;

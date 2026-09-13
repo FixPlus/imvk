@@ -37,13 +37,18 @@ struct ConstrainedUse {
   const FormatConstraintInfo *constraint;
 };
 
+struct TypeConstrainedUse {
+  Use *use;
+  VkImageViewType constraint;
+};
+
 std::optional<VkFormat>
 selectFormat(std::span<const ConstrainedUse> constrainedUses) {
   std::optional<VkFormat> selected;
   size_t selectedCoverage = 0;
   for (const auto format : conversionTargetFormats()) {
-    const auto coverage = std::ranges::count_if(
-        constrainedUses, [&](const auto &constrainedUse) {
+    const auto coverage =
+        std::ranges::count_if(constrainedUses, [&](const auto &constrainedUse) {
           return constrainedUse.constraint->isCompatible(format);
         });
     if (coverage > selectedCoverage) {
@@ -54,8 +59,10 @@ selectFormat(std::span<const ConstrainedUse> constrainedUses) {
   return selected;
 }
 
-std::optional<std::pair<Value *, boost::container::small_vector<ConstrainedUse, 4>>>
-findConversionsToInsert(Workflow &workflow, const AttributesAnalysis &attributes) {
+std::optional<
+    std::pair<Value *, boost::container::small_vector<ConstrainedUse, 4>>>
+findConversionsToInsert(Workflow &workflow,
+                        const AttributesAnalysis &attributes) {
   for (auto &node : workflow) {
     for (auto &value : node.results()) {
       if (!isa<ImageTy>(&value.type()))
@@ -84,6 +91,48 @@ findConversionsToInsert(Workflow &workflow, const AttributesAnalysis &attributes
   return std::nullopt;
 }
 
+std::optional<
+    std::pair<Value *, boost::container::small_vector<TypeConstrainedUse, 4>>>
+findTypeConversionsToInsert(Workflow &workflow,
+                            const AttributesAnalysis &attributes) {
+  for (auto &node : workflow) {
+    for (auto &value : node.results()) {
+      if (!isa<ImageTy>(&value.type()))
+        continue;
+
+      const auto &sourceAttributes =
+          attributes.getAttributesFor<Attributes<ImageTy>>(value);
+      const auto sourceType = sourceAttributes.imageType.getConstant();
+      boost::container::small_vector<TypeConstrainedUse, 4> incompatibleUses;
+      for (auto &use : value.users()) {
+        const auto *info = dyn_cast<const ImageUseInfo>(use.info());
+        if (!info || !info->viewTypeConstraint)
+          continue;
+        const auto requiredType =
+            imageTypeForViewType(*info->viewTypeConstraint);
+        if (!requiredType)
+          throw std::runtime_error(
+              "unsupported Vulkan image view type constraint "
+              "on image use '" +
+              std::string(info->name()) + "'");
+        if (const auto layers = sourceAttributes.layers.getConstant();
+            layers &&
+            !imageViewTypeAcceptsLayers(*info->viewTypeConstraint, *layers))
+          throw std::runtime_error(
+              "image layer count cannot satisfy the Vulkan image view type "
+              "constraint of image use '" +
+              std::string(info->name()) + "'");
+        if (sourceType == requiredType)
+          continue;
+        incompatibleUses.push_back({&use, *info->viewTypeConstraint});
+      }
+      if (!incompatibleUses.empty())
+        return std::pair{&value, std::move(incompatibleUses)};
+    }
+  }
+  return std::nullopt;
+}
+
 } // namespace
 
 bool InsertFormatConversionsPass::run(Workflow &workflow) const {
@@ -97,12 +146,10 @@ bool InsertFormatConversionsPass::run(Workflow &workflow) const {
     auto &[source, incompatibleUses] = *pending;
     const auto selectedFormat = selectFormat(incompatibleUses);
     if (!selectedFormat)
-      throw std::runtime_error("no Vulkan image format satisfies the format "
-                               "constraint of image use '" +
-                               std::string(incompatibleUses.front()
-                                               .use->info()
-                                               ->name()) +
-                               "'");
+      throw std::runtime_error(
+          "no Vulkan image format satisfies the format "
+          "constraint of image use '" +
+          std::string(incompatibleUses.front().use->info()->name()) + "'");
 
     auto insertionPoint = std::next(workflow.iteratorTo(&source->node()));
     WorkflowBuilder builder{workflow, insertionPoint};
@@ -113,6 +160,33 @@ bool InsertFormatConversionsPass::run(Workflow &workflow) const {
 
     for (const auto &[use, constraint] : incompatibleUses) {
       if (constraint->isCompatible(*selectedFormat))
+        use->replaceBy(&converted);
+    }
+    changed = true;
+  }
+}
+
+bool InsertImageTypeConversionsPass::run(Workflow &workflow) const {
+  bool changed = false;
+  while (true) {
+    const AttributesAnalysis attributes{workflow};
+    auto pending = findTypeConversionsToInsert(workflow, attributes);
+    if (!pending)
+      return changed;
+
+    auto &[source, incompatibleUses] = *pending;
+    const auto selectedType =
+        *imageTypeForViewType(incompatibleUses.front().constraint);
+    auto insertionPoint = std::next(workflow.iteratorTo(&source->node()));
+    WorkflowBuilder builder{workflow, insertionPoint};
+    auto &extents = builder.create<GetExtents>(*source)->results().front();
+    auto &converted =
+        builder.create<ResizeImage>(*source, extents, selectedType)
+            ->results()
+            .front();
+
+    for (const auto &[use, constraint] : incompatibleUses) {
+      if (imageTypeForViewType(constraint) == selectedType)
         use->replaceBy(&converted);
     }
     changed = true;

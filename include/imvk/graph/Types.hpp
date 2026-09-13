@@ -121,6 +121,8 @@ public:
       : UseInfo(std::move(name)), access(acc), passthrough(pass) {}
   ImageAccessInfo access;
   FormatConstraintInfo formatConstraint;
+  /// Required view dimensionality. Cube views are currently unsupported.
+  std::optional<VkImageViewType> viewTypeConstraint;
   std::optional<size_t> passthrough;
   ImageUseInfo *clone() const override { return new ImageUseInfo(*this); }
 };
@@ -154,7 +156,7 @@ public:
   vkw::DescriptorSetLayoutBinding descriptorInfo() const;
   VkDescriptorType type() const { return m_type; }
   ImageDescriptorUseInfo *clone() const override {
-    return new ImageDescriptorUseInfo{m_type};
+    return new ImageDescriptorUseInfo{*this};
   }
 
 private:

@@ -27,6 +27,35 @@ VkImageViewType imageViewTypeForImage(const VkImageCreateInfo &info) {
   }
 }
 
+std::optional<VkImageType> imageTypeForViewType(VkImageViewType viewType) {
+  switch (viewType) {
+  case VK_IMAGE_VIEW_TYPE_1D:
+  case VK_IMAGE_VIEW_TYPE_1D_ARRAY:
+    return VK_IMAGE_TYPE_1D;
+  case VK_IMAGE_VIEW_TYPE_2D:
+  case VK_IMAGE_VIEW_TYPE_2D_ARRAY:
+    return VK_IMAGE_TYPE_2D;
+  case VK_IMAGE_VIEW_TYPE_3D:
+    return VK_IMAGE_TYPE_3D;
+  default:
+    return std::nullopt;
+  }
+}
+
+bool imageViewTypeAcceptsLayers(VkImageViewType viewType, size_t layers) {
+  switch (viewType) {
+  case VK_IMAGE_VIEW_TYPE_1D:
+  case VK_IMAGE_VIEW_TYPE_2D:
+  case VK_IMAGE_VIEW_TYPE_3D:
+    return layers == 1;
+  case VK_IMAGE_VIEW_TYPE_1D_ARRAY:
+  case VK_IMAGE_VIEW_TYPE_2D_ARRAY:
+    return layers > 1;
+  default:
+    return false;
+  }
+}
+
 class RegularImageView {
 public:
   RegularImageView(const vkw::Device &device, VkImageView view)
@@ -227,13 +256,10 @@ static void fillInInfo(ImageValueChain &chain, const AttributesAnalysis &aa) {
   imageInfo.imageType = VK_IMAGE_TYPE_MAX_ENUM;
   if (auto format = definingAttrs.format.getConstant())
     imageInfo.format = *format;
-  if (auto extents = definingAttrs.extents.getConstant()) {
+  if (auto extents = definingAttrs.extents.getConstant())
     imageInfo.extent = *extents;
-    imageInfo.imageType = imageTypeForExtents(*extents);
-  }
-  if (const auto *resize = dyn_cast<ResizeImage>(&definingOp.node());
-      resize && resize->getImageType())
-    imageInfo.imageType = *resize->getImageType();
+  if (auto imageType = definingAttrs.imageType.getConstant())
+    imageInfo.imageType = *imageType;
   if (auto levels = definingAttrs.levels.getConstant())
     imageInfo.mipLevels = *levels;
   if (auto layers = definingAttrs.layers.getConstant())
@@ -408,6 +434,7 @@ MaterializationContext::MaterializationContext(
     const MaterializationEnvironment &env, Workflow &wf)
     : m_env(env) {
   InsertFormatConversionsPass{}.run(wf);
+  InsertImageTypeConversionsPass{}.run(wf);
   RemoveAssumeCompatibleFormatsPass{}.run(wf);
   {
     auto imageChains = materializeImageValueChains(wf);
