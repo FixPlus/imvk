@@ -173,8 +173,7 @@ private:
 };
 
 static imvk::graph::Value &
-createScreenCompatibleImage(imvk::graph::Context &ctx,
-                            imvk::graph::WorkflowBuilder &builder,
+createScreenCompatibleImage(imvk::graph::WorkflowBuilder &builder,
                             imvk::graph::Value &extents, VkFormat format) {
   auto &c1 =
       builder.create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(1)
@@ -186,9 +185,7 @@ createScreenCompatibleImage(imvk::graph::Context &ctx,
           .front();
 
   return builder
-      .create<imvk::graph::MakeImage>(
-          ctx.types().get<imvk::graph::ImageTy>(VK_IMAGE_TYPE_2D), extents, fmt,
-          c1, c1)
+      .create<imvk::graph::MakeImage>(extents, fmt, c1, c1)
       ->results()
       .front();
 }
@@ -202,12 +199,12 @@ static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
   auto &extents =
       builder.create<imvk::graph::ScreenExtents>()->results().front();
   imvk::graph::Value &image = createScreenCompatibleImage(
-      ctx, builder, extents, VK_FORMAT_R8G8B8A8_UNORM);
+      builder, extents, VK_FORMAT_R8G8B8A8_UNORM);
 
   imvk::graph::Value &offscreenBuffer = createScreenCompatibleImage(
-      ctx, builder, extents, VK_FORMAT_R8G8B8A8_UNORM);
+      builder, extents, VK_FORMAT_R8G8B8A8_UNORM);
   imvk::graph::Value &depthBuffer =
-      createScreenCompatibleImage(ctx, builder, extents, VK_FORMAT_D32_SFLOAT);
+      createScreenCompatibleImage(builder, extents, VK_FORMAT_D32_SFLOAT);
   imvk::graph::Value &texture =
       builder
           .create<imvk::graph::RenderPass>(std::array{&offscreenBuffer},

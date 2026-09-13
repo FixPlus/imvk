@@ -190,7 +190,7 @@ private:
 
 class MakeImage : public Node {
 public:
-  MakeImage(Context &ctx, const ImageTy &type)
+  MakeImage(Context &ctx)
       : Node(ctx,
              std::array{Node::Use{nullptr, &ctx.types().get<ExtentsTy>(),
                                   new BasicUseInfo{"extents"}},
@@ -201,9 +201,10 @@ public:
                         Node::Use{nullptr, &ctx.types().get<IntegerScalarTy>(),
                                   new BasicUseInfo{"mip levels"}}},
              std::array{Node::Def{
-                 &type, new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
-  MakeImage(Context &ctx, const ImageTy &type, Value &extents, Value &format,
-            Value &layers, Value &mips)
+                 &ctx.types().get<ImageTy>(),
+                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+  MakeImage(Context &ctx, Value &extents, Value &format, Value &layers,
+            Value &mips)
       : Node(ctx,
              std::array{Node::Use{&extents, new BasicUseInfo{"extents"}},
                          Node::Use{&format, &ctx.types().get<FormatTy>(),
@@ -211,7 +212,8 @@ public:
                         Node::Use{&layers, new BasicUseInfo{"layers"}},
                         Node::Use{&mips, new BasicUseInfo{"mip levels"}}},
              std::array{Node::Def{
-                 &type, new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+                 &ctx.types().get<ImageTy>(),
+                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
@@ -237,7 +239,7 @@ public:
   GetExtents(Context &ctx)
       : Node(ctx,
              std::array{
-                 Node::Use{nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 Node::Use{nullptr, &ctx.types().get<ImageTy>(),
                            new ImageUseInfo{ImageAccessInfo{}, "image"}}},
              std::array{Node::Def{&ctx.types().get<ExtentsTy>(),
                                   new BasicDefInfo{"extents"}}}) {}
@@ -296,10 +298,10 @@ public:
       : Node(ctx,
              std::array{
                  Node::Use{nullptr,
-                           &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                           &ctx.types().get<ImageTy>(),
                            new ImageUseInfo{ImageAccessInfo{}, "image"}}},
              std::array{Node::Def{
-                 &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 &ctx.types().get<ImageTy>(),
                  new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
   AssumeCompatibleFormat(Context &ctx, Value &image)
       : Node(ctx,
@@ -334,7 +336,7 @@ public:
       : Node(ctx,
              std::array{
                  Node::Use{
-                     nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                     nullptr, &ctx.types().get<ImageTy>(),
                      new ImageUseInfo{
                          ImageAccessInfo{
                              .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
@@ -345,7 +347,7 @@ public:
                  Node::Use{nullptr, &ctx.types().get<FormatTy>(),
                            new BasicUseInfo{"format"}}},
              std::array{Node::Def{
-                 &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 &ctx.types().get<ImageTy>(),
                  new ImageDefInfo{
                      ImageAccessInfo{
                          .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
@@ -401,10 +403,10 @@ public:
   Clone(Context &ctx)
       : Node(ctx,
              std::array{
-                 Node::Use{nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 Node::Use{nullptr, &ctx.types().get<ImageTy>(),
                            new ImageUseInfo{ImageAccessInfo{}, "source"}}},
              std::array{
-                 Node::Def{&ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 Node::Def{&ctx.types().get<ImageTy>(),
                            new ImageDefInfo{ImageAccessInfo{}, "clone"}}}) {}
   Clone(Context &ctx, Value &image)
       : Node(ctx,
@@ -446,7 +448,7 @@ public:
       : Node(ctx,
              std::array{
                  Node::Use{
-                     nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                      nullptr, &ctx.types().get<ImageTy>(),
                      new ImageUseInfo{
                          ImageAccessInfo{
                              .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
@@ -455,13 +457,13 @@ public:
                              .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
                          "source"}},
                  Node::Use{
-                     nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                      nullptr, &ctx.types().get<ImageTy>(),
                      new ImageUseInfo{
                          ImageAccessInfo{
                              .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
                          0, "destination"}}},
              std::array{Node::Def(
-                 &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                  &ctx.types().get<ImageTy>(),
                  new ImageDefInfo{
                      ImageAccessInfo{
                          .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
@@ -525,10 +527,10 @@ public:
   Barrier(Context &ctx, VkImageLayout src, VkImageLayout dst)
       : Node(ctx,
              std::array{Node::Use{
-                 nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                  nullptr, &ctx.types().get<ImageTy>(),
                  new ImageUseInfo{ImageAccessInfo{.layout = src}, 0, "image"}}},
              std::array{
-                 Node::Def(&ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                  Node::Def(&ctx.types().get<ImageTy>(),
                            new ImageDefInfo{ImageAccessInfo{.layout = dst}, 0,
                                             "image"})}) {}
   Barrier(Context &ctx, Value &image, VkImageLayout src, VkImageLayout dst)
@@ -632,7 +634,7 @@ public:
             ctx,
             [&]() {
               const auto &imageType =
-                  ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D);
+                  ctx.types().get<ImageTy>();
               boost::container::small_vector<Node::Use, 4> uses;
               unsigned passIndex = 0;
               for (const auto &info : scene.attachments) {
@@ -661,7 +663,7 @@ public:
             }(),
             [&]() {
               const auto &imageType =
-                  ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D);
+                  ctx.types().get<ImageTy>();
               boost::container::small_vector<Node::Def, 4> defs;
               unsigned passIndex = 0;
               for (const auto &info : scene.attachments) {
@@ -781,7 +783,7 @@ public:
   Present(Context &ctx)
       : Node(ctx,
              std::array{Node::Use{
-                 nullptr, &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                  nullptr, &ctx.types().get<ImageTy>(),
                  makeImageUseInfo()}},
              Node::EmptyResults) {}
   Present(Context &ctx, Value &image)

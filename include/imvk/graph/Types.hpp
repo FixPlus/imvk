@@ -19,39 +19,13 @@ namespace imvk::graph {
 
 class ImageTy : public Type {
 public:
-  VkImageType imageType;
-  static std::string_view imageTypeToStr(VkImageType t) {
-    switch (t) {
-    case VK_IMAGE_TYPE_1D:
-      return "1d";
-    case VK_IMAGE_TYPE_2D:
-      return "2d";
-    case VK_IMAGE_TYPE_3D:
-      return "3d";
-    default:
-      return "undef";
-    }
-  }
-  ImageTy(VkImageType type)
-      : Type([&]() {
-          std::stringstream ss;
-          ss << "image<" << imageTypeToStr(type) << ">";
-          return ss.str();
-        }()),
-        imageType(type) {}
+  ImageTy() : Type("image") {}
 
   const AttributesBase *getUndefined(Context &ctx) const final;
 
-  std::size_t hash() const final {
-    std::size_t ret = typeid(ImageTy).hash_code();
-    boost::hash_combine(ret, imageType);
-    return ret;
-  }
+  std::size_t hash() const final { return typeid(ImageTy).hash_code(); }
   bool operator==(const Type &another) const final {
-    auto *rhs = dynamic_cast<const ImageTy *>(&another);
-    if (!rhs)
-      return false;
-    return imageType == rhs->imageType;
+    return dynamic_cast<const ImageTy *>(&another);
   }
 };
 

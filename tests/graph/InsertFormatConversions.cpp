@@ -12,7 +12,7 @@ public:
   ImageSource(Context &ctx, std::optional<VkFormat> format)
       : Node(ctx, Node::EmptyUses,
              std::array{Node::Def{
-                 &ctx.types().get<ImageTy>(VK_IMAGE_TYPE_2D),
+                 &ctx.types().get<ImageTy>(),
                  new ImageDefInfo{ImageAccessInfo{}, "image"}}}),
         m_format(format) {}
 
@@ -348,6 +348,78 @@ bool testPresentVerification() {
                "multiple present nodes produced the wrong verification error");
 }
 
+bool testUnifiedImageType() {
+  Context ctx;
+  const auto &first = ctx.types().get<ImageTy>();
+  const auto &second = ctx.types().get<ImageTy>();
+  return check(&first == &second, "image type is not canonical") &&
+         check(first.name() == "image", "image type retains dimensionality");
+}
+
+bool testImageTypeInference() {
+  if (!check(imageTypeForExtents({32, 1, 1}) == VK_IMAGE_TYPE_1D,
+             "1D image type was not inferred from extents") ||
+      !check(imageTypeForExtents({32, 16, 1}) == VK_IMAGE_TYPE_2D,
+             "2D image type was not inferred from extents") ||
+      !check(imageTypeForExtents({32, 16, 8}) == VK_IMAGE_TYPE_3D,
+             "3D image type was not inferred from extents"))
+    return false;
+
+  VkImageCreateInfo info{};
+  info.imageType = VK_IMAGE_TYPE_1D;
+  info.arrayLayers = 1;
+  if (!check(imageViewTypeForImage(info) == VK_IMAGE_VIEW_TYPE_1D,
+             "1D image view type was not inferred"))
+    return false;
+  info.arrayLayers = 3;
+  if (!check(imageViewTypeForImage(info) == VK_IMAGE_VIEW_TYPE_1D_ARRAY,
+             "1D array image view type was not inferred"))
+    return false;
+  info.imageType = VK_IMAGE_TYPE_2D;
+  if (!check(imageViewTypeForImage(info) == VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+             "2D array image view type was not inferred"))
+    return false;
+  info.imageType = VK_IMAGE_TYPE_3D;
+  return check(imageViewTypeForImage(info) == VK_IMAGE_VIEW_TYPE_3D,
+               "3D image view type was not inferred");
+}
+
+bool testImageChainTypeInference() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &format =
+      builder.create<Constant<FormatTy>>(VK_FORMAT_R8_UNORM)->results().front();
+  auto &one =
+      builder.create<Constant<IntegerScalarTy>>(1)->results().front();
+
+  std::array extents{VkExtent3D{32, 1, 1}, VkExtent3D{32, 16, 1},
+                     VkExtent3D{32, 16, 8}};
+  std::array expectedTypes{VK_IMAGE_TYPE_1D, VK_IMAGE_TYPE_2D,
+                           VK_IMAGE_TYPE_3D};
+  std::array<Value *, 3> images{};
+  for (auto &&[index, extent] : extents | std::views::enumerate) {
+    auto &extentValue =
+        builder.create<Constant<ExtentsTy>>(extent)->results().front();
+    images[index] =
+        &builder.create<MakeImage>(extentValue, format, one, one)
+             ->results()
+             .front();
+  }
+
+  auto chains = materializeImageValueChains(workflow);
+  for (auto &&[image, expected] : std::views::zip(images, expectedTypes)) {
+    const auto found = std::ranges::find_if(chains, [&](const auto &chain) {
+      return chain.chain.front().def == image;
+    });
+    if (!check(found != chains.end(), "image chain was not materialized") ||
+        !check(found->imageInfo.imageType == expected,
+               "image chain has an incorrectly inferred image type"))
+      return false;
+  }
+  return true;
+}
+
 } // namespace
 } // namespace imvk::graph
 
@@ -358,7 +430,8 @@ int main() {
                  testAssumeCompatibleFormat() && testScreenExtentsAttributes() &&
                  testPresentFormatConstraint() &&
                  testPresentInsertsConversion() && testPresentedImageChain() &&
-                 testPresentVerification()
+                 testPresentVerification() && testUnifiedImageType() &&
+                 testImageTypeInference() && testImageChainTypeInference()
              ? 0
              : 1;
 }

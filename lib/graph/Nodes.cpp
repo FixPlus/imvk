@@ -94,6 +94,7 @@ public:
 
   void m_updateInfo() {
     m_info.extent = getUse<MatExtents>(0)->get();
+    m_info.imageType = imageTypeForExtents(m_info.extent);
     m_info.format = getUse<MatFormat>(1)->get();
     m_info.arrayLayers = getUse<MatIntegerScalar>(2)->get();
     m_info.mipLevels = getUse<MatIntegerScalar>(3)->get();
@@ -141,6 +142,7 @@ public:
     assert(img);
     auto &srcInfo = img->info();
     m_info.extent = srcInfo.extent;
+    m_info.imageType = srcInfo.imageType;
     m_info.format = srcInfo.format;
     m_info.arrayLayers = srcInfo.arrayLayers;
     m_info.mipLevels = srcInfo.mipLevels;

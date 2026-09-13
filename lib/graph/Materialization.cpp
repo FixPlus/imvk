@@ -4,6 +4,29 @@
 #include <iostream>
 namespace imvk::graph {
 
+VkImageType imageTypeForExtents(VkExtent3D extents) {
+  if (extents.depth > 1)
+    return VK_IMAGE_TYPE_3D;
+  if (extents.height > 1)
+    return VK_IMAGE_TYPE_2D;
+  return VK_IMAGE_TYPE_1D;
+}
+
+VkImageViewType imageViewTypeForImage(const VkImageCreateInfo &info) {
+  switch (info.imageType) {
+  case VK_IMAGE_TYPE_1D:
+    return info.arrayLayers > 1 ? VK_IMAGE_VIEW_TYPE_1D_ARRAY
+                                : VK_IMAGE_VIEW_TYPE_1D;
+  case VK_IMAGE_TYPE_2D:
+    return info.arrayLayers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY
+                                : VK_IMAGE_VIEW_TYPE_2D;
+  case VK_IMAGE_TYPE_3D:
+    return VK_IMAGE_VIEW_TYPE_3D;
+  default:
+    return VK_IMAGE_VIEW_TYPE_MAX_ENUM;
+  }
+}
+
 class RegularImageView {
 public:
   RegularImageView(const vkw::Device &device, VkImageView view)
@@ -28,6 +51,7 @@ static void completeImageViewInfo(VkImageViewCreateInfo &info,
                                   MatImageBase &image, FrameID id) {
   auto &imgInfo = image.info();
   info.image = image.image(id);
+  info.viewType = imageViewTypeForImage(imgInfo);
   info.format = imgInfo.format;
   info.subresourceRange.layerCount = imgInfo.arrayLayers;
   info.subresourceRange.levelCount = imgInfo.mipLevels;
@@ -187,7 +211,6 @@ static void fillInInfo(ImageValueChain &chain, const AttributesAnalysis &aa) {
   auto &imageInfo = chain.imageInfo;
   auto &definingOp = *chain.chain.front().def;
   auto &definingAttrs = aa.getAttributesFor<Attributes<ImageTy>>(definingOp);
-  auto &defType = static_cast<const ImageTy &>(definingOp.type());
   auto &defInfo = imageDef(definingOp);
 
   VkImageViewCreateInfo commonView{};
@@ -196,26 +219,18 @@ static void fillInInfo(ImageValueChain &chain, const AttributesAnalysis &aa) {
   commonView.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
   commonView.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
   commonView.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-  commonView.viewType = [&]() {
-    switch (defType.imageType) {
-    case VK_IMAGE_TYPE_1D:
-      return VK_IMAGE_VIEW_TYPE_1D;
-    case VK_IMAGE_TYPE_2D:
-      return VK_IMAGE_VIEW_TYPE_2D;
-    case VK_IMAGE_TYPE_3D:
-      return VK_IMAGE_VIEW_TYPE_3D;
-    }
-    return VK_IMAGE_VIEW_TYPE_MAX_ENUM;
-  }();
+  commonView.viewType = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
 
   imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   imageInfo.pNext = nullptr;
   imageInfo.flags = 0;
-  imageInfo.imageType = defType.imageType;
+  imageInfo.imageType = VK_IMAGE_TYPE_MAX_ENUM;
   if (auto format = definingAttrs.format.getConstant())
     imageInfo.format = *format;
-  if (auto extents = definingAttrs.extents.getConstant())
+  if (auto extents = definingAttrs.extents.getConstant()) {
     imageInfo.extent = *extents;
+    imageInfo.imageType = imageTypeForExtents(*extents);
+  }
   if (auto levels = definingAttrs.levels.getConstant())
     imageInfo.mipLevels = *levels;
   if (auto layers = definingAttrs.layers.getConstant())
@@ -224,6 +239,7 @@ static void fillInInfo(ImageValueChain &chain, const AttributesAnalysis &aa) {
   imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
   imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // defInfo.access.layout;
+  commonView.viewType = imageViewTypeForImage(imageInfo);
 
   for (auto &binding : chain.chain) {
     const ImageDefInfo &def = imageDef(*binding.def);

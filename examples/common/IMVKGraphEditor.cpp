@@ -67,10 +67,7 @@ void GraphEditor::m_inject_into_workflow(imvk::graph::Workflow &wf) {
           .front();
   auto &screenImage =
       builder
-          .create<imvk::graph::MakeImage>(
-              wf.context().types().get<imvk::graph::ImageTy>(
-                  VK_IMAGE_TYPE_2D),
-              extents, format, one, one)
+          .create<imvk::graph::MakeImage>(extents, format, one, one)
           ->results()
           .front();
   auto &renderedImage =
@@ -1235,8 +1232,6 @@ drawCreateNodeMenu(imvk::graph::Workflow &workflow,
         std::forward<decltype(args)>(args)...);
   };
   auto &context = workflow.context();
-  const auto &imageType =
-      context.types().get<imvk::graph::ImageTy>(VK_IMAGE_TYPE_2D);
 
   if (ImGui::BeginMenu("Constants")) {
     if (ImGui::MenuItem("Integer"))
@@ -1252,7 +1247,7 @@ drawCreateNodeMenu(imvk::graph::Workflow &workflow,
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem("Make Image"))
-    create.template operator()<imvk::graph::MakeImage>(imageType);
+    create.template operator()<imvk::graph::MakeImage>();
   if (ImGui::MenuItem("Get Extents"))
     create.template operator()<imvk::graph::GetExtents>();
   if (ImGui::MenuItem("Screen Extents"))

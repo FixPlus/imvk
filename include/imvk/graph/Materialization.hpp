@@ -127,6 +127,9 @@ struct ImageValueChain {
   bool presented = false;
 };
 
+VkImageType imageTypeForExtents(VkExtent3D extents);
+VkImageViewType imageViewTypeForImage(const VkImageCreateInfo &info);
+
 std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf);
 
 class MaterializationEnvironment {
