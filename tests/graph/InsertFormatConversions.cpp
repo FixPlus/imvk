@@ -420,6 +420,94 @@ bool testImageChainTypeInference() {
   return true;
 }
 
+bool testResizeImageAttributes() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &source =
+      builder
+          .create<ImageSource>(std::optional{VK_FORMAT_R8G8B8A8_UNORM})
+          ->results()
+          .front();
+  auto &extents =
+      builder.create<Constant<ExtentsTy>>(VkExtent3D{64, 32, 1})
+          ->results()
+          .front();
+  auto *resize = builder.create<ResizeImage>(source, extents);
+  auto &resized = resize->results().front();
+
+  AttributesAnalysis attributes{workflow};
+  const auto &sourceAttributes =
+      attributes.getAttributesFor<Attributes<ImageTy>>(source);
+  const auto &resizedAttributes =
+      attributes.getAttributesFor<Attributes<ImageTy>>(resized);
+  const auto *sourceUse =
+      dyn_cast<const ImageUseInfo>(resize->uses().front().info());
+  const auto *definition =
+      dyn_cast<const ImageDefInfo>(&resize->results().front().info());
+
+  return check(resize->uses().size() == 2,
+               "resize image does not have two inputs") &&
+         check(resize->results().size() == 1,
+               "resize image does not have one result") &&
+         check(sourceUse && sourceUse->access.layout ==
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+               "resize image source has the wrong layout") &&
+         check(sourceUse &&
+                   sourceUse->access.usage == VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+               "resize image source has the wrong usage") &&
+         check(definition && definition->access.layout ==
+                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+               "resize image result has the wrong layout") &&
+         check(definition &&
+                   definition->access.usage == VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+               "resize image result has the wrong usage") &&
+         check(resizedAttributes.extents.getConstant() ==
+                   std::optional{VkExtent3D{64, 32, 1}},
+               "resize image did not replace the extents") &&
+         check(resizedAttributes.format == sourceAttributes.format,
+               "resize image changed the format") &&
+         check(resizedAttributes.layers == sourceAttributes.layers,
+               "resize image changed the layer count") &&
+         check(resizedAttributes.levels == sourceAttributes.levels,
+               "resize image changed the mip count") &&
+         check(!InsertFormatConversionsPass{}.run(workflow),
+               "resize image triggered a format conversion");
+}
+
+bool testResizeImageChain() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &source =
+      builder
+          .create<ImageSource>(std::optional{VK_FORMAT_R8G8B8A8_UNORM})
+          ->results()
+          .front();
+  auto &extents =
+      builder.create<Constant<ExtentsTy>>(VkExtent3D{16, 8, 4})
+          ->results()
+          .front();
+  auto &resized =
+      builder.create<ResizeImage>(source, extents)->results().front();
+
+  auto chains = materializeImageValueChains(workflow);
+  const auto resizedChain =
+      std::ranges::find_if(chains, [&](const auto &chain) {
+        return chain.chain.front().def == &resized;
+      });
+
+  return check(resizedChain != chains.end(),
+               "resize image did not start an image chain") &&
+         check(resizedChain->imageInfo.extent == VkExtent3D{16, 8, 4},
+               "resize image chain has the wrong extents") &&
+         check(resizedChain->imageInfo.imageType == VK_IMAGE_TYPE_3D,
+               "resize image chain has the wrong inferred image type") &&
+         check(resizedChain->imageInfo.format ==
+                   VK_FORMAT_R8G8B8A8_UNORM,
+               "resize image chain changed the format");
+}
+
 } // namespace
 } // namespace imvk::graph
 
@@ -431,7 +519,8 @@ int main() {
                  testPresentFormatConstraint() &&
                  testPresentInsertsConversion() && testPresentedImageChain() &&
                  testPresentVerification() && testUnifiedImageType() &&
-                 testImageTypeInference() && testImageChainTypeInference()
+                 testImageTypeInference() && testImageChainTypeInference() &&
+                 testResizeImageAttributes() && testResizeImageChain()
              ? 0
              : 1;
 }

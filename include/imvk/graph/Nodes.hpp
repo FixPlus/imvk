@@ -330,6 +330,74 @@ private:
   }
 };
 
+class ResizeImage : public Node {
+public:
+  ResizeImage(Context &ctx)
+      : Node(ctx,
+             std::array{
+                 Node::Use{
+                     nullptr, &ctx.types().get<ImageTy>(),
+                     new ImageUseInfo{
+                         ImageAccessInfo{
+                             .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
+                             .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
+                         "image"}},
+                 Node::Use{nullptr, &ctx.types().get<ExtentsTy>(),
+                           new BasicUseInfo{"extents"}}},
+             std::array{Node::Def{
+                 &ctx.types().get<ImageTy>(),
+                 new ImageDefInfo{
+                     ImageAccessInfo{
+                         .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
+                         .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                     "image"}}}) {}
+  ResizeImage(Context &ctx, Value &image, Value &extents)
+      : Node(ctx,
+             std::array{
+                 Node::Use{
+                     &image,
+                     new ImageUseInfo{
+                         ImageAccessInfo{
+                             .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
+                             .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
+                         "image"}},
+                 Node::Use{&extents, &ctx.types().get<ExtentsTy>(),
+                           new BasicUseInfo{"extents"}}},
+             std::array{Node::Def{
+                 &image.type(),
+                 new ImageDefInfo{
+                     ImageAccessInfo{
+                         .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
+                         .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                     "image"}}}) {}
+
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
+  std::string_view name() const final { return "resize_image"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+
+private:
+  ResizeImage() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new ResizeImage()};
+  }
+};
+
 class ConvertFormat : public Node {
 public:
   ConvertFormat(Context &ctx)
