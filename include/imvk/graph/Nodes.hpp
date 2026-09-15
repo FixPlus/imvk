@@ -195,26 +195,26 @@ public:
       : Node(ctx,
              std::array{Node::Use{nullptr, &ctx.types().get<ExtentsTy>(),
                                   new BasicUseInfo{"extents"}},
-                         Node::Use{nullptr, &ctx.types().get<FormatTy>(),
+                        Node::Use{nullptr, &ctx.types().get<FormatTy>(),
                                   new BasicUseInfo{"format"}},
                         Node::Use{nullptr, &ctx.types().get<IntegerScalarTy>(),
                                   new BasicUseInfo{"layers"}},
                         Node::Use{nullptr, &ctx.types().get<IntegerScalarTy>(),
                                   new BasicUseInfo{"mip levels"}}},
-             std::array{Node::Def{
-                 &ctx.types().get<ImageTy>(),
-                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+             std::array{
+                 Node::Def{&ctx.types().get<ImageTy>(),
+                           new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
   MakeImage(Context &ctx, Value &extents, Value &format, Value &layers,
             Value &mips)
       : Node(ctx,
              std::array{Node::Use{&extents, new BasicUseInfo{"extents"}},
-                         Node::Use{&format, &ctx.types().get<FormatTy>(),
-                                   new BasicUseInfo{"format"}},
+                        Node::Use{&format, &ctx.types().get<FormatTy>(),
+                                  new BasicUseInfo{"format"}},
                         Node::Use{&layers, new BasicUseInfo{"layers"}},
                         Node::Use{&mips, new BasicUseInfo{"mip levels"}}},
-             std::array{Node::Def{
-                 &ctx.types().get<ImageTy>(),
-                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+             std::array{
+                 Node::Def{&ctx.types().get<ImageTy>(),
+                           new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
                 std::span<const AttributesBase *> useAttributes) const override;
@@ -238,12 +238,12 @@ private:
 class GetExtents : public Node {
 public:
   GetExtents(Context &ctx)
-      : Node(ctx,
-             std::array{
-                 Node::Use{nullptr, &ctx.types().get<ImageTy>(),
-                           new ImageUseInfo{ImageAccessInfo{}, "image"}}},
-             std::array{Node::Def{&ctx.types().get<ExtentsTy>(),
-                                  new BasicDefInfo{"extents"}}}) {}
+      : Node(
+            ctx,
+            std::array{Node::Use{nullptr, &ctx.types().get<ImageTy>(),
+                                 new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+            std::array{Node::Def{&ctx.types().get<ExtentsTy>(),
+                                 new BasicDefInfo{"extents"}}}) {}
   GetExtents(Context &ctx, Value &image)
       : Node(ctx,
              std::array{Node::Use{
@@ -296,21 +296,21 @@ template <typename T> class Copy {};
 class AssumeCompatibleFormat : public Node {
 public:
   AssumeCompatibleFormat(Context &ctx)
-      : Node(ctx,
-             std::array{
-                 Node::Use{nullptr,
-                           &ctx.types().get<ImageTy>(),
-                           new ImageUseInfo{ImageAccessInfo{}, "image"}}},
-             std::array{Node::Def{
-                 &ctx.types().get<ImageTy>(),
-                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+      : Node(
+            ctx,
+            std::array{Node::Use{nullptr, &ctx.types().get<ImageTy>(),
+                                 new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+            std::array{
+                Node::Def{&ctx.types().get<ImageTy>(),
+                          new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
   AssumeCompatibleFormat(Context &ctx, Value &image)
-      : Node(ctx,
-             std::array{Node::Use{
-                 &image, new ImageUseInfo{ImageAccessInfo{}, "image"}}},
-             std::array{Node::Def{
-                 &image.type(),
-                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+      : Node(
+            ctx,
+            std::array{Node::Use{&image,
+                                 new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+            std::array{Node::Def{
+                &image.type(), new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {
+  }
 
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
@@ -334,21 +334,21 @@ private:
 class AssumeCompatibleExtents : public Node {
 public:
   AssumeCompatibleExtents(Context &ctx)
-      : Node(ctx,
-             std::array{
-                 Node::Use{nullptr,
-                           &ctx.types().get<ImageTy>(),
-                           new ImageUseInfo{ImageAccessInfo{}, "image"}}},
-             std::array{Node::Def{
-                 &ctx.types().get<ImageTy>(),
-                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+      : Node(
+            ctx,
+            std::array{Node::Use{nullptr, &ctx.types().get<ImageTy>(),
+                                 new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+            std::array{
+                Node::Def{&ctx.types().get<ImageTy>(),
+                          new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
   AssumeCompatibleExtents(Context &ctx, Value &image)
-      : Node(ctx,
-             std::array{Node::Use{
-                 &image, new ImageUseInfo{ImageAccessInfo{}, "image"}}},
-             std::array{Node::Def{
-                 &image.type(),
-                 new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {}
+      : Node(
+            ctx,
+            std::array{Node::Use{&image,
+                                 new ImageUseInfo{ImageAccessInfo{}, "image"}}},
+            std::array{Node::Def{
+                &image.type(), new ImageDefInfo{ImageAccessInfo{}, "image"}}}) {
+  }
 
   const AttributesBase *
   getAttributes(Context &ctx, const Value &result,
@@ -648,7 +648,7 @@ public:
       : Node(ctx,
              std::array{
                  Node::Use{
-                      nullptr, &ctx.types().get<ImageTy>(),
+                     nullptr, &ctx.types().get<ImageTy>(),
                      new ImageUseInfo{
                          ImageAccessInfo{
                              .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
@@ -657,13 +657,13 @@ public:
                              .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
                          "source"}},
                  Node::Use{
-                      nullptr, &ctx.types().get<ImageTy>(),
+                     nullptr, &ctx.types().get<ImageTy>(),
                      new ImageUseInfo{
                          ImageAccessInfo{
                              .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
                          0, "destination"}}},
              std::array{Node::Def(
-                  &ctx.types().get<ImageTy>(),
+                 &ctx.types().get<ImageTy>(),
                  new ImageDefInfo{
                      ImageAccessInfo{
                          .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
@@ -727,10 +727,10 @@ public:
   Barrier(Context &ctx, VkImageLayout src, VkImageLayout dst)
       : Node(ctx,
              std::array{Node::Use{
-                  nullptr, &ctx.types().get<ImageTy>(),
+                 nullptr, &ctx.types().get<ImageTy>(),
                  new ImageUseInfo{ImageAccessInfo{.layout = src}, 0, "image"}}},
              std::array{
-                  Node::Def(&ctx.types().get<ImageTy>(),
+                 Node::Def(&ctx.types().get<ImageTy>(),
                            new ImageDefInfo{ImageAccessInfo{.layout = dst}, 0,
                                             "image"})}) {}
   Barrier(Context &ctx, Value &image, VkImageLayout src, VkImageLayout dst)
@@ -856,8 +856,7 @@ public:
       : Node(
             ctx,
             [&]() {
-              const auto &imageType =
-                  ctx.types().get<ImageTy>();
+              const auto &imageType = ctx.types().get<ImageTy>();
               boost::container::small_vector<Node::Use, 4> uses;
               unsigned passIndex = 0;
               for (const auto &info : scene.attachments) {
@@ -885,8 +884,7 @@ public:
               return uses;
             }(),
             [&]() {
-              const auto &imageType =
-                  ctx.types().get<ImageTy>();
+              const auto &imageType = ctx.types().get<ImageTy>();
               boost::container::small_vector<Node::Def, 4> defs;
               unsigned passIndex = 0;
               for (const auto &info : scene.attachments) {
@@ -999,19 +997,185 @@ private:
   }
 };
 
+/// @brief Materialized compute context. Implementations bind compute pipelines,
+/// descriptor sets, and record kernel dispatches for a ComputePass.
+class MatComputeContext {
+public:
+  virtual void onCompute(vkw::ComputePassRecorder &commands,
+                         const Frame &frame) = 0;
+  virtual ~MatComputeContext() = default;
+};
+
+/// @brief ComputeContext is an interface consumed by ComputePass. It describes
+/// the pass descriptor layout and creates the object that records its kernel
+/// invocations. Passthrough descriptors become ComputePass results.
+struct ComputeContext final {
+  using MaterializedDescriptor = Scene::MaterializedDescriptor;
+
+  struct MaterializationInfo {
+    boost::container::small_vector<MaterializedDescriptor, 2> descriptors;
+  };
+
+  boost::container::small_vector<DescriptorUseInfo, 2> descriptors;
+  std::function<std::unique_ptr<MatComputeContext>(
+      const MaterializationEnvironment &, const MaterializationInfo &)>
+      materialization;
+};
+
+class ComputePass : public Node {
+public:
+  ComputePass(Context &ctx, const ComputeContext &computeContext)
+      : Node(
+            ctx,
+            [&]() {
+              const auto &imageType = ctx.types().get<ImageTy>();
+              boost::container::small_vector<Node::Use, 4> uses;
+              unsigned resultIndex = 0;
+              for (const auto &descriptor : computeContext.descriptors) {
+                auto *copyInfo = descriptor.useInfo().clone();
+                copyInfo->setName("descriptor");
+                auto *imageInfo = dyn_cast<ImageDescriptorUseInfo>(copyInfo);
+                if (!imageInfo) {
+                  delete copyInfo;
+                  throw std::runtime_error(
+                      "compute context has an unsupported descriptor type");
+                }
+                imageInfo->setShaderStages(VK_SHADER_STAGE_COMPUTE_BIT);
+                if (descriptor.isPassthrough()) {
+                  if (imageInfo->type() != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                    throw std::runtime_error(
+                        "only storage image descriptors can be passthrough");
+                  imageInfo->access.accessFlags |= VK_ACCESS_SHADER_WRITE_BIT;
+                  imageInfo->passthrough = resultIndex++;
+                }
+                uses.emplace_back(nullptr, &imageType, imageInfo);
+              }
+              return uses;
+            }(),
+            [&]() {
+              const auto &imageType = ctx.types().get<ImageTy>();
+              boost::container::small_vector<Node::Def, 4> defs;
+              unsigned useIndex = 0;
+              for (const auto &descriptor : computeContext.descriptors) {
+                if (descriptor.isPassthrough()) {
+                  const auto *imageInfo =
+                      dyn_cast<ImageDescriptorUseInfo>(&descriptor.useInfo());
+                  if (!imageInfo)
+                    throw std::runtime_error(
+                        "compute context has an unsupported passthrough "
+                        "descriptor type");
+                  if (imageInfo->type() != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                    throw std::runtime_error(
+                        "only storage image descriptors can be passthrough");
+                  auto access = imageInfo->access;
+                  access.stageFlags = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+                  access.accessFlags = VK_ACCESS_SHADER_WRITE_BIT;
+                  auto *def = new ImageDefInfo{access, useIndex, "descriptor"};
+                  defs.emplace_back(&imageType, def);
+                }
+                ++useIndex;
+              }
+              return defs;
+            }()),
+        m_computeContext(&computeContext) {}
+
+  ComputePass(Context &ctx, auto &&descriptors,
+              const ComputeContext &computeContext)
+      : Node(
+            ctx,
+            [&]() {
+              if (computeContext.descriptors.size() !=
+                  std::ranges::size(descriptors))
+                throw std::runtime_error(
+                    "compute context has incompatible number of descriptors");
+              boost::container::small_vector<Node::Use, 4> uses;
+              unsigned resultIndex = 0;
+              for (auto &&[value, descriptor] :
+                   std::views::zip(descriptors, computeContext.descriptors)) {
+                auto *copyInfo = descriptor.useInfo().clone();
+                copyInfo->setName("descriptor");
+                auto *imageInfo = dyn_cast<ImageDescriptorUseInfo>(copyInfo);
+                if (!imageInfo) {
+                  delete copyInfo;
+                  throw std::runtime_error(
+                      "compute context has an unsupported descriptor type");
+                }
+                imageInfo->setShaderStages(VK_SHADER_STAGE_COMPUTE_BIT);
+                if (descriptor.isPassthrough()) {
+                  if (imageInfo->type() != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                    throw std::runtime_error(
+                        "only storage image descriptors can be passthrough");
+                  imageInfo->access.accessFlags |= VK_ACCESS_SHADER_WRITE_BIT;
+                  imageInfo->passthrough = resultIndex++;
+                }
+                uses.emplace_back(value, imageInfo);
+              }
+              return uses;
+            }(),
+            [&]() {
+              if (computeContext.descriptors.size() !=
+                  std::ranges::size(descriptors))
+                throw std::runtime_error(
+                    "compute context has incompatible number of descriptors");
+              boost::container::small_vector<Node::Def, 4> defs;
+              unsigned useIndex = 0;
+              for (auto &&[value, descriptor] :
+                   std::views::zip(descriptors, computeContext.descriptors)) {
+                if (descriptor.isPassthrough()) {
+                  const auto *imageInfo =
+                      dyn_cast<ImageDescriptorUseInfo>(&descriptor.useInfo());
+                  if (!imageInfo)
+                    throw std::runtime_error(
+                        "compute context has an unsupported passthrough "
+                        "descriptor type");
+                  if (imageInfo->type() != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                    throw std::runtime_error(
+                        "only storage image descriptors can be passthrough");
+                  auto access = imageInfo->access;
+                  access.stageFlags = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+                  access.accessFlags = VK_ACCESS_SHADER_WRITE_BIT;
+                  auto *def = new ImageDefInfo{access, useIndex, "descriptor"};
+                  defs.emplace_back(&value->type(), def);
+                }
+                ++useIndex;
+              }
+              return defs;
+            }()),
+        m_computeContext(&computeContext) {}
+
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final;
+  std::string_view name() const final { return "compute_pass"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+  const ComputeContext &computeContext() const { return *m_computeContext; }
+  bool acceptsComputeContext(const ComputeContext &computeContext) const;
+  bool setComputeContext(const ComputeContext &computeContext);
+
+private:
+  const ComputeContext *m_computeContext;
+  explicit ComputePass(const ComputeContext &computeContext)
+      : m_computeContext(&computeContext) {}
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new ComputePass(*m_computeContext)};
+  }
+};
+
 // Terminator nodes
 
 class Present : public Node {
 public:
   Present(Context &ctx)
       : Node(ctx,
-             std::array{Node::Use{
-                  nullptr, &ctx.types().get<ImageTy>(),
-                 makeImageUseInfo()}},
+             std::array{Node::Use{nullptr, &ctx.types().get<ImageTy>(),
+                                  makeImageUseInfo()}},
              Node::EmptyResults) {}
   Present(Context &ctx, Value &image)
-      : Node(ctx,
-             std::array{Node::Use{&image, makeImageUseInfo()}},
+      : Node(ctx, std::array{Node::Use{&image, makeImageUseInfo()}},
              Node::EmptyResults) {}
   const AttributesBase *getAttributes(
       Context &ctx, const Value &result,

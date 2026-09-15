@@ -152,34 +152,50 @@ public:
 
 class ImageDescriptorUseInfo : public ImageUseInfo {
 public:
-  ImageDescriptorUseInfo(VkDescriptorType type);
+  ImageDescriptorUseInfo(
+      VkDescriptorType type,
+      VkShaderStageFlags shaderStages = VK_SHADER_STAGE_FRAGMENT_BIT |
+                                        VK_SHADER_STAGE_VERTEX_BIT);
   vkw::DescriptorSetLayoutBinding descriptorInfo() const;
   VkDescriptorType type() const { return m_type; }
+  VkShaderStageFlags shaderStages() const { return m_shaderStages; }
+  void setShaderStages(VkShaderStageFlags shaderStages);
   ImageDescriptorUseInfo *clone() const override {
     return new ImageDescriptorUseInfo{*this};
   }
 
 private:
   VkDescriptorType m_type;
+  VkShaderStageFlags m_shaderStages;
 };
 
 class DescriptorUseInfo {
 public:
-  DescriptorUseInfo(std::unique_ptr<UseInfo> &&info)
-      : m_useInfo(std::move(info)) {}
+  DescriptorUseInfo(std::unique_ptr<UseInfo> &&info, bool passthrough = false)
+      : m_useInfo(std::move(info)), m_passthrough(passthrough) {}
   const UseInfo &useInfo() const { return *m_useInfo; }
+  bool isPassthrough() const { return m_passthrough; }
 
-  static DescriptorUseInfo sampledImage() {
+  static DescriptorUseInfo sampledImage(bool passthrough = false) {
     return DescriptorUseInfo(std::make_unique<ImageDescriptorUseInfo>(
-        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE));
+                                 VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE),
+                             passthrough);
   }
-  static DescriptorUseInfo combinedImageSampler() {
+  static DescriptorUseInfo combinedImageSampler(bool passthrough = false) {
     return DescriptorUseInfo(std::make_unique<ImageDescriptorUseInfo>(
-        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+                                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                             passthrough);
+  }
+  static DescriptorUseInfo storageImage(bool passthrough = false) {
+    return DescriptorUseInfo(
+        std::make_unique<ImageDescriptorUseInfo>(
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_COMPUTE_BIT),
+        passthrough);
   }
 
 private:
   std::unique_ptr<UseInfo> m_useInfo;
+  bool m_passthrough;
 };
 
 class IntegerScalarTy : public Type {

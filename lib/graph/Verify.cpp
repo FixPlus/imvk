@@ -65,6 +65,12 @@ RenderPass::verify(Context &ctx, const AttributesAnalysis &aa) const {
 }
 
 std::optional<VerifyError>
+ComputePass::verify(Context &ctx, const AttributesAnalysis &aa) const {
+  // TODO
+  return std::nullopt;
+}
+
+std::optional<VerifyError>
 Copy<ImageTy>::verify(Context &ctx, const AttributesAnalysis &aa) const {
   // TODO
   return std::nullopt;

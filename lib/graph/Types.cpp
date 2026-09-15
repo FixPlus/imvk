@@ -91,8 +91,8 @@ bool FormatConstraintInfo::isCompatible(VkFormat format) const {
       return false;
     if (constraint->numericFormat &&
         numericFormatName(*constraint->numericFormat) !=
-            vk::componentNumericFormat(
-                vkFormat, static_cast<uint8_t>(*componentIndex)))
+            vk::componentNumericFormat(vkFormat,
+                                       static_cast<uint8_t>(*componentIndex)))
       return false;
   }
   return true;
@@ -171,22 +171,38 @@ ImageDefInfo ImageAttachmentUseInfo::defFromThis() const {
   return ImageDefInfo{info};
 }
 
-ImageDescriptorUseInfo::ImageDescriptorUseInfo(VkDescriptorType type)
+ImageDescriptorUseInfo::ImageDescriptorUseInfo(VkDescriptorType type,
+                                               VkShaderStageFlags shaderStages)
     : ImageUseInfo([=]() {
-        assert(type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
-               type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE &&
-                   "unsupported image descriptor");
+        assert((type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
+                type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
+                type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) &&
+               "unsupported image descriptor");
         ImageAccessInfo info{};
-        info.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        info.layout = type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                          ? VK_IMAGE_LAYOUT_GENERAL
+                          : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         info.accessFlags = VK_ACCESS_SHADER_READ_BIT;
-        info.stageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-                          VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
-        info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        info.stageFlags = shaderStages & VK_SHADER_STAGE_COMPUTE_BIT
+                              ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                              : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+        info.usage = type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                         ? VK_IMAGE_USAGE_STORAGE_BIT
+                         : VK_IMAGE_USAGE_SAMPLED_BIT;
         return info;
       }()),
-      m_type(type) {}
+      m_type(type), m_shaderStages(shaderStages) {}
+
+void ImageDescriptorUseInfo::setShaderStages(VkShaderStageFlags shaderStages) {
+  m_shaderStages = shaderStages;
+  access.stageFlags = shaderStages & VK_SHADER_STAGE_COMPUTE_BIT
+                          ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                          : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+}
+
 vkw::DescriptorSetLayoutBinding ImageDescriptorUseInfo::descriptorInfo() const {
-  return vkw::DescriptorSetLayoutBinding{
-      0, m_type, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT};
+  return vkw::DescriptorSetLayoutBinding{0, m_type, m_shaderStages};
 }
 } // namespace imvk::graph

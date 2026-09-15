@@ -457,12 +457,79 @@ public:
   }
 };
 
+class ImageStorageAdaptorImpl
+    : public FONode<char, fon_type::cow, ImageStorageAdaptorImpl> {
+public:
+  using Base = FONode<char, fon_type::cow, ImageStorageAdaptorImpl>;
+  ImageStorageAdaptorImpl(FramedEngine &engine, const MatImageView &view)
+      : Base(engine, char(0), FOUses{&view->node()}) {
+    if (view->type() == fon_type::ext) {
+      throw std::runtime_error(
+          "Cannot create descriptor adaptor for external object");
+    }
+    auto &node = view->node();
+    if (node.isDestroyed())
+      node.construct();
+  }
+  char constructNew(FramedEngine &engine) { return 0; }
+};
+
+class ImageStorageAdaptor : public FONodeView<ImageStorageAdaptorImpl> {
+public:
+  ImageStorageAdaptor(auto &&...args)
+      : FONodeView<ImageStorageAdaptorImpl>(
+            std::forward<decltype(args)>(args)...) {}
+  static void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
+                              FONodeBase &obj, unsigned binding) {
+    auto *view = dynamic_cast<MatImageViewBase *>(&obj.getUseRaw(0));
+    assert(view);
+    vkw::DescriptorWrite write{binding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
+    write.addImage(nullptr, view->view(frame), VK_IMAGE_LAYOUT_GENERAL);
+    set.write(write);
+  }
+};
+
+static Scene::MaterializedDescriptor
+materializeImageDescriptor(MaterializationContext &ctx, const Use &use) {
+  assert(isa<ImageDescriptorUseInfo>(use.info()));
+  const auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
+  auto view = ctx.get<MatImageView>(use.value());
+  auto image = ctx.get<MatImage>(use.value());
+  if (image->node().isDestroyed())
+    image->node().construct();
+
+  Descriptor descriptor = [&]() -> Descriptor {
+    switch (info.type()) {
+    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+      return Descriptor{ctx.env().engine(),
+                        CombinedImageSamplerAdaptor(ctx.env().engine(), view)};
+    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+      return Descriptor{ctx.env().engine(),
+                        ImageSampledAdaptor(ctx.env().engine(), view)};
+    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+      return Descriptor{ctx.env().engine(),
+                        ImageStorageAdaptor(ctx.env().engine(), view)};
+    default:
+      throw std::runtime_error("unsupported image descriptor type");
+    }
+  }();
+  return {std::move(descriptor), std::move(image)};
+}
+
 const AttributesBase *RenderPass::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
   // todo: safe cast
   auto &imageDefInfo = static_cast<const ImageDefInfo &>(result.info());
 
+  assert(imageDefInfo.passthrough);
+  return useAttributes[*imageDefInfo.passthrough];
+}
+
+const AttributesBase *ComputePass::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  const auto &imageDefInfo = static_cast<const ImageDefInfo &>(result.info());
   assert(imageDefInfo.passthrough);
   return useAttributes[*imageDefInfo.passthrough];
 }
@@ -732,46 +799,45 @@ bool ResizeImage::materialize(MaterializationContext &ctx) {
   barrier.srcAccessMask = 0;
   barrier.dstAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
 
-  ctx.materializeNode(
-      *this, [src = std::move(src), dst = std::move(dst), barrier](
-                 vkw::BufferRecorder &recorder,
-                 const imvk::Frame &frame) mutable {
-        const auto srcImage = src->useImage(frame);
-        const auto dstImage = dst->useImage(frame);
-        const auto &srcInfo = src->info();
-        const auto &dstInfo = dst->info();
-        barrier.image = dstImage;
-        barrier.subresourceRange = completeSubresourceRange(dstInfo);
+  ctx.materializeNode(*this, [src = std::move(src), dst = std::move(dst),
+                              barrier](vkw::BufferRecorder &recorder,
+                                       const imvk::Frame &frame) mutable {
+    const auto srcImage = src->useImage(frame);
+    const auto dstImage = dst->useImage(frame);
+    const auto &srcInfo = src->info();
+    const auto &dstInfo = dst->info();
+    barrier.image = dstImage;
+    barrier.subresourceRange = completeSubresourceRange(dstInfo);
 
-        boost::container::small_vector<VkImageBlit, 4> blits;
-        const auto mipLevels = std::min(srcInfo.mipLevels, dstInfo.mipLevels);
-        blits.reserve(mipLevels);
-        for (uint32_t level = 0; level < mipLevels; ++level) {
-          const auto srcExtent = mipExtent(srcInfo.extent, level);
-          const auto dstExtent = mipExtent(dstInfo.extent, level);
-          auto srcSubresource = completeSubresourceRangeLayers(srcInfo);
-          srcSubresource.mipLevel = level;
-          auto dstSubresource = completeSubresourceRangeLayers(dstInfo);
-          dstSubresource.mipLevel = level;
+    boost::container::small_vector<VkImageBlit, 4> blits;
+    const auto mipLevels = std::min(srcInfo.mipLevels, dstInfo.mipLevels);
+    blits.reserve(mipLevels);
+    for (uint32_t level = 0; level < mipLevels; ++level) {
+      const auto srcExtent = mipExtent(srcInfo.extent, level);
+      const auto dstExtent = mipExtent(dstInfo.extent, level);
+      auto srcSubresource = completeSubresourceRangeLayers(srcInfo);
+      srcSubresource.mipLevel = level;
+      auto dstSubresource = completeSubresourceRangeLayers(dstInfo);
+      dstSubresource.mipLevel = level;
 
-          VkImageBlit blit{};
-          blit.srcSubresource = srcSubresource;
-          blit.srcOffsets[1] = {static_cast<int32_t>(srcExtent.width),
-                                static_cast<int32_t>(srcExtent.height),
-                                static_cast<int32_t>(srcExtent.depth)};
-          blit.dstSubresource = dstSubresource;
-          blit.dstOffsets[1] = {static_cast<int32_t>(dstExtent.width),
-                                static_cast<int32_t>(dstExtent.height),
-                                static_cast<int32_t>(dstExtent.depth)};
-          blits.push_back(blit);
-        }
+      VkImageBlit blit{};
+      blit.srcSubresource = srcSubresource;
+      blit.srcOffsets[1] = {static_cast<int32_t>(srcExtent.width),
+                            static_cast<int32_t>(srcExtent.height),
+                            static_cast<int32_t>(srcExtent.depth)};
+      blit.dstSubresource = dstSubresource;
+      blit.dstOffsets[1] = {static_cast<int32_t>(dstExtent.width),
+                            static_cast<int32_t>(dstExtent.height),
+                            static_cast<int32_t>(dstExtent.depth)};
+      blits.push_back(blit);
+    }
 
-        auto transfer = recorder.beginTransferPass();
-        transfer.imageMemoryBarrier(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                    VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                    std::array{barrier});
-        transfer.blitImage(srcImage, dstImage, blits, VK_FILTER_NEAREST);
-      });
+    auto transfer = recorder.beginTransferPass();
+    transfer.imageMemoryBarrier(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                std::array{barrier});
+    transfer.blitImage(srcImage, dstImage, blits, VK_FILTER_NEAREST);
+  });
   return true;
 }
 
@@ -860,8 +926,8 @@ bool ConvertFormat::materialize(MaterializationContext &ctx) {
   const auto outputUsage = ctx.chainImageTemplate(value).usage;
   MatImage dst;
   if (ctx.isPresentedImageChain(value))
-    dst = engine.createNode<SwapchainImageNode>(
-        ctx, ctx.chainImageTemplate(value));
+    dst = engine.createNode<SwapchainImageNode>(ctx,
+                                                ctx.chainImageTemplate(value));
   else
     dst = engine.createNode<ConvertedImageNode>(src, format, outputUsage);
   ctx.materializeImageChain(value, dst);
@@ -1071,9 +1137,9 @@ bool RenderPass::acceptsScene(const Scene &scene) const {
     const auto *candidateImage = dyn_cast<ImageUseInfo>(&candidate.useInfo());
     if ((currentImage || candidateImage) &&
         (!currentImage || !candidateImage ||
-          currentImage->access != candidateImage->access ||
-          currentImage->viewTypeConstraint !=
-              candidateImage->viewTypeConstraint))
+         currentImage->access != candidateImage->access ||
+         currentImage->viewTypeConstraint !=
+             candidateImage->viewTypeConstraint))
       return false;
   }
   return true;
@@ -1151,32 +1217,8 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
   }
   sceneInfo.framebufferInfo = FramebufferInfo{ctx.env().engine(), refImage};
 
-  auto createImageDescriptor =
-      [&](const ImageDescriptorUseInfo &info,
-          const MatImageView &view) -> imvk::Descriptor {
-    switch (info.type()) {
-    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-      return Descriptor{ctx.env().engine(),
-                        CombinedImageSamplerAdaptor(ctx.env().engine(), view)};
-    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-      return Descriptor{ctx.env().engine(),
-                        ImageSampledAdaptor(ctx.env().engine(), view)};
-    default:
-      assert(0 && "unipmlemented descriptor type");
-    }
-    std::terminate();
-  };
-
   for (auto &&use : uses() | std::views::drop(m_firstDescriptor)) {
-    assert(isa<ImageDescriptorUseInfo>(use.info()));
-    auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
-    auto view = ctx.get<MatImageView>(use.value());
-    auto image = ctx.get<MatImage>(use.value());
-    if (image->node().isDestroyed())
-      image->node().construct();
-    sceneInfo.descriptors.push_back(
-        {Descriptor{ctx.env().engine(), createImageDescriptor(info, view)},
-         image});
+    sceneInfo.descriptors.push_back(materializeImageDescriptor(ctx, use));
   }
   auto matScene = std::invoke(m_scene->materialization, ctx.env(), sceneInfo);
 
@@ -1219,6 +1261,55 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
         renderPass.setScissors({&scissor, 1});
         matScene->onDraw(renderPass, frame);
       });
+  return false;
+}
+
+bool ComputePass::acceptsComputeContext(
+    const ComputeContext &computeContext) const {
+  if (computeContext.descriptors.size() != uses().size())
+    return false;
+
+  unsigned resultIndex = 0;
+  for (auto &&[use, candidate] :
+       std::views::zip(uses(), computeContext.descriptors)) {
+    const auto *current = dyn_cast<ImageDescriptorUseInfo>(use.info());
+    const auto *replacement =
+        dyn_cast<ImageDescriptorUseInfo>(&candidate.useInfo());
+    if (!current || !replacement || current->type() != replacement->type() ||
+        current->access.layout != replacement->access.layout ||
+        current->access.usage != replacement->access.usage ||
+        current->viewTypeConstraint != replacement->viewTypeConstraint)
+      return false;
+
+    const auto expectedPassthrough = candidate.isPassthrough()
+                                         ? std::optional<size_t>{resultIndex++}
+                                         : std::nullopt;
+    if (current->passthrough != expectedPassthrough)
+      return false;
+  }
+  return resultIndex == results().size();
+}
+
+bool ComputePass::setComputeContext(const ComputeContext &computeContext) {
+  if (!acceptsComputeContext(computeContext))
+    return false;
+  m_computeContext = &computeContext;
+  return true;
+}
+
+bool ComputePass::materialize(MaterializationContext &ctx) {
+  ComputeContext::MaterializationInfo computeInfo{};
+  for (auto &&use : uses())
+    computeInfo.descriptors.push_back(materializeImageDescriptor(ctx, use));
+
+  auto matComputeContext =
+      std::invoke(m_computeContext->materialization, ctx.env(), computeInfo);
+  ctx.materializeNode(*this, [matComputeContext = std::move(matComputeContext)](
+                                 vkw::BufferRecorder &recorder,
+                                 const imvk::Frame &frame) mutable {
+    auto computePass = recorder.beginComputePass();
+    matComputeContext->onCompute(computePass, frame);
+  });
   return false;
 }
 
