@@ -301,7 +301,13 @@ std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf) {
     std::ranges::transform(val.users() | std::views::filter(nonEmptyUse),
                            std::back_inserter(uses),
                            [](auto &use) { return &use; });
-    std::sort(uses.begin(), uses.end(), OrderCompare{wf});
+    auto orderUses = [&wf](const Use *a, const Use *b) {
+      if (&a->user() == &b->user()) {
+        return imageUse(*a).passthrough && !imageUse(*b).passthrough;
+      } else
+        return OrderCompare{wf}(a, b);
+    };
+    std::sort(uses.begin(), uses.end(), orderUses);
 
     auto lastBoundUse = uses.end();
 
@@ -316,8 +322,14 @@ std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf) {
       WorkflowBuilder bldr{wf, use->user()};
       Node *cloneImage = bldr.create<Clone<ImageTy>>(val);
       auto &cloneImageVal = cloneImage->results().front();
-      Node *copyImage = bldr.create<Copy<ImageTy>>(val, cloneImageVal);
-      auto &copyImageVal = copyImage->results().front();
+      // We don't need a copy if source image is undefined.
+      bool needCopyNode =
+          !isa<MakeImage>(&val.node()) && !isa<Clone<ImageTy>>(&val.node());
+      Node *copyImage = needCopyNode
+                            ? bldr.create<Copy<ImageTy>>(val, cloneImageVal)
+                            : cloneImage;
+      auto &copyImageVal =
+          needCopyNode ? copyImage->results().front() : cloneImageVal;
       aa.insertValue(&copyImageVal, &aa.getAttributesFor(val));
       aa.insertValue(&cloneImageVal, &aa.getAttributesFor(val));
       Use *copyUse = &copyImage->uses().front();
@@ -338,32 +350,20 @@ std::vector<ImageValueChain> materializeImageValueChains(Workflow &wf) {
     if (uses.empty())
       return nullptr;
 
-    // if value is obtained not from barrier operation, we must insert barrier
-    // between def and first use regardless of layout match.
-
-    if (!isa<Barrier<ImageTy>>(&currentValue->node())) {
-      WorkflowBuilder bldr{wf, uses.front()->user()};
-      auto &defInfo = imageDef(*currentValue);
-      auto &useInfo = imageUse(*uses.front());
-
-      auto *attrs = &aa.getAttributesFor(*currentValue);
-      currentValue =
-          &bldr.create<Barrier<ImageTy>>(*currentValue, defInfo.access.layout,
-                                         useInfo.access.layout)
-               ->results()
-               .front();
-      chain.chain.emplace_back(currentValue);
-      aa.insertValue(currentValue, attrs);
-      for (auto &u : uses) {
-        u->replaceBy(currentValue);
-      }
-    }
+    // Insert barriers to add def -> use dependency and handle layout transits.
     const ImageDefInfo *currentDefInfo = &imageDef(*currentValue);
-    for (auto useIt = std::next(uses.begin()); useIt != uses.end(); ++useIt) {
+
+    for (auto useIt = uses.begin(); useIt != uses.end(); ++useIt) {
       auto *useInfo = &imageUse(**useIt);
+      if (useInfo->access.empty())
+        continue;
       auto defLayout = currentDefInfo->access.layout;
       auto useLayout = useInfo->access.layout;
-      if (defLayout == useLayout)
+      // Don't need a barrier if layouts out use and def scopes are the same
+      // unless: def scope has non-null access or use is passthrough in which
+      // case it has extended access scope and always requires a barrier.
+      if (currentDefInfo->access.accessFlags == 0 && !useInfo->passthrough &&
+          defLayout == useLayout)
         continue;
       WorkflowBuilder bldr{wf, (*useIt)->user()};
       auto *attrs = &aa.getAttributesFor(*currentValue);
