@@ -102,4 +102,31 @@ void LightingStage::amendCreateInfo(
   info.addDynamicState(VK_DYNAMIC_STATE_SCISSOR);
 }
 
+ComputeStage::ComputeStage(FramedEngine &engine, ShaderLoader &shaderFactory,
+                           std::string_view shaderName)
+    : Stage(engine, [&]() {
+        Stage::Description desc{};
+        desc.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        desc.shaders.emplace_back(
+            shaderFactory.getModule(std::string(shaderName).append(".comp")));
+        desc.sets.emplace_back(
+            Stage::Description::Set{/* set */ 0, VK_SHADER_STAGE_COMPUTE_BIT,
+                                    /* sets per pool */ 10u});
+        return desc;
+      }()) {}
+
+vkw::ComputePipeline ComputePipelineTraits::create(
+    FramedEngine &engine, imvk::PipelineLayout<ComputePipelineTraits> &layout) {
+  auto stages = layout.stages();
+  assert(std::ranges::distance(stages) == 1);
+  auto stage = *stages.begin();
+  assert(stage.get().stage() == VK_SHADER_STAGE_COMPUTE_BIT);
+  assert(stage.get().hasShader());
+
+  auto &device = engine.context().device();
+  vkw::ComputeShader shader{device, stage.get().getShader()};
+  vkw::ComputePipelineCreateInfo createInfo{layout->get(), shader};
+  return vkw::ComputePipeline{device, createInfo};
+}
+
 } // namespace imvk::examples

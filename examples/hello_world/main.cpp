@@ -191,9 +191,10 @@ createScreenCompatibleImage(imvk::graph::WorkflowBuilder &builder,
       .front();
 }
 
-static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
-                                           imvk::graph::Scene &mainScene,
-                                           imvk::graph::Scene &offscreenScene) {
+static imvk::graph::Workflow
+basicWorkflow(imvk::graph::Context &ctx, imvk::graph::Scene &mainScene,
+              imvk::graph::Scene &offscreenScene,
+              imvk::graph::ComputeContext &channelShuffle) {
   using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
   imvk::graph::Workflow workflow{ctx};
   imvk::graph::WorkflowBuilder builder{workflow, workflow.end()};
@@ -204,11 +205,17 @@ static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
 
   imvk::graph::Value &depthBuffer =
       createScreenCompatibleImage(builder, extents, VK_FORMAT_D32_SFLOAT);
-  imvk::graph::Value &texture =
+  imvk::graph::Value &offscreenTexture =
       builder
           .create<imvk::graph::RenderPass>(std::array{&image},
                                            imvk::graph::Node::EmptyValues,
                                            offscreenScene)
+          ->results()
+          .front();
+  imvk::graph::Value &texture =
+      builder
+          .create<imvk::graph::ComputePass>(std::array{&offscreenTexture},
+                                            channelShuffle)
           ->results()
           .front();
   imvk::graph::Value &renderedImage =
@@ -220,6 +227,68 @@ static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
   builder.create<imvk::graph::Present>(renderedImage);
   return workflow;
 }
+
+class ChannelShuffleComputeContext final
+    : public imvk::graph::MatComputeContext {
+public:
+  ChannelShuffleComputeContext(
+      const imvk::examples::MaterializationEnvironment &env,
+      const imvk::graph::ComputeContext::MaterializationInfo &computeInfo)
+      : m_image([&]() {
+          assert(computeInfo.descriptors.size() == 1);
+          const auto *image = computeInfo.descriptors.front().image();
+          assert(image);
+          return *image;
+        }()),
+        m_layout(env.engine(), env.shaderLoader(), "channel_shuffle"),
+        m_stageSet([&]() {
+          auto builder = imvk::StageSetBuilder{env.engine(), m_layout};
+          builder.addDescriptorSet(0).addDescriptor(
+              computeInfo.descriptors.front().descriptor, 0);
+          return builder;
+        }()),
+        m_pipeline(env.engine(), imvk::examples::ComputePipelineLayout(
+                                     env.engine(), 0, m_layout)) {}
+
+  static imvk::graph::ComputeContext get() {
+    imvk::graph::ComputeContext ret{};
+    ret.descriptors.emplace_back(
+        imvk::graph::DescriptorUseInfo::storageImage(true));
+    ret.materialization =
+        [](const imvk::graph::MaterializationEnvironment &envBase,
+           const imvk::graph::ComputeContext::MaterializationInfo
+               &computeInfo) {
+          assert(isa<imvk::examples::MaterializationEnvironment>(&envBase));
+          const auto &env =
+              static_cast<const imvk::examples::MaterializationEnvironment &>(
+                  envBase);
+          return std::make_unique<ChannelShuffleComputeContext>(env,
+                                                                computeInfo);
+        };
+    return ret;
+  }
+
+  void onCompute(vkw::ComputePassRecorder &commands,
+                 const imvk::Frame &frame) override {
+    const auto &pipeline = m_pipeline->use(frame);
+    const auto layout = m_pipeline.layout();
+    const auto &pipelineLayout = layout->use(frame);
+    const auto descriptorSet = m_stageSet.getSet(0);
+    const auto &set = *descriptorSet->use(frame);
+    const auto extents = m_image->info().extent;
+
+    commands.bindPipeline(pipeline);
+    commands.bindDescriptorSet(pipelineLayout, VK_PIPELINE_BIND_POINT_COMPUTE,
+                               set, 0);
+    commands.dispatch((extents.width + 15) / 16, (extents.height + 15) / 16, 1);
+  }
+
+private:
+  imvk::graph::MatImage m_image;
+  imvk::StageLayout<imvk::examples::ComputeStage> m_layout;
+  imvk::StageSet<imvk::examples::ComputeStage> m_stageSet;
+  imvk::examples::ComputePipeline m_pipeline;
+};
 
 static imvk::StageSet<imvk::examples::GeometryStage>
 someCoolGeometry(imvk::GraphicsEngine &graphicsEngine,
@@ -481,15 +550,20 @@ int app() try {
 
   auto offscreenScene = OffscreenScene::get();
   auto mainScene = MainScene::get();
+  auto channelShuffle = ChannelShuffleComputeContext::get();
 
   imvk::graph::Context graphCtx{};
-  auto iniWf = basicWorkflow(graphCtx, mainScene, offscreenScene);
+  auto iniWf =
+      basicWorkflow(graphCtx, mainScene, offscreenScene, channelShuffle);
 
   imvk::examples::MaterializationEnvironment matEnv{graphicsEngine, window};
   imvk::examples::GraphEditor::SceneTable availableScenes{
       {"Main", std::cref(mainScene)}, {"Offscreen", std::cref(offscreenScene)}};
+  imvk::examples::GraphEditor::ComputeContextTable availableComputeContexts{
+      {"channel_shuffle", std::cref(channelShuffle)}};
   imvk::examples::GraphEditor ged{matEnv, std::move(iniWf),
-                                  std::move(availableScenes)};
+                                  std::move(availableScenes),
+                                  std::move(availableComputeContexts)};
 
   auto commands = MyCommandBuffer(graphicsEngine);
   //  Main application loop.

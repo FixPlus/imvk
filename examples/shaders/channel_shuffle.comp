@@ -1,0 +1,20 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(rgba8, set = 0, binding = 0) uniform image2D targetImage;
+
+void main() {
+  ivec2 coordinate = ivec2(gl_GlobalInvocationID.xy);
+  if (any(greaterThanEqual(coordinate, imageSize(targetImage))))
+    return;
+
+  vec4 color = imageLoad(targetImage, coordinate);
+  float temporary = color.r;
+  color.r = color.b;
+  color.b = temporary;
+  temporary = color.b;
+  color.b = color.g;
+  color.g = temporary;
+  imageStore(targetImage, coordinate, color);
+}
