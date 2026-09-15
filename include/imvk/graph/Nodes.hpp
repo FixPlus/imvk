@@ -10,6 +10,7 @@
 
 #include <array>
 #include <span>
+#include <variant>
 
 #include <vkw/CommandRecorder.hpp>
 
@@ -813,10 +814,33 @@ public:
 };
 struct Scene final {
 
+  /// A materialized attachment and its image metadata. Entries have the same
+  /// order as Scene::attachments.
+  struct MaterializedImageAttachment {
+    MatImage image;
+  };
+
+  /// A type-erased descriptor together with the materialized graph resource
+  /// that backs it. Resource is a variant so non-image descriptor resources can
+  /// be added without making every descriptor image-specific.
+  struct MaterializedDescriptor {
+    using Resource = std::variant<MatImage>;
+
+    Descriptor descriptor;
+    Resource resource;
+
+    template <typename T> const T *resourceAs() const {
+      return std::get_if<T>(&resource);
+    }
+
+    const MatImage *image() const { return resourceAs<MatImage>(); }
+  };
+
   struct MaterializationInfo {
     vkw::RenderingFormatInfo renderingInfo;
     FramebufferInfo framebufferInfo;
-    boost::container::small_vector<Descriptor, 2> descriptors;
+    boost::container::small_vector<MaterializedImageAttachment, 2> attachments;
+    boost::container::small_vector<MaterializedDescriptor, 2> descriptors;
   };
 
   boost::container::small_vector<ImageAttachmentUseInfo, 2> attachments;

@@ -29,7 +29,7 @@ public:
       : m_gui(me.window(), me.engine(), me.copyEngine(), me.shaderLoader()),
         m_pp(me.pipelinePool()), m_onGui(std::forward<decltype(onGui)>(onGui)) {
     std::tie(m_resultID, std::ignore) =
-        m_gui.addImage(sceneInfo.descriptors.front());
+        m_gui.addImage(sceneInfo.descriptors.front().descriptor);
     assert(sceneInfo.descriptors.size() == 1);
     m_gui.updateRenderingInfo(sceneInfo.renderingInfo,
                               sceneInfo.framebufferInfo);

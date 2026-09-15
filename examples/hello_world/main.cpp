@@ -381,7 +381,7 @@ public:
                                                          /* scale */ 0.5f));
         })) {
     assert(sceneInfo.descriptors.size() == 1);
-    m_offscreenWidget.updateImage(sceneInfo.descriptors.front());
+    m_offscreenWidget.updateImage(sceneInfo.descriptors.front().descriptor);
     m_gui.updateRenderingInfo(sceneInfo.renderingInfo,
                               sceneInfo.framebufferInfo);
     m_lighting = imvk::StageSetBuilder{

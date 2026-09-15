@@ -1107,11 +1107,13 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
   };
   for (auto &&use : uses() | std::views::take(m_firstDescriptor)) {
     auto &useInfo = static_cast<const ImageAttachmentUseInfo &>(*use.info());
+    auto image = ctx.get<MatImage>(use.value());
     attachments.emplace_back(ctx.get<MatImageView>(use.value()), useInfo.kind);
+    sceneInfo.attachments.emplace_back(image);
     VkRenderingAttachmentInfo a{};
     a.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     a.imageLayout = useInfo.access.layout;
-    auto &img = *ctx.get<MatImage>(use.value());
+    auto &img = *image;
     if (img.node().isDestroyed())
       img.node().construct();
     auto format = img.info().format;
@@ -1169,8 +1171,12 @@ bool RenderPass::materialize(MaterializationContext &ctx) {
     assert(isa<ImageDescriptorUseInfo>(use.info()));
     auto &info = static_cast<const ImageDescriptorUseInfo &>(*use.info());
     auto view = ctx.get<MatImageView>(use.value());
-    sceneInfo.descriptors.emplace_back(ctx.env().engine(),
-                                       createImageDescriptor(info, view));
+    auto image = ctx.get<MatImage>(use.value());
+    if (image->node().isDestroyed())
+      image->node().construct();
+    sceneInfo.descriptors.push_back(
+        {Descriptor{ctx.env().engine(), createImageDescriptor(info, view)},
+         image});
   }
   auto matScene = std::invoke(m_scene->materialization, ctx.env(), sceneInfo);
 

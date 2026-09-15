@@ -2,10 +2,25 @@
 #include "imvk/graph/Nodes.hpp"
 #include "imvk/graph/Passes.hpp"
 
+#include <concepts>
 #include <iostream>
+#include <type_traits>
 
 namespace imvk::graph {
 namespace {
+
+static_assert(std::same_as<decltype(Scene::MaterializedImageAttachment::image),
+                           MatImage>);
+static_assert(std::same_as<decltype(Scene::MaterializedDescriptor::descriptor),
+                           Descriptor>);
+static_assert(
+    std::same_as<
+        std::variant_alternative_t<0, Scene::MaterializedDescriptor::Resource>,
+        MatImage>);
+static_assert(
+    std::same_as<
+        decltype(std::declval<const Scene::MaterializedDescriptor &>().image()),
+        const MatImage *>);
 
 class ImageSource final : public Node {
 public:
