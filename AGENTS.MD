@@ -29,8 +29,45 @@ ctest --test-dir build -C Debug --output-on-failure
 ```
 
 Use `Release` instead of `Debug` when needed. For single-configuration
-generators, set `-DCMAKE_BUILD_TYPE=Debug` while configuring and add build subdirectories like `build/Debug` for different configs; the `--config`
-and `-C` arguments are harmless or may be omitted.
+generators, set `-DCMAKE_BUILD_TYPE=Debug` while configuring and add build
+subdirectories like `build/Debug` for different configs; the `--config` and
+`-C` arguments are harmless or may be omitted.
+
+### Windows/MSVC configuration notes
+
+- Do not replace CMake's default `CMAKE_CXX_FLAGS` when adding options. MSVC
+  builds require exception handling (`/EHsc`); without it, Boost detects
+  `BOOST_NO_EXCEPTIONS`, and code using Boost.StaticString can fail to link with
+  an unresolved `boost::throw_exception` symbol. Prefer target-level options,
+  for example `target_compile_options(<target> PRIVATE /FS)`. If repairing an
+  existing cache that contains only `/FS`, reconfigure it with:
+
+  ```powershell
+  cmake -S . -B build `
+    -DCMAKE_CXX_FLAGS="/DWIN32 /D_WINDOWS /EHsc /FS"
+  ```
+
+  A correctly generated Visual Studio project reports synchronous exception
+  handling (`<ExceptionHandling>Sync</ExceptionHandling>`). Rebuild affected
+  static libraries after correcting the flag because Boost's behavior is
+  selected while compiling them, not while linking the executable.
+
+- Match prebuilt dependencies to the selected configuration and MSVC runtime.
+  In particular, do not link a Release-only GLFW package into a Debug build.
+  Release GLFW normally requests `MSVCRT`, while Debug targets use `MSVCRTD`;
+  mixing them produces linker warning `LNK4098`. Point `glfw3_DIR` at a Debug
+  installation for Debug builds, or preferably use a package installation that
+  exports both Debug and Release imported configurations:
+
+  ```powershell
+  cmake -S . -B build -DBUILD_TESTING=ON `
+    -Dglfw3_DIR="<debug-or-multi-config-glfw>/lib/cmake/glfw3"
+  ```
+
+  For configuration-specific dependency installations, use separate build
+  directories (for example `build/Debug` and `build/Release`) with matching
+  `glfw3_DIR` values. `dumpbin /directives <library>.lib` can be used to inspect
+  whether a library requests `MSVCRT` or `MSVCRTD`.
 
 ## Development notes
 
