@@ -217,6 +217,79 @@ bool InsertImageTypeConversionsPass::run(Workflow &workflow) const {
   }
 }
 
+bool CombineImageConversionsPass::run(Workflow &workflow) const {
+  bool changed = false;
+  while (true) {
+    ResizeImage *resize = nullptr;
+    ConvertFormat *convert = nullptr;
+    bool resizeFirst = false;
+
+    for (auto &node : workflow) {
+      auto *candidateResize = dyn_cast<ResizeImage>(&node);
+      if (!candidateResize)
+        continue;
+
+      auto &resizeInput = candidateResize->uses()[0].value();
+      if (auto *candidateConvert =
+              dyn_cast<ConvertFormat>(&resizeInput.node())) {
+        const auto canFuse = std::ranges::all_of(
+            candidateConvert->results().front().users(), [&](const Use &use) {
+              if (&use == &candidateResize->uses()[0])
+                return true;
+              auto *getExtents = dyn_cast<GetExtents>(&use.user());
+              return getExtents && &getExtents->results().front() ==
+                                       &candidateResize->uses()[1].value();
+            });
+        if (!canFuse)
+          continue;
+        resize = candidateResize;
+        convert = candidateConvert;
+        break;
+      }
+
+      auto users = candidateResize->results().front().users();
+      if (std::ranges::distance(users) != 1)
+        continue;
+      auto *candidateConvert = dyn_cast<ConvertFormat>(&users.begin()->user());
+      if (!candidateConvert)
+        continue;
+      resize = candidateResize;
+      convert = candidateConvert;
+      resizeFirst = true;
+      break;
+    }
+
+    if (!resize || !convert)
+      return changed;
+
+    auto &source =
+        resizeFirst ? resize->uses()[0].value() : convert->uses()[0].value();
+    auto &extents = resize->uses()[1].value();
+    auto &format = convert->uses()[1].value();
+
+    if (!resizeFirst && isa<GetExtents>(&extents.node()) &&
+        &extents.node().uses()[0].value() == &convert->results().front())
+      extents.node().uses()[0].replaceBy(&source);
+
+    Node *second = resizeFirst ? static_cast<Node *>(convert)
+                               : static_cast<Node *>(resize);
+    WorkflowBuilder builder{workflow, *second};
+    auto &combined = builder
+                         .create<ConvertResizeImage>(source, extents, format,
+                                                     resize->getImageType())
+                         ->results()
+                         .front();
+    second->results().front().replaceAllUsesWith(&combined);
+
+    Node *first = resizeFirst ? static_cast<Node *>(resize)
+                              : static_cast<Node *>(convert);
+    workflow.erase(second);
+    assert(std::ranges::empty(first->results().front().users()));
+    workflow.erase(first);
+    changed = true;
+  }
+}
+
 bool RemoveAssumeCompatibleFormatsPass::run(Workflow &workflow) const {
   boost::container::small_vector<AssumeCompatibleFormat *, 4> assumptions;
   for (auto &node : workflow) {

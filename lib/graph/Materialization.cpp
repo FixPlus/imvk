@@ -435,6 +435,7 @@ MaterializationContext::MaterializationContext(
     : m_env(env) {
   InsertFormatConversionsPass{}.run(wf);
   InsertImageTypeConversionsPass{}.run(wf);
+  CombineImageConversionsPass{}.run(wf);
   RemoveAssumeCompatibleFormatsPass{}.run(wf);
   RemoveAssumeCompatibleExtentsPass{}.run(wf);
   {
