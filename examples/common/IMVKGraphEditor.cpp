@@ -31,13 +31,15 @@ static ed::EditorContext *createEditorContext() {
 
 GraphEditor::GraphEditor(const MaterializationEnvironment &me,
                          imvk::graph::Workflow initialWorkflow,
-                         SceneTable availableScenes)
+                         SceneTable availableScenes,
+                         ComputeContextTable availableComputeContexts)
     : m_me(me), m_ctx(createEditorContext()),
       m_materializedCtx(createEditorContext()),
       m_scene(GraphScene::get([this](GraphScene &scene, const Frame &frame) {
         onGui(scene, frame);
       })),
       m_availableScenes(std::move(availableScenes)),
+      m_availableComputeContexts(std::move(availableComputeContexts)),
       m_currentWorkflow(std::move(initialWorkflow)),
       m_materializedWorkflow(m_currentWorkflow) {
   m_inject_into_workflow(m_materializedWorkflow);
@@ -717,6 +719,18 @@ sceneName(const imvk::graph::Scene &scene,
   return found->first;
 }
 
+static std::string_view computeContextName(
+    const imvk::graph::ComputeContext &computeContext,
+    const GraphEditor::ComputeContextTable &availableComputeContexts) {
+  auto found =
+      std::ranges::find_if(availableComputeContexts, [&](const auto &entry) {
+        return &entry.second.get() == &computeContext;
+      });
+  if (found == availableComputeContexts.end())
+    return "Unregistered";
+  return found->first;
+}
+
 static std::string_view imageTypeName(std::optional<VkImageType> imageType) {
   if (!imageType)
     return "Auto";
@@ -742,7 +756,8 @@ static float nodeWidgetWidth(const imvk::graph::Node &node) {
   if (isa<imvk::graph::ResizeImage>(&node) ||
       isa<imvk::graph::ConvertResizeImage>(&node))
     return 160.0f;
-  if (isa<imvk::graph::RenderPass>(&node))
+  if (isa<imvk::graph::RenderPass>(&node) ||
+      isa<imvk::graph::ComputePass>(&node))
     return 160.0f;
   if (isa<imvk::graph::Barrier<imvk::graph::ImageTy>>(&node))
     return 300.0f;
@@ -849,10 +864,11 @@ static bool drawFormatInput(imvk::graph::Constant<imvk::graph::FormatTy> &node,
   return changed;
 }
 
-static bool drawNodeWidget(imvk::graph::Node &node,
-                           const GraphEditor::SceneTable &availableScenes,
-                           float contentWidth, NodePopupState &popup,
-                           bool editable) {
+static bool
+drawNodeWidget(imvk::graph::Node &node,
+               const GraphEditor::SceneTable &availableScenes,
+               const GraphEditor::ComputeContextTable &availableComputeContexts,
+               float contentWidth, NodePopupState &popup, bool editable) {
   bool changed = false;
   ImGui::PushID(&node);
   if (auto *constant =
@@ -921,6 +937,17 @@ static bool drawNodeWidget(imvk::graph::Node &node,
     } else {
       ImGui::TextUnformatted(currentName.data());
     }
+  } else if (auto *computePass = dyn_cast<imvk::graph::ComputePass>(&node)) {
+    const auto currentName = computeContextName(computePass->computeContext(),
+                                                availableComputeContexts);
+    if (editable) {
+      popup.openRequested =
+          ImGui::Button(currentName.data(), ImVec2(contentWidth, 0.0f));
+      popup.anchor = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+      popup.width = contentWidth;
+    } else {
+      ImGui::TextUnformatted(currentName.data());
+    }
   } else if (auto *barrier =
                  dyn_cast<imvk::graph::Barrier<imvk::graph::ImageTy>>(&node)) {
     const auto *useInfo =
@@ -937,9 +964,11 @@ static bool drawNodeWidget(imvk::graph::Node &node,
   return changed;
 }
 
-static bool drawNodePopup(imvk::graph::Node &node,
-                          const GraphEditor::SceneTable &availableScenes,
-                          NodePopupState &popup) {
+static bool
+drawNodePopup(imvk::graph::Node &node,
+              const GraphEditor::SceneTable &availableScenes,
+              const GraphEditor::ComputeContextTable &availableComputeContexts,
+              NodePopupState &popup) {
   bool changed = false;
   const auto screenAnchor = ed::CanvasToScreen(popup.anchor);
   // Popups must be created outside node-editor's transformed canvas space.
@@ -1032,6 +1061,24 @@ static bool drawNodePopup(imvk::graph::Node &node,
       }
       ImGui::EndPopup();
     }
+  } else if (auto *computePass = dyn_cast<imvk::graph::ComputePass>(&node)) {
+    if (popup.openRequested)
+      ImGui::OpenPopup("##compute_context");
+    if (ImGui::BeginPopup("##compute_context")) {
+      for (const auto &[name, computeContextRef] : availableComputeContexts) {
+        const auto &computeContext = computeContextRef.get();
+        const bool selected = &computeContext == &computePass->computeContext();
+        const bool compatible =
+            computePass->acceptsComputeContext(computeContext);
+        ImGui::BeginDisabled(!compatible);
+        if (ImGui::Selectable(name.c_str(), selected) && !selected)
+          changed = computePass->setComputeContext(computeContext);
+        ImGui::EndDisabled();
+        if (selected)
+          ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndPopup();
+    }
   }
 
   ImGui::PopID();
@@ -1039,9 +1086,11 @@ static bool drawNodePopup(imvk::graph::Node &node,
   return changed;
 }
 
-static bool drawNode(imvk::graph::Node &node,
-                     const GraphEditor::SceneTable &availableScenes,
-                     bool editable) {
+static bool
+drawNode(imvk::graph::Node &node,
+         const GraphEditor::SceneTable &availableScenes,
+         const GraphEditor::ComputeContextTable &availableComputeContexts,
+         bool editable) {
   const auto nodeId = ed::NodeId(&node);
   boost::static_string<50> title;
   displayName(node.name(), title);
@@ -1094,7 +1143,8 @@ static bool drawNode(imvk::graph::Node &node,
 
   NodePopupState popup;
   bool stateChanged =
-      drawNodeWidget(node, availableScenes, contentWidth, popup, editable);
+      drawNodeWidget(node, availableScenes, availableComputeContexts,
+                     contentWidth, popup, editable);
 
   auto drawUse = [](auto &&use, auto &&name) {
     ed::BeginPin(ed::PinId(&use), ed::PinKind::Input);
@@ -1143,7 +1193,8 @@ static bool drawNode(imvk::graph::Node &node,
   }
   ed::PopStyleVar();
   if (editable && popup.width > 0.0f)
-    stateChanged |= drawNodePopup(node, availableScenes, popup);
+    stateChanged |=
+        drawNodePopup(node, availableScenes, availableComputeContexts, popup);
   return stateChanged;
 }
 
@@ -1296,9 +1347,10 @@ static bool handleDeletion(imvk::graph::Workflow &workflow) {
   return !deletedNodes.empty() || !deletedLinks.empty();
 }
 
-static imvk::graph::Node *
-drawCreateNodeMenu(imvk::graph::Workflow &workflow,
-                   const GraphEditor::SceneTable &availableScenes) {
+static imvk::graph::Node *drawCreateNodeMenu(
+    imvk::graph::Workflow &workflow,
+    const GraphEditor::SceneTable &availableScenes,
+    const GraphEditor::ComputeContextTable &availableComputeContexts) {
   imvk::graph::Node *created = nullptr;
   auto create = [&]<typename T>(auto &&...args) {
     created = imvk::graph::WorkflowBuilder{workflow, workflow.end()}.create<T>(
@@ -1348,6 +1400,16 @@ drawCreateNodeMenu(imvk::graph::Workflow &workflow,
     for (const auto &[name, scene] : availableScenes) {
       if (ImGui::MenuItem(name.c_str()))
         create.template operator()<imvk::graph::RenderPass>(scene.get());
+    }
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu("Compute Pass")) {
+    if (availableComputeContexts.empty())
+      ImGui::MenuItem("No compute contexts available", nullptr, false, false);
+    for (const auto &[name, computeContext] : availableComputeContexts) {
+      if (ImGui::MenuItem(name.c_str()))
+        create.template operator()<imvk::graph::ComputePass>(
+            computeContext.get());
     }
     ImGui::EndMenu();
   }
@@ -1495,7 +1557,7 @@ void GraphEditor::m_draw_materialized_workflow() {
   ed::PushStyleVar(ed::StyleVar_PivotSize, ImVec2(3, 3));
   ed::Begin("Materialized render graph", ImVec2(0, 0));
   for (auto &node : m_materializedWorkflow)
-    drawNode(node, m_availableScenes, false);
+    drawNode(node, m_availableScenes, m_availableComputeContexts, false);
   for (auto &node : m_materializedWorkflow) {
     for (auto &use : node.uses()) {
       if (use.hasValue())
@@ -1552,7 +1614,8 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ed::Begin("Render graph", ImVec2(0, 0));
   bool workflowChanged = false;
   for (auto &node : workflow)
-    workflowChanged |= drawNode(node, m_availableScenes, true);
+    workflowChanged |=
+        drawNode(node, m_availableScenes, m_availableComputeContexts, true);
   for (auto &node : workflow) {
     for (auto &&[index, use] : std::views::enumerate(node.uses())) {
       if (!use.hasValue())
@@ -1568,7 +1631,8 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   if (ImGui::BeginPopup("Create New Node")) {
     const auto position =
         ed::ScreenToCanvas(ImGui::GetMousePosOnOpeningCurrentPopup());
-    if (auto *created = drawCreateNodeMenu(workflow, m_availableScenes)) {
+    if (auto *created = drawCreateNodeMenu(workflow, m_availableScenes,
+                                           m_availableComputeContexts)) {
       ed::SetNodePosition(ed::NodeId(created), position);
       workflowChanged = true;
     }

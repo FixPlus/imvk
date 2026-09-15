@@ -72,10 +72,14 @@ class GraphEditor {
 public:
   using SceneTable =
       std::map<std::string, std::reference_wrapper<const imvk::graph::Scene>>;
+  using ComputeContextTable =
+      std::map<std::string,
+               std::reference_wrapper<const imvk::graph::ComputeContext>>;
 
   GraphEditor(const MaterializationEnvironment &me,
               imvk::graph::Workflow initialWorkflow,
-              SceneTable availableScenes = {});
+              SceneTable availableScenes = {},
+              ComputeContextTable availableComputeContexts = {});
 
   void onRecord(vkw::BufferRecorder &commands, const Frame &frame);
 
@@ -101,6 +105,7 @@ private:
       m_materializedCtx;
   imvk::graph::Scene m_scene;
   SceneTable m_availableScenes;
+  ComputeContextTable m_availableComputeContexts;
   imvk::graph::Workflow m_currentWorkflow;
   imvk::graph::Workflow m_materializedWorkflow;
   std::optional<imvk::graph::MaterializationContext> m_matCtx;
