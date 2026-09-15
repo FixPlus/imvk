@@ -55,28 +55,25 @@ void GraphEditor::m_inject_into_workflow(imvk::graph::Workflow &wf) {
   auto builder = imvk::graph::WorkflowBuilder{wf, *foundPresent};
   auto &extents =
       builder.create<imvk::graph::ScreenExtents>()->results().front();
-  auto &format =
-      builder
-          .create<imvk::graph::Constant<imvk::graph::FormatTy>>(
-              VK_FORMAT_R8G8B8A8_UNORM)
-          ->results()
-          .front();
+  auto &format = builder
+                     .create<imvk::graph::Constant<imvk::graph::FormatTy>>(
+                         VK_FORMAT_R8G8B8A8_UNORM)
+                     ->results()
+                     .front();
   auto &one =
       builder.create<imvk::graph::Constant<imvk::graph::IntegerScalarTy>>(1)
           ->results()
           .front();
   auto &screenImage =
-      builder
-          .create<imvk::graph::MakeImage>(extents, format, one, one)
+      builder.create<imvk::graph::MakeImage>(extents, format, one, one)
           ->results()
           .front();
-  auto &renderedImage =
-      builder
-          .create<imvk::graph::RenderPass>(
-              std::array{&screenImage}, std::array{&originalPresent.value()},
-              m_scene)
-          ->results()
-          .front();
+  auto &renderedImage = builder
+                            .create<imvk::graph::RenderPass>(
+                                std::array{&screenImage},
+                                std::array{&originalPresent.value()}, m_scene)
+                            ->results()
+                            .front();
   originalPresent.replaceBy(&renderedImage);
 }
 
@@ -1544,6 +1541,9 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ImGui::EndDisabled();
   ImGui::SameLine();
   ImGui::Checkbox("Materialized workflow", &m_showMaterializedWorkflow);
+  ImGui::SameLine();
+  if (ImGui::Button("Untangle layout"))
+    m_needUntangleLayout = true;
   ImGui::Separator();
   ed::SetCurrentEditor(m_ctx.get());
   ed::PushStyleVar(ed::StyleVar_PivotSize, ImVec2(3, 3));
