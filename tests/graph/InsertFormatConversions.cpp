@@ -118,6 +118,25 @@ size_t combinedConversionCount(Workflow &workflow) {
       workflow, [](Node &node) { return isa<ConvertResizeImage>(&node); });
 }
 
+size_t makeImageCount(Workflow &workflow) {
+  return std::ranges::count_if(
+      workflow, [](Node &node) { return isa<MakeImage>(&node); });
+}
+
+MakeImage *createImage(WorkflowBuilder &builder, VkExtent3D extents,
+                       VkFormat format, size_t layers = 1, size_t levels = 1) {
+  auto &extentsValue =
+      builder.create<Constant<ExtentsTy>>(extents)->results().front();
+  auto &formatValue =
+      builder.create<Constant<FormatTy>>(format)->results().front();
+  auto &layersValue =
+      builder.create<Constant<IntegerScalarTy>>(layers)->results().front();
+  auto &levelsValue =
+      builder.create<Constant<IntegerScalarTy>>(levels)->results().front();
+  return builder.create<MakeImage>(extentsValue, formatValue, layersValue,
+                                   levelsValue);
+}
+
 size_t assumptionCount(Workflow &workflow) {
   return std::ranges::count_if(
       workflow, [](Node &node) { return isa<AssumeCompatibleFormat>(&node); });
@@ -1167,6 +1186,218 @@ bool testSharedFormatConversionIsNotCombined() {
                "shared format conversion graph was modified");
 }
 
+bool testFoldMakeImageFormatConversion() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto *source = createImage(builder, {16, 8, 1}, VK_FORMAT_R8_UNORM, 3, 2);
+  auto &targetFormat = builder.create<Constant<FormatTy>>(VK_FORMAT_R16_SFLOAT)
+                           ->results()
+                           .front();
+  auto &converted =
+      builder.create<ConvertFormat>(source->results().front(), targetFormat)
+          ->results()
+          .front();
+  auto *sink = builder.create<Sink>(converted, FormatConstraintInfo{});
+
+  const bool changed = CombineImageConversionsPass{}.run(workflow);
+  auto &replacement = sink->uses().front().value();
+  const auto &attributes =
+      AttributesAnalysis{workflow}.getAttributesFor<Attributes<ImageTy>>(
+          replacement);
+
+  return check(changed, "make image format conversion was not folded") &&
+         check(isa<MakeImage>(&replacement.node()),
+               "format conversion was not replaced by make image") &&
+         check(makeImageCount(workflow) == 1 && conversionCount(workflow) == 0,
+               "format folding left the wrong producer graph") &&
+         check(attributes.extents.getConstant() ==
+                   std::optional{VkExtent3D{16, 8, 1}},
+               "format folding changed image extents") &&
+         check(attributes.format.getConstant() == VK_FORMAT_R16_SFLOAT,
+               "format folding did not substitute image format") &&
+         check(attributes.layers.getConstant() == 3 &&
+                   attributes.levels.getConstant() == 2,
+               "format folding changed layers or mip levels") &&
+         check(!CombineImageConversionsPass{}.run(workflow),
+               "format folding is not idempotent");
+}
+
+bool testFoldMakeImageResize() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto *source = createImage(builder, {16, 8, 1}, VK_FORMAT_R8_UNORM, 2, 3);
+  auto &targetExtents =
+      builder.create<Constant<ExtentsTy>>(VkExtent3D{32, 4, 1})
+          ->results()
+          .front();
+  auto &resized =
+      builder.create<ResizeImage>(source->results().front(), targetExtents)
+          ->results()
+          .front();
+  auto *sink = builder.create<Sink>(resized, FormatConstraintInfo{});
+
+  const bool changed = CombineImageConversionsPass{}.run(workflow);
+  auto &replacement = sink->uses().front().value();
+  const auto &attributes =
+      AttributesAnalysis{workflow}.getAttributesFor<Attributes<ImageTy>>(
+          replacement);
+
+  return check(changed, "make image resize was not folded") &&
+         check(isa<MakeImage>(&replacement.node()),
+               "resize was not replaced by make image") &&
+         check(makeImageCount(workflow) == 1 && resizeCount(workflow) == 0,
+               "resize folding left the wrong producer graph") &&
+         check(attributes.extents.getConstant() ==
+                   std::optional{VkExtent3D{32, 4, 1}},
+               "resize folding did not substitute image extents") &&
+         check(attributes.format.getConstant() == VK_FORMAT_R8_UNORM,
+               "resize folding changed image format") &&
+         check(attributes.layers.getConstant() == 2 &&
+                   attributes.levels.getConstant() == 3,
+               "resize folding changed layers or mip levels");
+}
+
+bool testFoldMakeImageConvertResize() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto *source = createImage(builder, {16, 8, 1}, VK_FORMAT_R8_UNORM, 2, 2);
+  auto &targetExtents =
+      builder.create<Constant<ExtentsTy>>(VkExtent3D{8, 4, 1})
+          ->results()
+          .front();
+  auto &targetFormat = builder.create<Constant<FormatTy>>(VK_FORMAT_R16_SFLOAT)
+                           ->results()
+                           .front();
+  auto &convertedResized =
+      builder
+          .create<ConvertResizeImage>(source->results().front(), targetExtents,
+                                      targetFormat)
+          ->results()
+          .front();
+  auto *sink = builder.create<Sink>(convertedResized, FormatConstraintInfo{});
+
+  const bool changed = CombineImageConversionsPass{}.run(workflow);
+  auto &replacement = sink->uses().front().value();
+  const auto &attributes =
+      AttributesAnalysis{workflow}.getAttributesFor<Attributes<ImageTy>>(
+          replacement);
+
+  return check(changed, "make image convert resize was not folded") &&
+         check(isa<MakeImage>(&replacement.node()),
+               "convert resize was not replaced by make image") &&
+         check(makeImageCount(workflow) == 1 &&
+                   combinedConversionCount(workflow) == 0,
+               "convert resize folding left the wrong producer graph") &&
+         check(attributes.extents.getConstant() ==
+                   std::optional{VkExtent3D{8, 4, 1}},
+               "convert resize folding did not substitute extents") &&
+         check(attributes.format.getConstant() == VK_FORMAT_R16_SFLOAT,
+               "convert resize folding did not substitute format") &&
+         check(attributes.layers.getConstant() == 2 &&
+                   attributes.levels.getConstant() == 2,
+               "convert resize folding changed layers or mip levels");
+}
+
+bool testFoldMakeImageConversionChain() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto *source = createImage(builder, {16, 8, 1}, VK_FORMAT_R8_UNORM);
+  auto &targetExtents =
+      builder.create<Constant<ExtentsTy>>(VkExtent3D{8, 4, 1})
+          ->results()
+          .front();
+  auto &targetFormat = builder.create<Constant<FormatTy>>(VK_FORMAT_R16_SFLOAT)
+                           ->results()
+                           .front();
+  auto &resized =
+      builder.create<ResizeImage>(source->results().front(), targetExtents)
+          ->results()
+          .front();
+  auto &converted =
+      builder.create<ConvertFormat>(resized, targetFormat)->results().front();
+  auto *sink = builder.create<Sink>(converted, FormatConstraintInfo{});
+
+  const bool changed = CombineImageConversionsPass{}.run(workflow);
+  auto &replacement = sink->uses().front().value();
+  const auto &attributes =
+      AttributesAnalysis{workflow}.getAttributesFor<Attributes<ImageTy>>(
+          replacement);
+
+  return check(changed, "make image conversion chain was not folded") &&
+         check(isa<MakeImage>(&replacement.node()),
+               "conversion chain was not replaced by make image") &&
+         check(makeImageCount(workflow) == 1 && resizeCount(workflow) == 0 &&
+                   conversionCount(workflow) == 0 &&
+                   combinedConversionCount(workflow) == 0,
+               "conversion chain folding left conversion nodes") &&
+         check(attributes.extents.getConstant() ==
+                       std::optional{VkExtent3D{8, 4, 1}} &&
+                   attributes.format.getConstant() == VK_FORMAT_R16_SFLOAT,
+               "conversion chain folding produced wrong attributes");
+}
+
+bool testFoldSharedMakeImageConversion() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto *source = createImage(builder, {16, 8, 1}, VK_FORMAT_R8_UNORM);
+  auto &targetFormat = builder.create<Constant<FormatTy>>(VK_FORMAT_R16_SFLOAT)
+                           ->results()
+                           .front();
+  auto &converted =
+      builder.create<ConvertFormat>(source->results().front(), targetFormat)
+          ->results()
+          .front();
+  auto *sourceSink =
+      builder.create<Sink>(source->results().front(), FormatConstraintInfo{});
+  auto *convertedSink = builder.create<Sink>(converted, FormatConstraintInfo{});
+
+  const bool changed = CombineImageConversionsPass{}.run(workflow);
+
+  return check(changed, "shared make image conversion was not folded") &&
+         check(&sourceSink->uses().front().value() ==
+                   &source->results().front(),
+               "shared source consumer was rewired") &&
+         check(isa<MakeImage>(&convertedSink->uses().front().value().node()),
+               "converted branch did not receive a make image") &&
+         check(&convertedSink->uses().front().value() !=
+                   &source->results().front(),
+               "converted branch reused the unconverted image") &&
+         check(makeImageCount(workflow) == 2 && conversionCount(workflow) == 0,
+               "shared make image folding produced the wrong graph");
+}
+
+bool testExplicitImageTypePreventsMakeImageFold() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto *source = createImage(builder, {1, 1, 1}, VK_FORMAT_R8_UNORM);
+  auto &targetExtents =
+      builder.create<Constant<ExtentsTy>>(VkExtent3D{1, 1, 1})
+          ->results()
+          .front();
+  auto &targetFormat = builder.create<Constant<FormatTy>>(VK_FORMAT_R16_SFLOAT)
+                           ->results()
+                           .front();
+  auto &convertedResized =
+      builder
+          .create<ConvertResizeImage>(source->results().front(), targetExtents,
+                                      targetFormat, VK_IMAGE_TYPE_2D)
+          ->results()
+          .front();
+  builder.create<Sink>(convertedResized, FormatConstraintInfo{});
+
+  return check(!CombineImageConversionsPass{}.run(workflow),
+               "unrepresentable explicit image type was folded") &&
+         check(makeImageCount(workflow) == 1 &&
+                   combinedConversionCount(workflow) == 1,
+               "explicit image type guard changed the graph");
+}
+
 } // namespace
 } // namespace imvk::graph
 
@@ -1197,7 +1428,13 @@ int main() {
                  testCombineFormatThenResizeConversion() &&
                  testCombineAutomaticImageConversions() &&
                  testSharedConversionIsNotCombined() &&
-                 testSharedFormatConversionIsNotCombined()
+                 testSharedFormatConversionIsNotCombined() &&
+                 testFoldMakeImageFormatConversion() &&
+                 testFoldMakeImageResize() &&
+                 testFoldMakeImageConvertResize() &&
+                 testFoldMakeImageConversionChain() &&
+                 testFoldSharedMakeImageConversion() &&
+                 testExplicitImageTypePreventsMakeImageFold()
              ? 0
              : 1;
 }
