@@ -265,6 +265,56 @@ inline void intrusive_ptr_release(ResizedImageNode *p) {
   intrusive_ptr_release(static_cast<FONodeBase *>(p));
 }
 
+class ConvertedResizedImageNode final
+    : public FONode<RegularImage, fon_type::swap, ConvertedResizedImageNode>,
+      public MatImageBase {
+public:
+  ConvertedResizedImageNode(FramedEngine &engine, const MatImage &src,
+                            const MatExtents &extents, const MatFormat &format,
+                            VkImageUsageFlags usage,
+                            std::optional<VkImageType> imageType)
+      : FONode<RegularImage, fon_type::swap, ConvertedResizedImageNode>(
+            engine, FOUses{&src->node(), extents, format}),
+        MatImageBase(fon_type::swap), m_usage(usage), m_imageType(imageType) {}
+  FOReconstructible &node() override { return *this; }
+  VkImage image(FrameID id) const final { return get(id); }
+  VkImage useImage(const Frame &id) final { return use(id); }
+  const VkImageCreateInfo &info() const final {
+    assert(!isDestroyed());
+    return m_info;
+  }
+
+  RegularImage constructNew(FramedEngine &engine, FrameID frame) {
+    auto *src = dynamic_cast<MatImageBase *>(&getUseRaw(0));
+    assert(src);
+    m_info = src->info();
+    m_info.extent = getUse<MatExtents>(1)->get();
+    m_info.format = getUse<MatFormat>(2)->get();
+    m_info.imageType = m_imageType.value_or(imageTypeForExtents(m_info.extent));
+    m_info.usage = m_usage;
+    vkw::AllocationCreateInfo allocInfo{.usage = VMA_MEMORY_USAGE_GPU_ONLY};
+    return RegularImage(engine.context().getDeviceAllocator(), allocInfo,
+                        m_info);
+  }
+  void onUseAction(const Frame &frame, RegularImage &obj) {
+    // do nothing
+  }
+
+private:
+  VkImageCreateInfo m_info{};
+  VkImageUsageFlags m_usage;
+  std::optional<VkImageType> m_imageType;
+};
+
+inline void intrusive_ptr_add_ref(ConvertedResizedImageNode *p) {
+  assert(p);
+  intrusive_ptr_add_ref(static_cast<FONodeBase *>(p));
+}
+inline void intrusive_ptr_release(ConvertedResizedImageNode *p) {
+  assert(p);
+  intrusive_ptr_release(static_cast<FONodeBase *>(p));
+}
+
 class SwapchainImageNode final
     : public FONode<VkImage, fon_type::ext, SwapchainImageNode>,
       public MatImageBase {
@@ -526,6 +576,23 @@ const AttributesBase *ResizeImage::getAttributes(
       extents, image.format, imageType, image.layers, image.levels);
 }
 
+const AttributesBase *ConvertResizeImage::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  assert(&result == results().data());
+  assert(useAttributes.size() == 3);
+  const auto &image =
+      static_cast<const Attributes<ImageTy> &>(*useAttributes[0]);
+  const auto &extentsAttributes =
+      static_cast<const Attributes<ExtentsTy> &>(*useAttributes[1]);
+  const auto format =
+      static_cast<const Attributes<FormatTy> &>(*useAttributes[2]).value;
+  const auto imageType = m_imageType ? constant(*m_imageType)
+                                     : imageTypeForExtents(extentsAttributes);
+  return &ctx.attributes().get<Attributes<ImageTy>>(
+      extentsAttributes.extents, format, imageType, image.layers, image.levels);
+}
+
 const AttributesBase *AssumeCompatibleFormat::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {
@@ -645,13 +712,17 @@ bool ResizeImage::materialize(MaterializationContext &ctx) {
   auto outputTemplate = ctx.chainImageTemplate(value);
   if (m_imageType)
     outputTemplate.imageType = *m_imageType;
+  const auto outputImageType =
+      outputTemplate.imageType == VK_IMAGE_TYPE_MAX_ENUM
+          ? std::nullopt
+          : std::optional{outputTemplate.imageType};
   const auto outputUsage = outputTemplate.usage;
   MatImage dst;
   if (ctx.isPresentedImageChain(value))
     dst = engine.createNode<SwapchainImageNode>(ctx, outputTemplate);
   else
     dst = engine.createNode<ResizedImageNode>(src, extents, outputUsage,
-                                              m_imageType);
+                                              outputImageType);
   ctx.materializeImageChain(value, dst);
 
   VkImageMemoryBarrier barrier{};
@@ -701,6 +772,80 @@ bool ResizeImage::materialize(MaterializationContext &ctx) {
                                     std::array{barrier});
         transfer.blitImage(srcImage, dstImage, blits, VK_FILTER_NEAREST);
       });
+  return true;
+}
+
+bool ConvertResizeImage::materialize(MaterializationContext &ctx) {
+  auto &value = results().front();
+  if (!ctx.startsImageChain(value))
+    return false;
+
+  auto &engine = ctx.env().engine();
+  auto src = ctx.get<MatImage>(uses()[0].value());
+  auto extents = ctx.get<MatExtents>(uses()[1].value());
+  auto format = ctx.get<MatFormat>(uses()[2].value());
+  auto outputTemplate = ctx.chainImageTemplate(value);
+  if (m_imageType)
+    outputTemplate.imageType = *m_imageType;
+  const auto outputImageType =
+      outputTemplate.imageType == VK_IMAGE_TYPE_MAX_ENUM
+          ? std::nullopt
+          : std::optional{outputTemplate.imageType};
+  const auto outputUsage = outputTemplate.usage;
+  MatImage dst;
+  if (ctx.isPresentedImageChain(value))
+    dst = engine.createNode<SwapchainImageNode>(ctx, outputTemplate);
+  else
+    dst = engine.createNode<ConvertedResizedImageNode>(
+        src, extents, format, outputUsage, outputImageType);
+  ctx.materializeImageChain(value, dst);
+
+  VkImageMemoryBarrier barrier{};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+
+  ctx.materializeNode(*this, [src = std::move(src), dst = std::move(dst),
+                              barrier](vkw::BufferRecorder &recorder,
+                                       const imvk::Frame &frame) mutable {
+    const auto srcImage = src->useImage(frame);
+    const auto dstImage = dst->useImage(frame);
+    const auto &srcInfo = src->info();
+    const auto &dstInfo = dst->info();
+    barrier.image = dstImage;
+    barrier.subresourceRange = completeSubresourceRange(dstInfo);
+
+    boost::container::small_vector<VkImageBlit, 4> blits;
+    const auto mipLevels = std::min(srcInfo.mipLevels, dstInfo.mipLevels);
+    blits.reserve(mipLevels);
+    for (uint32_t level = 0; level < mipLevels; ++level) {
+      const auto srcExtent = mipExtent(srcInfo.extent, level);
+      const auto dstExtent = mipExtent(dstInfo.extent, level);
+      auto srcSubresource = completeSubresourceRangeLayers(srcInfo);
+      srcSubresource.mipLevel = level;
+      auto dstSubresource = completeSubresourceRangeLayers(dstInfo);
+      dstSubresource.mipLevel = level;
+
+      VkImageBlit blit{};
+      blit.srcSubresource = srcSubresource;
+      blit.srcOffsets[1] = {static_cast<int32_t>(srcExtent.width),
+                            static_cast<int32_t>(srcExtent.height),
+                            static_cast<int32_t>(srcExtent.depth)};
+      blit.dstSubresource = dstSubresource;
+      blit.dstOffsets[1] = {static_cast<int32_t>(dstExtent.width),
+                            static_cast<int32_t>(dstExtent.height),
+                            static_cast<int32_t>(dstExtent.depth)};
+      blits.push_back(blit);
+    }
+
+    auto transfer = recorder.beginTransferPass();
+    transfer.imageMemoryBarrier(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                std::array{barrier});
+    transfer.blitImage(srcImage, dstImage, blits, VK_FILTER_NEAREST);
+  });
   return true;
 }
 

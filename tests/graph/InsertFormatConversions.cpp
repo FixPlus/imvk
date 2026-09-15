@@ -873,6 +873,112 @@ bool testExplicitResizeImageType() {
                "resize image chain has the wrong image view type");
 }
 
+bool testConvertResizeImageAttributes() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &source = builder.create<ImageSource>(std::optional{VK_FORMAT_R8_UNORM})
+                     ->results()
+                     .front();
+  auto &extents = builder.create<Constant<ExtentsTy>>(VkExtent3D{64, 32, 1})
+                      ->results()
+                      .front();
+  auto &format = builder.create<Constant<FormatTy>>(VK_FORMAT_R8G8B8A8_UNORM)
+                     ->results()
+                     .front();
+  auto *convertResize =
+      builder.create<ConvertResizeImage>(source, extents, format);
+  auto &convertedResized = convertResize->results().front();
+  builder.create<Present>(convertedResized);
+
+  AttributesAnalysis attributes{workflow};
+  const auto &sourceAttributes =
+      attributes.getAttributesFor<Attributes<ImageTy>>(source);
+  const auto &resultAttributes =
+      attributes.getAttributesFor<Attributes<ImageTy>>(convertedResized);
+  const auto *sourceUse =
+      dyn_cast<const ImageUseInfo>(convertResize->uses().front().info());
+  const auto *definition =
+      dyn_cast<const ImageDefInfo>(&convertResize->results().front().info());
+
+  return check(convertResize->uses().size() == 3,
+               "convert resize image does not have three inputs") &&
+         check(convertResize->results().size() == 1,
+               "convert resize image does not have one result") &&
+         check(sourceUse && sourceUse->access.layout ==
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+               "convert resize image source has the wrong layout") &&
+         check(sourceUse &&
+                   sourceUse->access.usage == VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+               "convert resize image source has the wrong usage") &&
+         check(definition && definition->access.layout ==
+                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+               "convert resize image result has the wrong layout") &&
+         check(definition &&
+                   definition->access.usage == VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+               "convert resize image result has the wrong usage") &&
+         check(resultAttributes.extents.getConstant() ==
+                   std::optional{VkExtent3D{64, 32, 1}},
+               "convert resize image did not replace the extents") &&
+         check(resultAttributes.format.getConstant() ==
+                   VK_FORMAT_R8G8B8A8_UNORM,
+               "convert resize image did not replace the format") &&
+         check(resultAttributes.imageType.getConstant() == VK_IMAGE_TYPE_2D,
+               "convert resize image did not infer the target image type") &&
+         check(resultAttributes.layers == sourceAttributes.layers,
+               "convert resize image changed the layer count") &&
+         check(resultAttributes.levels == sourceAttributes.levels,
+               "convert resize image changed the mip count") &&
+         check(!InsertFormatConversionsPass{}.run(workflow),
+               "convert resize image triggered a format conversion") &&
+         check(!InsertImageTypeConversionsPass{}.run(workflow),
+               "convert resize image triggered an image type conversion");
+}
+
+bool testExplicitConvertResizeImageTypeAndChain() {
+  Context ctx;
+  Workflow workflow{ctx};
+  WorkflowBuilder builder{workflow, workflow.end()};
+  auto &source = builder.create<ImageSource>(std::optional{VK_FORMAT_R8_UNORM})
+                     ->results()
+                     .front();
+  auto &extents = builder.create<Constant<ExtentsTy>>(VkExtent3D{1, 1, 1})
+                      ->results()
+                      .front();
+  auto &format = builder.create<Constant<FormatTy>>(VK_FORMAT_R16_SFLOAT)
+                     ->results()
+                     .front();
+  auto *convertResize = builder.create<ConvertResizeImage>(
+      source, extents, format, VK_IMAGE_TYPE_2D);
+  auto &convertedResized = convertResize->results().front();
+
+  Workflow cloned{workflow};
+  const auto clonedConvertResize = std::ranges::find_if(
+      cloned, [](const Node &node) { return isa<ConvertResizeImage>(&node); });
+  auto chains = materializeImageValueChains(workflow);
+  const auto resultChain = std::ranges::find_if(chains, [&](const auto &chain) {
+    return chain.chain.front().def == &convertedResized;
+  });
+
+  return check(convertResize->getImageType() == VK_IMAGE_TYPE_2D,
+               "convert resize image did not retain the explicit image type") &&
+         check(clonedConvertResize != cloned.end() &&
+                   dyn_cast<const ConvertResizeImage>(&*clonedConvertResize)
+                           ->getImageType() == VK_IMAGE_TYPE_2D,
+               "convert resize image clone lost the explicit image type") &&
+         check(resultChain != chains.end(),
+               "convert resize image did not start an image chain") &&
+         check(resultChain->imageInfo.extent == VkExtent3D{1, 1, 1},
+               "convert resize image chain has the wrong extents") &&
+         check(resultChain->imageInfo.format == VK_FORMAT_R16_SFLOAT,
+               "convert resize image chain has the wrong format") &&
+         check(resultChain->imageInfo.imageType == VK_IMAGE_TYPE_2D,
+               "convert resize image chain ignored the explicit image type") &&
+         check(resultChain->chain.front().viewInfo.viewType ==
+                   VK_IMAGE_VIEW_TYPE_2D,
+               "convert resize image chain has the wrong image view type");
+}
+
 } // namespace
 } // namespace imvk::graph
 
@@ -896,7 +1002,9 @@ int main() {
                  testPresentedImageChain() && testPresentVerification() &&
                  testUnifiedImageType() && testImageTypeInference() &&
                  testImageChainTypeInference() && testResizeImageAttributes() &&
-                 testResizeImageChain() && testExplicitResizeImageType()
+                 testResizeImageChain() && testExplicitResizeImageType() &&
+                 testConvertResizeImageAttributes() &&
+                 testExplicitConvertResizeImageTypeAndChain()
              ? 0
              : 1;
 }

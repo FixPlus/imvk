@@ -446,6 +446,89 @@ private:
   std::optional<VkImageType> m_imageType;
 };
 
+class ConvertResizeImage : public Node {
+public:
+  ConvertResizeImage(Context &ctx,
+                     std::optional<VkImageType> imageType = std::nullopt)
+      : Node(ctx,
+             std::array{
+                 Node::Use{
+                     nullptr, &ctx.types().get<ImageTy>(),
+                     new ImageUseInfo{
+                         ImageAccessInfo{
+                             .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
+                             .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
+                         "image"}},
+                 Node::Use{nullptr, &ctx.types().get<ExtentsTy>(),
+                           new BasicUseInfo{"extents"}},
+                 Node::Use{nullptr, &ctx.types().get<FormatTy>(),
+                           new BasicUseInfo{"format"}}},
+             std::array{Node::Def{
+                 &ctx.types().get<ImageTy>(),
+                 new ImageDefInfo{
+                     ImageAccessInfo{
+                         .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
+                         .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                     "image"}}}),
+        m_imageType(imageType) {}
+  ConvertResizeImage(Context &ctx, Value &image, Value &extents, Value &format,
+                     std::optional<VkImageType> imageType = std::nullopt)
+      : Node(ctx,
+             std::array{
+                 Node::Use{
+                     &image,
+                     new ImageUseInfo{
+                         ImageAccessInfo{
+                             .accessFlags = VK_ACCESS_MEMORY_READ_BIT,
+                             .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
+                         "image"}},
+                 Node::Use{&extents, &ctx.types().get<ExtentsTy>(),
+                           new BasicUseInfo{"extents"}},
+                 Node::Use{&format, &ctx.types().get<FormatTy>(),
+                           new BasicUseInfo{"format"}}},
+             std::array{Node::Def{
+                 &image.type(),
+                 new ImageDefInfo{
+                     ImageAccessInfo{
+                         .accessFlags = VK_ACCESS_MEMORY_WRITE_BIT,
+                         .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL},
+                     "image"}}}),
+        m_imageType(imageType) {}
+
+  std::optional<VkImageType> getImageType() const { return m_imageType; }
+  void setImageType(std::optional<VkImageType> imageType) {
+    m_imageType = imageType;
+  }
+
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
+  std::string_view name() const final { return "convert_resize_image"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+
+private:
+  explicit ConvertResizeImage(std::optional<VkImageType> imageType)
+      : m_imageType(imageType) {}
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new ConvertResizeImage(m_imageType)};
+  }
+  std::optional<VkImageType> m_imageType;
+};
+
 class ConvertFormat : public Node {
 public:
   ConvertFormat(Context &ctx)

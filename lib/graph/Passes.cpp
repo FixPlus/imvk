@@ -85,7 +85,8 @@ findConversionsToInsert(Workflow &workflow,
               .format.getConstant();
       boost::container::small_vector<ConstrainedUse, 4> incompatibleUses;
       for (auto &use : value.users()) {
-        if (isa<ConvertFormat>(&use.user()))
+        if (isa<ConvertFormat>(&use.user()) ||
+            isa<ConvertResizeImage>(&use.user()))
           continue;
         const auto *info = dyn_cast<const ImageUseInfo>(use.info());
         if (!info || info->formatConstraint.empty())

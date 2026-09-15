@@ -184,8 +184,7 @@ createScreenCompatibleImage(imvk::graph::WorkflowBuilder &builder,
           ->results()
           .front();
 
-  return builder
-      .create<imvk::graph::MakeImage>(extents, fmt, c1, c1)
+  return builder.create<imvk::graph::MakeImage>(extents, fmt, c1, c1)
       ->results()
       .front();
 }
@@ -198,16 +197,14 @@ static imvk::graph::Workflow basicWorkflow(imvk::graph::Context &ctx,
   imvk::graph::WorkflowBuilder builder{workflow, workflow.end()};
   auto &extents =
       builder.create<imvk::graph::ScreenExtents>()->results().front();
-  imvk::graph::Value &image = createScreenCompatibleImage(
-      builder, extents, VK_FORMAT_R8G8B8A8_UNORM);
+  imvk::graph::Value &image =
+      createScreenCompatibleImage(builder, extents, VK_FORMAT_R8G8B8A8_UNORM);
 
-  imvk::graph::Value &offscreenBuffer = createScreenCompatibleImage(
-      builder, extents, VK_FORMAT_R8G8B8A8_UNORM);
   imvk::graph::Value &depthBuffer =
       createScreenCompatibleImage(builder, extents, VK_FORMAT_D32_SFLOAT);
   imvk::graph::Value &texture =
       builder
-          .create<imvk::graph::RenderPass>(std::array{&offscreenBuffer},
+          .create<imvk::graph::RenderPass>(std::array{&image},
                                            imvk::graph::Node::EmptyValues,
                                            offscreenScene)
           ->results()
