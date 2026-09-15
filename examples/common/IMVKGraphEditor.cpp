@@ -1542,8 +1542,10 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ImGui::SameLine();
   ImGui::Checkbox("Materialized workflow", &m_showMaterializedWorkflow);
   ImGui::SameLine();
-  if (ImGui::Button("Untangle layout"))
+  if (ImGui::Button("Untangle layout")) {
     m_needUntangleLayout = true;
+    m_needMaterializedUntangleLayout = true;
+  }
   ImGui::Separator();
   ed::SetCurrentEditor(m_ctx.get());
   ed::PushStyleVar(ed::StyleVar_PivotSize, ImVec2(3, 3));
@@ -1587,8 +1589,10 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   ImGui::End();
   ImGui::PopStyleVar(2);
   ImGui::Begin("scene");
+  ImGui::Checkbox("filter image", &m_sceneImageFilterLinear);
   GUI::setNoAlpha();
-  GUI::filterLinear();
+  if (m_sceneImageFilterLinear)
+    GUI::filterLinear();
   ImGui::Image(scene.resultBuffer(), ImGui::GetContentRegionAvail());
   GUI::reset();
   ImGui::End();

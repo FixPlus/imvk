@@ -159,7 +159,9 @@ public:
     ImGui::SetNextWindowSize(ImVec2(0, 0));
     ImGui::Begin("offscreen");
     ImGui::Text("fps: %.2f", w.clock().fps());
+    imvk::examples::GUI::setNoAlpha();
     ImGui::Image(m_imageId, ImVec2(300, 300));
+    imvk::examples::GUI::reset();
     ImGui::End();
   }
 

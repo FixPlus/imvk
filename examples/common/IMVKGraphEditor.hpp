@@ -110,6 +110,7 @@ private:
   bool m_needRematerialization = false;
   bool m_showMaterializedWorkflow = false;
   bool m_showVerificationLog = false;
+  bool m_sceneImageFilterLinear = true;
   std::optional<VerificationLogEntry> m_verificationLog;
 };
 
