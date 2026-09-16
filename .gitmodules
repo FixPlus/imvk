@@ -5,3 +5,7 @@
 	path = examples/external/imgui-node-editor
 	url = https://github.com/FixPlus/imgui-node-editor.git
 	branch = 0.9.3
+[submodule "examples/external/tinygltf"]
+	path = examples/external/tinygltf
+	url = https://github.com/FixPlus/tinygltf.git
+	branch = release

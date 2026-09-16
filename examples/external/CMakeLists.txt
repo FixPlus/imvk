@@ -17,3 +17,8 @@ add_library(imvk_imgui_ne
   imgui-node-editor/imgui_node_editor.cpp)
 target_include_directories(imvk_imgui_ne PUBLIC imgui-node-editor)
 target_link_libraries(imvk_imgui_ne PUBLIC imvk_imgui)
+
+add_library(imvk_tinygltf STATIC tinygltf/tiny_gltf_v3.c)
+target_compile_definitions(imvk_tinygltf PRIVATE TINYGLTF3_ENABLE_FS)
+
+target_include_directories(imvk_tinygltf PUBLIC tinygltf)

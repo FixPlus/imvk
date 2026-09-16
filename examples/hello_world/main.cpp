@@ -1,6 +1,7 @@
 #include "IMVKBuffers.hpp"
 #include "IMVKDevice.hpp"
 #include "IMVKGraphEditor.hpp"
+#include "IMVKModel.hpp"
 #include "IMVKPipeline.hpp"
 #include "IMVKScene.hpp"
 #include "IMVKShaderLoader.hpp"
@@ -546,7 +547,7 @@ int app() try {
                                      .maxFramesInFlight = 2};
   auto graphicsEngine = imvk::GraphicsEngine(imvkContext, eCi);
 
-  // Create shader loader
+  imvk::examples::GLTFModel model{"Sponza"};
 
   auto offscreenScene = OffscreenScene::get();
   auto mainScene = MainScene::get();
