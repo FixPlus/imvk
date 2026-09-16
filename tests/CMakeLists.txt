@@ -1,11 +1,15 @@
-add_executable(imvk_graph_pass_tests graph/InsertFormatConversions.cpp)
-target_link_libraries(imvk_graph_pass_tests PRIVATE imvk)
+function(add_imvk_graph_test name source)
+  set(target imvk_graph_${name}_tests)
+  add_executable(${target} graph/${source})
+  target_link_libraries(${target} PRIVATE imvk)
+  add_test(NAME imvk.graph.${name} COMMAND ${target})
+endfunction()
 
-add_test(NAME imvk.graph.insert_format_conversions
-         COMMAND imvk_graph_pass_tests)
-
-add_executable(imvk_graph_half_extents_tests graph/HalfExtents.cpp)
-target_link_libraries(imvk_graph_half_extents_tests PRIVATE imvk)
-
-add_test(NAME imvk.graph.half_extents
-         COMMAND imvk_graph_half_extents_tests)
+add_imvk_graph_test(format_conversion_insertion FormatConversionInsertion.cpp)
+add_imvk_graph_test(image_type_conversion_insertion
+                    ImageTypeConversionInsertion.cpp)
+add_imvk_graph_test(presentation Presentation.cpp)
+add_imvk_graph_test(image_nodes ImageNodes.cpp)
+add_imvk_graph_test(combine_image_conversions CombineImageConversions.cpp)
+add_imvk_graph_test(compute_pass ComputePass.cpp)
+add_imvk_graph_test(half_extents HalfExtents.cpp)
