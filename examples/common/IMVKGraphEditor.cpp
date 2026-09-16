@@ -1375,6 +1375,8 @@ static imvk::graph::Node *drawCreateNodeMenu(
     create.template operator()<imvk::graph::MakeImage>();
   if (ImGui::MenuItem("Get Extents"))
     create.template operator()<imvk::graph::GetExtents>();
+  if (ImGui::MenuItem("Half Extents"))
+    create.template operator()<imvk::graph::HalfExtents>();
   if (ImGui::MenuItem("Screen Extents"))
     create.template operator()<imvk::graph::ScreenExtents>();
   if (ImGui::MenuItem("Assume Compatible Image Format"))

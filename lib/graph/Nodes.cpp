@@ -1,7 +1,18 @@
 #include "imvk/graph/Nodes.hpp"
 #include "imvk/graph/Attributes.hpp"
 
+#include <algorithm>
+
 namespace imvk::graph {
+
+namespace {
+
+VkExtent3D halfExtents(VkExtent3D extents) {
+  return {std::max(1u, extents.width / 2), std::max(1u, extents.height / 2),
+          std::max(1u, extents.depth / 2)};
+}
+
+} // namespace
 
 bool Constant<IntegerScalarTy>::materialize(MaterializationContext &ctx) {
   ctx.materialize<MatIntegerScalar>(
@@ -32,6 +43,20 @@ bool ScreenExtents::materialize(MaterializationContext &ctx) {
             return swapchain.images().front().rawExtents();
           },
           FOUses{std::move(swapchain)}));
+  return true;
+}
+
+bool HalfExtents::materialize(MaterializationContext &ctx) {
+  auto &engine = ctx.env().engine();
+  auto extents = ctx.get<MatExtents>(uses().front().value());
+  ctx.materialize<MatExtents>(
+      results().front(),
+      MatExtents(
+          engine,
+          [extents](FramedEngine &, MatHostValueImpl<VkExtent3D> &) {
+            return halfExtents(extents->get());
+          },
+          FOUses{extents}));
   return true;
 }
 
@@ -565,6 +590,31 @@ const AttributesBase *ScreenExtents::getAttributes(
   return &ctx.attributes().get<Attributes<ExtentsTy>>(
       dynamic<VkExtent3D>(result), constant(VK_IMAGE_TYPE_2D));
 }
+
+const AttributesBase *HalfExtents::getAttributes(
+    Context &ctx, const Value &result,
+    std::span<const AttributesBase *> useAttributes) const {
+  assert(&result == results().data());
+  assert(useAttributes.size() == 1);
+  const auto &input =
+      static_cast<const Attributes<ExtentsTy> &>(*useAttributes.front());
+  auto extents = [&]() -> Attribute<VkExtent3D> {
+    using Status = Attribute<VkExtent3D>::Status;
+    switch (input.extents.status()) {
+    case Status::undefined:
+      return undefined<VkExtent3D>();
+    case Status::constant:
+      return constant(halfExtents(*input.extents.getConstant()));
+    case Status::dynamic:
+      return dynamic<VkExtent3D>(result);
+    case Status::overdefined:
+      return overdefined<VkExtent3D>();
+    }
+    return undefined<VkExtent3D>();
+  }();
+  return &ctx.attributes().get<Attributes<ExtentsTy>>(extents, input.imageType);
+}
+
 const AttributesBase *GetExtents::getAttributes(
     Context &ctx, const Value &result,
     std::span<const AttributesBase *> useAttributes) const {

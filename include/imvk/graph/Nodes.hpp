@@ -133,6 +133,39 @@ private:
   }
 };
 
+/// Produces the extent of the next mip level. Each component is divided by two
+/// using integer division and clamped to one.
+class HalfExtents : public Node {
+public:
+  HalfExtents(Context &ctx)
+      : Node(ctx,
+             std::array{Node::Use{nullptr, &ctx.types().get<ExtentsTy>(),
+                                  new BasicUseInfo{"extents"}}},
+             std::array{Node::Def{&ctx.types().get<ExtentsTy>(),
+                                  new BasicDefInfo{"extents"}}}) {}
+  HalfExtents(Context &ctx, Value &extents)
+      : Node(ctx, std::array{Node::Use{&extents, new BasicUseInfo{"extents"}}},
+             std::array{Node::Def{&ctx.types().get<ExtentsTy>(),
+                                  new BasicDefInfo{"extents"}}}) {}
+  const AttributesBase *
+  getAttributes(Context &ctx, const Value &result,
+                std::span<const AttributesBase *> useAttributes) const override;
+  std::optional<VerifyError> verify(Context &ctx,
+                                    const AttributesAnalysis &aa) const final {
+    return std::nullopt;
+  }
+  std::string_view name() const final { return "half_extents"; }
+  void dumpAttributes(std::ostream &os) const final {}
+  bool hasVisibleSideEffects() const final { return false; }
+  bool materialize(MaterializationContext &ctx) final;
+
+private:
+  HalfExtents() = default;
+  std::unique_ptr<Node> doClone() const override {
+    return std::unique_ptr<Node>{new HalfExtents()};
+  }
+};
+
 template <typename Ty> class Dynamic {};
 
 template <> class Dynamic<IntegerScalarTy> : public Node {
