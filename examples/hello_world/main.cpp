@@ -16,13 +16,16 @@
 #include "imvk/graph/Nodes.hpp"
 #include "imvk/graphics/Engine.hpp"
 
-#include <vkw/StagingBuffer.hpp>
 #include <vkw/UniformBuffer.hpp>
 
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/glm.hpp>
+
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <iostream>
-#include <thread>
 
 std::atomic<size_t> totalAllocations;
 std::atomic<size_t> totalFrees;
@@ -397,6 +400,136 @@ private:
   VertexBuffer<VertexInfo, imvk::fon_type::swap_mut> m_vertices;
 };
 
+class FirstPersonCamera {
+public:
+  struct Uniform {
+    glm::mat4 viewProjection{1.0f};
+    glm::vec4 position{0.0f};
+  };
+
+  FirstPersonCamera(imvk::GraphicsEngine &engine,
+                    imvk::examples::Window &window,
+                    imvk::examples::ShaderLoader &shaderLoader)
+      : m_window(window),
+        m_uniform(
+            engine,
+            [this](const imvk::Frame &, vkw::UniformBuffer<Uniform> &buffer) {
+              buffer.mapped().front() = m_uniformData();
+              buffer.flush();
+            }),
+        m_projection([&]() {
+          auto layout = imvk::StageLayout<imvk::examples::ProjectionStage>(
+              engine, shaderLoader, "perspective");
+          auto builder = imvk::StageSetBuilder{engine, layout};
+          builder.addDescriptorSet(2).addDescriptor(m_uniform, 0);
+          return imvk::StageSet<imvk::examples::ProjectionStage>(
+              std::move(builder));
+        }()) {}
+
+  FirstPersonCamera(const FirstPersonCamera &) = delete;
+  FirstPersonCamera &operator=(const FirstPersonCamera &) = delete;
+
+  ~FirstPersonCamera() {
+    if (m_looking)
+      m_window.enableCursor();
+  }
+
+  void update() {
+    auto *handle = m_window.rawHandle();
+    const bool lookButtonDown =
+        glfwGetMouseButton(handle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    if (lookButtonDown && !m_lookButtonDown &&
+        !ImGui::GetIO().WantCaptureMouse) {
+      m_window.disableCursor();
+      glfwGetCursorPos(handle, &m_lastCursorX, &m_lastCursorY);
+      m_looking = true;
+    } else if (!lookButtonDown && m_lookButtonDown) {
+      m_window.enableCursor();
+      m_looking = false;
+    }
+    m_lookButtonDown = lookButtonDown;
+
+    if (m_looking) {
+      double cursorX = 0.0;
+      double cursorY = 0.0;
+      glfwGetCursorPos(handle, &cursorX, &cursorY);
+      m_yaw += static_cast<float>(cursorX - m_lastCursorX) * m_mouseSensitivity;
+      m_pitch -=
+          static_cast<float>(cursorY - m_lastCursorY) * m_mouseSensitivity;
+      m_pitch = std::clamp(m_pitch, -m_pitchLimit, m_pitchLimit);
+      m_lastCursorX = cursorX;
+      m_lastCursorY = cursorY;
+    }
+
+    if (ImGui::GetIO().WantCaptureKeyboard)
+      return;
+
+    const auto deltaSeconds = static_cast<float>(
+        std::min(m_window.clock().frameTime().count() / 1000.0, 0.1));
+    const auto speed = glfwGetKey(handle, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS
+                           ? m_fastSpeed
+                           : m_moveSpeed;
+    const auto distance = speed * deltaSeconds;
+    const auto forward = m_forward();
+    const auto right = glm::normalize(glm::cross(forward, m_worldUp));
+    if (glfwGetKey(handle, GLFW_KEY_W) == GLFW_PRESS)
+      m_position += forward * distance;
+    if (glfwGetKey(handle, GLFW_KEY_S) == GLFW_PRESS)
+      m_position -= forward * distance;
+    if (glfwGetKey(handle, GLFW_KEY_D) == GLFW_PRESS)
+      m_position += right * distance;
+    if (glfwGetKey(handle, GLFW_KEY_A) == GLFW_PRESS)
+      m_position -= right * distance;
+    if (glfwGetKey(handle, GLFW_KEY_SPACE) == GLFW_PRESS)
+      m_position += m_worldUp * distance;
+    if (glfwGetKey(handle, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
+      m_position -= m_worldUp * distance;
+  }
+
+  imvk::StageSet<imvk::examples::ProjectionStage> projection() const {
+    return m_projection;
+  }
+
+private:
+  glm::vec3 m_forward() const {
+    return glm::normalize(glm::vec3{std::cos(m_pitch) * std::cos(m_yaw),
+                                    std::sin(m_pitch),
+                                    std::cos(m_pitch) * std::sin(m_yaw)});
+  }
+
+  Uniform m_uniformData() const {
+    const auto [width, height] = m_window.getSize();
+    const auto aspect = static_cast<float>(std::max(width, 1)) /
+                        static_cast<float>(std::max(height, 1));
+    auto projection =
+        glm::perspectiveRH_ZO(glm::radians(60.0f), aspect, 0.1f, 200.0f);
+    projection[1][1] *= -1.0f;
+    const auto view =
+        glm::lookAtRH(m_position, m_position + m_forward(), m_worldUp);
+    return {.viewProjection = projection * view,
+            .position = glm::vec4{m_position, 1.0f}};
+  }
+
+  static constexpr glm::vec3 m_worldUp{0.0f, 1.0f, 0.0f};
+  static constexpr float m_moveSpeed = 5.0f;
+  static constexpr float m_fastSpeed = 15.0f;
+  static constexpr float m_mouseSensitivity = 0.0025f;
+  static constexpr float m_pitchLimit = glm::radians(89.0f);
+
+  imvk::examples::Window &m_window;
+  glm::vec3 m_position{0.0f, 4.0f, 16.0f};
+  float m_yaw = glm::radians(-90.0f);
+  float m_pitch = 0.0f;
+  double m_lastCursorX = 0.0;
+  double m_lastCursorY = 0.0;
+  bool m_lookButtonDown = false;
+  bool m_looking = false;
+  UniformBuffer<Uniform, imvk::fon_type::swap_mut> m_uniform;
+  imvk::StageSet<imvk::examples::ProjectionStage> m_projection;
+};
+
+static_assert(sizeof(FirstPersonCamera::Uniform) == sizeof(float) * 20);
+
 class MainScene : public imvk::graph::MatScene {
 public:
   MainScene(const imvk::examples::MaterializationEnvironment &env,
@@ -407,52 +540,7 @@ public:
         m_offscreenWidget(env.engine(), m_gui),
         m_model(model.materialize(env.engine(), env.copyEngine(),
                                   env.shaderLoader())),
-        m_geometry(
-            someCoolGeometry(env.engine(), env.window(), env.shaderLoader())),
-        m_projection(imvk::StageSetBuilder{
-            env.engine(), imvk::StageLayout<imvk::examples::ProjectionStage>(
-                              env.engine(), env.shaderLoader(), "identity")}),
-        m_materialTexture(env.engine(),
-                          imvk::examples::Texture::load(
-                              env.engine(), env.copyEngine(),
-                              imvk::examples::assetsDir() / "image1")),
-        m_swapTexture(std::async(std::launch::deferred,
-                                 [&]() {
-                                   return imvk::examples::Texture::load(
-                                       env.engine(), env.copyEngine(),
-                                       imvk::examples::assetsDir() / "image2");
-                                 })),
-        m_material([&]() {
-          auto layout = imvk::StageLayout<imvk::examples::MaterialStage>(
-              env.engine(), env.shaderLoader(), "textured2",
-              vkw::RasterizationStateCreateInfo{});
-          auto builder = imvk::StageSetBuilder{env.engine(), layout};
-          builder.addDescriptorSet(3).addDescriptor(
-              imvk::examples::SampledView(env.engine(), m_materialTexture), 0);
-          return builder;
-        }()),
-        m_vertices(
-            env.engine(), 3,
-            [&](const imvk::Frame &f, vkw::VertexBuffer<VertexInfo> &vbuf) {
-              std::ranges::copy(
-                  getVerticesForFrame(env.window().clock().totalTime().count() /
-                                          1000.0,
-                                      Pos2D{}, /* scale */ 0.75f),
-                  vbuf.mapped().begin());
-              vbuf.flush();
-            }),
-        m_anotherVertices(
-            env.engine(), env.copyEngine(),
-            getVerticesForFrame(0.5, Pos2D{0.3, 0.3}, /* scale */ 0.2f)),
-        m_swapVertices(std::async(std::launch::deferred, [&]() {
-          return imvk::examples::BufferImpl<
-              VertexInfo, imvk::fon_type::cow,
-              vkw::VertexBuffer<VertexInfo>>::create(env.engine(),
-                                                     env.copyEngine(),
-                                                     getVerticesForFrame(
-                                                         0.5, Pos2D{0.3, 0.3},
-                                                         /* scale */ 0.5f));
-        })) {
+        m_camera(env.engine(), env.window(), env.shaderLoader()) {
     assert(sceneInfo.descriptors.size() == 1);
     m_offscreenWidget.updateImage(sceneInfo.descriptors.front().descriptor);
     m_gui.updateRenderingInfo(sceneInfo.renderingInfo,
@@ -486,47 +574,26 @@ public:
     m_gui.gui([&]() {
       ImGui::ShowDemoWindow();
       m_offscreenWidget.onGui(m_env.window());
+      ImGui::Begin("camera controls");
+      ImGui::TextUnformatted("Hold right mouse button to look");
+      ImGui::TextUnformatted("W/A/S/D: move, Space/Ctrl: up/down");
+      ImGui::TextUnformatted("Left Shift: move faster");
+      ImGui::End();
     });
+    m_camera.update();
     imvk::examples::PipelineManager mng{m_env.pipelinePool(), commands, frame};
-    mng.bind(m_geometry, m_projection, m_material, m_lighting);
-    mng.bindPipeline();
-    auto &vertexBuffer = m_vertices->use(frame);
-    commands.bindVertexBuffer(vertexBuffer, 0, 0);
-    commands.draw(vertexBuffer.size(), 1u);
-
-    auto &anotherBuffer = m_anotherVertices->use(frame);
-    commands.bindVertexBuffer(anotherBuffer, 0, 0);
-    commands.draw(anotherBuffer.size(), 1u);
-
-    m_model.draw(mng, commands, frame, m_projection, m_lighting);
+    m_model.draw(mng, commands, frame, m_camera.projection(), m_lighting);
 
     m_gui.draw(mng, commands, frame);
-    m_updateCowVertices();
   }
 
 private:
-  void m_updateCowVertices() {
-    auxCount++;
-    if (auxCount < 2000)
-      return;
-    auxCount = 0;
-    m_swapVertices = m_anotherVertices->exchange(m_swapVertices.get());
-    m_swapTexture = m_materialTexture->exchange(m_swapTexture.get());
-  }
   const imvk::examples::MaterializationEnvironment &m_env;
   imvk::examples::GUI m_gui;
-  size_t auxCount = 0;
   MySampleWidget m_offscreenWidget;
   imvk::examples::GLTFModel::Materialized m_model;
-  imvk::StageSet<imvk::examples::GeometryStage> m_geometry;
-  imvk::StageSet<imvk::examples::ProjectionStage> m_projection;
-  imvk::examples::Texture m_materialTexture;
-  std::future<vkw::Image<vkw::COLOR, vkw::I2D>> m_swapTexture;
-  imvk::StageSet<imvk::examples::MaterialStage> m_material;
+  FirstPersonCamera m_camera;
   imvk::StageSet<imvk::examples::LightingStage> m_lighting = nullptr;
-  VertexBuffer<VertexInfo, imvk::fon_type::swap_mut> m_vertices;
-  VertexBuffer<VertexInfo, imvk::fon_type::cow> m_anotherVertices;
-  std::future<vkw::VertexBuffer<VertexInfo>> m_swapVertices;
 };
 
 int app() try {

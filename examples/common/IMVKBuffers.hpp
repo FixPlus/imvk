@@ -130,7 +130,7 @@ public:
       buf = &casted.get();
     }
     assert(buf);
-    write.addBuffer(*buf, 0, buf->size());
+    write.addBuffer(*buf, 0, sizeof(T));
     set.write(write);
   }
 };

@@ -13,7 +13,7 @@ function(compileShaders SHADER_DIR OUTPUT_DIR DEPENDENT_TARGET INSTALL_DIR)
         message("Found following GLSL compiler:")
         message(STATUS ${GLSL})
 
-        file(GLOB SHADERS RELATIVE ${SHADER_DIR} ${SHADER_DIR}/*.vert ${SHADER_DIR}/*.frag ${SHADER_DIR}/*.comp)
+        file(GLOB SHADERS CONFIGURE_DEPENDS RELATIVE ${SHADER_DIR} ${SHADER_DIR}/*.vert ${SHADER_DIR}/*.frag ${SHADER_DIR}/*.comp)
         file(GLOB SHADER_DEPENDENCIES CONFIGURE_DEPENDS ${SHADER_DIR}/*.glsl)
 
         foreach(SHADER ${SHADERS})
