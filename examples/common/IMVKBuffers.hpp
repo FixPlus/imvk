@@ -58,7 +58,9 @@ public:
                        .usage = VMA_MEMORY_USAGE_GPU_ONLY,
                        .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT},
                    VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    vkw::StagingBuffer<T> staging{engine.context().getDeviceAllocator(), data};
+    const T stagingValue = data;
+    vkw::StagingBuffer<T> staging{engine.context().getDeviceAllocator(),
+                                  std::span<const T>{&stagingValue, 1}};
     auto copyFuture = copyEngine.copy(
         std::make_unique<CopyWorkload>(std::move(staging), ret));
     copyFuture.wait();
@@ -143,13 +145,13 @@ public:
 };
 
 template <VkIndexType itype, imvk::fon_type PType>
-class IndexBuffer
-    : public imvk::FONodeView<BufferImpl<vkw::vkr_index_type<itype>, PType,
-                                         vkw::IndexBuffer<itype>>> {
+class IndexBuffer : public imvk::FONodeView<
+                        BufferImpl<typename vkw::vkr_index_type<itype>::Type,
+                                   PType, vkw::IndexBuffer<itype>>> {
 public:
   IndexBuffer(auto &&...args)
-      : imvk::FONodeView<BufferImpl<vkw::vkr_index_type<itype>, PType,
-                                    vkw::IndexBuffer<itype>>>(
+      : imvk::FONodeView<BufferImpl<typename vkw::vkr_index_type<itype>::Type,
+                                    PType, vkw::IndexBuffer<itype>>>(
             std::forward<decltype(args)>(args)...) {}
 };
 

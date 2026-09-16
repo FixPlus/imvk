@@ -1,6 +1,7 @@
-function(compileShader SHADER_NAME SHADER_DIR OUTPUT_DIR)
+function(compileShader SHADER_NAME SHADER_DIR OUTPUT_DIR SHADER_DEPENDENCIES)
     add_custom_command(OUTPUT ${OUTPUT_DIR}/${SHADER_NAME}.spv COMMAND ${GLSL} -V --keep-uncalled --allow-partial-linkage -I${SHADER_DIR} -o ${CMAKE_CURRENT_BINARY_DIR}/${OUTPUT_DIR}/${SHADER_NAME}.spv ${SHADER_DIR}/${SHADER_NAME}
-        MAIN_DEPENDENCY ${SHADER_DIR}/${SHADER_NAME})
+        MAIN_DEPENDENCY ${SHADER_DIR}/${SHADER_NAME}
+        DEPENDS ${SHADER_DEPENDENCIES})
 endfunction(compileShader)
 
 function(compileShaders SHADER_DIR OUTPUT_DIR DEPENDENT_TARGET INSTALL_DIR)
@@ -13,9 +14,10 @@ function(compileShaders SHADER_DIR OUTPUT_DIR DEPENDENT_TARGET INSTALL_DIR)
         message(STATUS ${GLSL})
 
         file(GLOB SHADERS RELATIVE ${SHADER_DIR} ${SHADER_DIR}/*.vert ${SHADER_DIR}/*.frag ${SHADER_DIR}/*.comp)
+        file(GLOB SHADER_DEPENDENCIES CONFIGURE_DEPENDS ${SHADER_DIR}/*.glsl)
 
         foreach(SHADER ${SHADERS})
-            compileShader(${SHADER} ${SHADER_DIR} ${OUTPUT_DIR})
+            compileShader(${SHADER} ${SHADER_DIR} ${OUTPUT_DIR} "${SHADER_DEPENDENCIES}")
         endforeach(SHADER)
 
         list(TRANSFORM SHADERS APPEND ".spv" OUTPUT_VARIABLE SHADERS_BINS)

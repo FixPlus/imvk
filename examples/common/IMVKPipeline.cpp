@@ -46,7 +46,8 @@ MaterialStage::MaterialStage(
     FramedEngine &engine, ShaderLoader &shaderFactory,
     std::string_view shaderName,
     vkw::RasterizationStateCreateInfo rasterization,
-    std::optional<vkw::DepthTestStateCreateInfo> depthTest)
+    std::optional<vkw::DepthTestStateCreateInfo> depthTest,
+    std::optional<VkPipelineColorBlendAttachmentState> blend)
     : GraphicsPipelineStage(engine,
                             [&]() {
                               Stage::Description desc{};
@@ -60,12 +61,15 @@ MaterialStage::MaterialStage(
                                   /* sets per pool*/ 10u});
                               return desc;
                             }()),
-      m_rasterizationState(rasterization), m_depthTestState(depthTest) {}
+      m_rasterizationState(rasterization), m_depthTestState(depthTest),
+      m_blendState(blend) {}
 void MaterialStage::amendCreateInfo(
     vkw::GraphicsPipelineCreateInfo &info) const {
   info.addRasterizationState(m_rasterizationState);
   if (m_depthTestState)
     info.addDepthTestState(*m_depthTestState);
+  if (m_blendState)
+    info.addBlendState(*m_blendState, 0);
 }
 
 LightingStage::LightingStage(

@@ -400,10 +400,13 @@ private:
 class MainScene : public imvk::graph::MatScene {
 public:
   MainScene(const imvk::examples::MaterializationEnvironment &env,
-            const imvk::graph::Scene::MaterializationInfo &sceneInfo)
+            const imvk::graph::Scene::MaterializationInfo &sceneInfo,
+            const imvk::examples::GLTFModel &model)
       : m_env(env),
         m_gui(env.window(), env.engine(), env.copyEngine(), env.shaderLoader()),
         m_offscreenWidget(env.engine(), m_gui),
+        m_model(model.materialize(env.engine(), env.copyEngine(),
+                                  env.shaderLoader())),
         m_geometry(
             someCoolGeometry(env.engine(), env.window(), env.shaderLoader())),
         m_projection(imvk::StageSetBuilder{
@@ -459,7 +462,7 @@ public:
                             m_env.engine(), m_env.shaderLoader(), "identity",
                             sceneInfo.renderingInfo)};
   }
-  static imvk::graph::Scene get() {
+  static imvk::graph::Scene get(const imvk::examples::GLTFModel &model) {
     imvk::graph::Scene ret{};
     using enum imvk::graph::ImageAttachmentUseInfo::Kind;
     using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
@@ -468,13 +471,13 @@ public:
     ret.descriptors.emplace_back(
         imvk::graph::DescriptorUseInfo::sampledImage());
     ret.materialization =
-        [](const imvk::graph::MaterializationEnvironment &envBase,
-           const imvk::graph::Scene::MaterializationInfo &sceneInfo) {
+        [&model](const imvk::graph::MaterializationEnvironment &envBase,
+                 const imvk::graph::Scene::MaterializationInfo &sceneInfo) {
           assert(isa<imvk::examples::MaterializationEnvironment>(&envBase));
           auto &env =
               static_cast<const imvk::examples::MaterializationEnvironment &>(
                   envBase);
-          return std::make_unique<MainScene>(env, sceneInfo);
+          return std::make_unique<MainScene>(env, sceneInfo, model);
         };
     return ret;
   }
@@ -495,6 +498,8 @@ public:
     commands.bindVertexBuffer(anotherBuffer, 0, 0);
     commands.draw(anotherBuffer.size(), 1u);
 
+    m_model.draw(mng, commands, frame, m_projection, m_lighting);
+
     m_gui.draw(mng, commands, frame);
     m_updateCowVertices();
   }
@@ -512,6 +517,7 @@ private:
   imvk::examples::GUI m_gui;
   size_t auxCount = 0;
   MySampleWidget m_offscreenWidget;
+  imvk::examples::GLTFModel::Materialized m_model;
   imvk::StageSet<imvk::examples::GeometryStage> m_geometry;
   imvk::StageSet<imvk::examples::ProjectionStage> m_projection;
   imvk::examples::Texture m_materialTexture;
@@ -550,7 +556,7 @@ int app() try {
   imvk::examples::GLTFModel model{"Sponza"};
 
   auto offscreenScene = OffscreenScene::get();
-  auto mainScene = MainScene::get();
+  auto mainScene = MainScene::get(model);
   auto channelShuffle = ChannelShuffleComputeContext::get();
 
   imvk::graph::Context graphCtx{};

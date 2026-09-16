@@ -18,5 +18,7 @@ WorldVertexInfo Geometry() {
   ret.color = inColor;
   ret.position =
       vec3(inPos * pushConstants.scale + pushConstants.translate, 0.0f);
+  ret.normal = vec3(0.0, 0.0, 1.0);
+  ret.tangent = vec4(1.0, 0.0, 0.0, 1.0);
   return ret;
 }

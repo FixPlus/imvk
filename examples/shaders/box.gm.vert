@@ -17,5 +17,6 @@ WorldVertexInfo Geometry() {
   ret.color = vec4(inColor * data.values.xyz, 1.0f);
   ret.position = vec3(inPos + values[gl_VertexIndex], 0.0);
   ret.normal = vec3(1.0, 0.0, 0.0);
+  ret.tangent = vec4(0.0, 1.0, 0.0, 1.0);
   return ret;
 }

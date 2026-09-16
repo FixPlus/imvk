@@ -30,7 +30,12 @@ public:
   load(FramedEngine &engine, CopyEngine &, const std::filesystem::path &path);
   static vkw::Image<vkw::COLOR, vkw::I2D>
   load(FramedEngine &engine, CopyEngine &, std::span<const unsigned char> data,
-       unsigned width, unsigned height);
+       unsigned width, unsigned height,
+       VkFormat format = VK_FORMAT_R8G8B8A8_UNORM);
+  static vkw::Image<vkw::COLOR, vkw::I2D>
+  loadEncoded(FramedEngine &engine, CopyEngine &,
+              std::span<const unsigned char> data,
+              VkFormat format = VK_FORMAT_R8G8B8A8_UNORM);
 };
 
 class SampledViewImpl final
@@ -43,8 +48,18 @@ public:
                   VkFilter filter = VK_FILTER_LINEAR)
       : FONode<std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
                fon_type::cow, SampledViewImpl>(
-            eng, doConstructNew(eng, texture->get(), filter), FOUses{texture}),
-        m_filter(filter), m_noSampler(noSampler) {}
+            eng, doConstructNew(eng, texture->get(), samplerInfo(filter)),
+            FOUses{texture}),
+        m_samplerInfo(samplerInfo(filter)), m_noSampler(noSampler) {}
+
+  template <std::convertible_to<Texture> T>
+  SampledViewImpl(FramedEngine &eng, T &&texture,
+                  const VkSamplerCreateInfo &samplerInfo)
+      : FONode<std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>,
+               fon_type::cow, SampledViewImpl>(
+            eng, doConstructNew(eng, texture->get(), samplerInfo),
+            FOUses{texture}),
+        m_samplerInfo(samplerInfo), m_noSampler(false) {}
 
   void descriptorWrite(FrameID frame, vkw::DescriptorSet &set,
                        unsigned binding) const;
@@ -55,11 +70,17 @@ public:
   doConstructNew(FramedEngine &engine,
                  const vkw::Image<vkw::COLOR, vkw::I2D> &image,
                  VkFilter filter);
+  static std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>
+  doConstructNew(FramedEngine &engine,
+                 const vkw::Image<vkw::COLOR, vkw::I2D> &image,
+                 VkSamplerCreateInfo samplerInfo);
 
   bool noSampler() const { return m_noSampler; }
 
 private:
-  VkFilter m_filter;
+  static VkSamplerCreateInfo samplerInfo(VkFilter filter);
+
+  VkSamplerCreateInfo m_samplerInfo;
   bool m_noSampler;
 };
 

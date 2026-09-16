@@ -7,6 +7,7 @@ layout(location = 1) out vec3 outUVW;
 layout(location = 2) out vec3 outWorldPos;
 layout(location = 3) out vec3 outWorldNormal;
 layout(location = 4) out vec3 outViewPos;
+layout(location = 5) out vec4 outWorldTangent;
 
 void Projection(WorldVertexInfo worldVertexInfo) {
   outColor = worldVertexInfo.color;
@@ -14,5 +15,6 @@ void Projection(WorldVertexInfo worldVertexInfo) {
   outWorldPos = worldVertexInfo.position;
   outWorldNormal = worldVertexInfo.normal;
   outViewPos = outWorldPos;
+  outWorldTangent = worldVertexInfo.tangent;
   gl_Position = vec4(worldVertexInfo.position, 1.0f);
 }

@@ -34,13 +34,15 @@ public:
       FramedEngine &engine, ShaderLoader &shaderFactory,
       std::string_view shaderName,
       vkw::RasterizationStateCreateInfo rasterization,
-      std::optional<vkw::DepthTestStateCreateInfo> depthTest = std::nullopt);
+      std::optional<vkw::DepthTestStateCreateInfo> depthTest = std::nullopt,
+      std::optional<VkPipelineColorBlendAttachmentState> blend = std::nullopt);
 
   void amendCreateInfo(vkw::GraphicsPipelineCreateInfo &info) const override;
 
 private:
   vkw::RasterizationStateCreateInfo m_rasterizationState;
   std::optional<vkw::DepthTestStateCreateInfo> m_depthTestState;
+  std::optional<VkPipelineColorBlendAttachmentState> m_blendState;
 };
 
 class LightingStage : public imvk::GraphicsPipelineStage {
