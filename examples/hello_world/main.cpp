@@ -530,17 +530,31 @@ private:
 
 static_assert(sizeof(FirstPersonCamera::Uniform) == sizeof(float) * 20);
 
+class ExampleEnvironment : public imvk::examples::MaterializationEnvironment {
+public:
+  ExampleEnvironment(imvk::GraphicsEngine &engine,
+                     imvk::examples::Window &window)
+      : imvk::examples::MaterializationEnvironment(engine, window),
+        m_model("Sponza"),
+        m_mat_model(m_model.materialize(engine, copyEngine(), shaderLoader())),
+        m_camera(engine, window, shaderLoader()) {}
+
+  const auto &model() { return m_mat_model; }
+  auto &camera() { return m_camera; }
+
+private:
+  imvk::examples::GLTFModel m_model;
+  imvk::examples::GLTFModel::Materialized m_mat_model;
+  FirstPersonCamera m_camera;
+};
+
 class MainScene : public imvk::graph::MatScene {
 public:
-  MainScene(const imvk::examples::MaterializationEnvironment &env,
-            const imvk::graph::Scene::MaterializationInfo &sceneInfo,
-            const imvk::examples::GLTFModel &model)
+  MainScene(ExampleEnvironment &env,
+            const imvk::graph::Scene::MaterializationInfo &sceneInfo)
       : m_env(env),
         m_gui(env.window(), env.engine(), env.copyEngine(), env.shaderLoader()),
-        m_offscreenWidget(env.engine(), m_gui),
-        m_model(model.materialize(env.engine(), env.copyEngine(),
-                                  env.shaderLoader())),
-        m_camera(env.engine(), env.window(), env.shaderLoader()) {
+        m_offscreenWidget(env.engine(), m_gui) {
     assert(sceneInfo.descriptors.size() == 1);
     m_offscreenWidget.updateImage(sceneInfo.descriptors.front().descriptor);
     m_gui.updateRenderingInfo(sceneInfo.renderingInfo,
@@ -550,7 +564,7 @@ public:
                             m_env.engine(), m_env.shaderLoader(), "identity",
                             sceneInfo.renderingInfo)};
   }
-  static imvk::graph::Scene get(const imvk::examples::GLTFModel &model) {
+  static imvk::graph::Scene get() {
     imvk::graph::Scene ret{};
     using enum imvk::graph::ImageAttachmentUseInfo::Kind;
     using enum imvk::graph::ImageAttachmentUseInfo::LoadOp;
@@ -559,13 +573,14 @@ public:
     ret.descriptors.emplace_back(
         imvk::graph::DescriptorUseInfo::sampledImage());
     ret.materialization =
-        [&model](const imvk::graph::MaterializationEnvironment &envBase,
-                 const imvk::graph::Scene::MaterializationInfo &sceneInfo) {
+        [](const imvk::graph::MaterializationEnvironment &envBase,
+           const imvk::graph::Scene::MaterializationInfo &sceneInfo) {
           assert(isa<imvk::examples::MaterializationEnvironment>(&envBase));
-          auto &env =
-              static_cast<const imvk::examples::MaterializationEnvironment &>(
-                  envBase);
-          return std::make_unique<MainScene>(env, sceneInfo, model);
+          auto *env = dynamic_cast<const ExampleEnvironment *>(&envBase);
+          if (!env)
+            throw std::runtime_error("Incorrect materialization environment");
+          auto &mutEnv = const_cast<ExampleEnvironment &>(*env);
+          return std::make_unique<MainScene>(mutEnv, sceneInfo);
         };
     return ret;
   }
@@ -580,19 +595,18 @@ public:
       ImGui::TextUnformatted("Left Shift: move faster");
       ImGui::End();
     });
-    m_camera.update();
+    m_env.camera().update();
     imvk::examples::PipelineManager mng{m_env.pipelinePool(), commands, frame};
-    m_model.draw(mng, commands, frame, m_camera.projection(), m_lighting);
+    m_env.model().draw(mng, commands, frame, m_env.camera().projection(),
+                       m_lighting);
 
     m_gui.draw(mng, commands, frame);
   }
 
 private:
-  const imvk::examples::MaterializationEnvironment &m_env;
+  ExampleEnvironment &m_env;
   imvk::examples::GUI m_gui;
   MySampleWidget m_offscreenWidget;
-  imvk::examples::GLTFModel::Materialized m_model;
-  FirstPersonCamera m_camera;
   imvk::StageSet<imvk::examples::LightingStage> m_lighting = nullptr;
 };
 
@@ -620,17 +634,15 @@ int app() try {
                                      .maxFramesInFlight = 2};
   auto graphicsEngine = imvk::GraphicsEngine(imvkContext, eCi);
 
-  imvk::examples::GLTFModel model{"Sponza"};
-
   auto offscreenScene = OffscreenScene::get();
-  auto mainScene = MainScene::get(model);
+  auto mainScene = MainScene::get();
   auto channelShuffle = ChannelShuffleComputeContext::get();
 
   imvk::graph::Context graphCtx{};
   auto iniWf =
       basicWorkflow(graphCtx, mainScene, offscreenScene, channelShuffle);
 
-  imvk::examples::MaterializationEnvironment matEnv{graphicsEngine, window};
+  ExampleEnvironment matEnv{graphicsEngine, window};
   imvk::examples::GraphEditor::SceneTable availableScenes{
       {"Main", std::cref(mainScene)}, {"Offscreen", std::cref(offscreenScene)}};
   imvk::examples::GraphEditor::ComputeContextTable availableComputeContexts{
