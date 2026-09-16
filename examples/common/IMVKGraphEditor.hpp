@@ -116,6 +116,8 @@ private:
   bool m_showMaterializedWorkflow = false;
   bool m_showVerificationLog = false;
   bool m_sceneImageFilterLinear = true;
+  bool m_showOriginalScene = false;
+  bool m_sceneSwitchKeyDown = false;
   std::optional<VerificationLogEntry> m_verificationLog;
 };
 

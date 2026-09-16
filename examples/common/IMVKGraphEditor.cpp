@@ -1419,10 +1419,27 @@ static imvk::graph::Node *drawCreateNodeMenu(
 }
 
 void GraphEditor::onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
-  if (m_needRematerialization) {
+  const bool switchKeyDown =
+      glfwGetKey(m_me.window().rawHandle(), GLFW_KEY_F1) == GLFW_PRESS;
+  bool switchScene = switchKeyDown && !m_sceneSwitchKeyDown;
+  m_sceneSwitchKeyDown = switchKeyDown;
+  if (switchScene && m_hasUnmaterializedChanges) {
+    m_request_rematerialization();
+    if (!m_needRematerialization)
+      switchScene = false;
+  }
+  if (switchScene) {
+    m_showOriginalScene = !m_showOriginalScene;
+    std::cout << "Displaying "
+              << (m_showOriginalScene ? "original scene" : "graph editor")
+              << " (F1 to switch)\n";
+  }
+
+  if (m_needRematerialization || switchScene) {
     m_matCtx.reset();
     m_materializedWorkflow = m_currentWorkflow;
-    m_inject_into_workflow(m_materializedWorkflow);
+    if (!m_showOriginalScene)
+      m_inject_into_workflow(m_materializedWorkflow);
     m_matCtx.emplace(m_me, m_materializedWorkflow);
     m_materializedCtx.reset(createEditorContext());
     m_needMaterializedUntangleLayout = true;
@@ -1596,6 +1613,8 @@ void GraphEditor::onGui(GraphScene &scene, const Frame &frame) {
   auto &workflow = m_currentWorkflow;
   ImGui::Text("fps: %.2f, nodes: %lld", m_me.window().clock().fps(),
               std::distance(workflow.begin(), workflow.end()));
+  ImGui::SameLine();
+  ImGui::TextDisabled("F1: show original scene");
   ImGui::SameLine();
   ImGui::BeginDisabled(!m_hasUnmaterializedChanges || m_needRematerialization);
   if (ImGui::Button("Rematerialize"))
