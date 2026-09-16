@@ -346,6 +346,8 @@ public:
   }
 
   ~FONode() override {
+    if (isDestroyed())
+      return;
     for (auto &obj : m_objects)
       m_deleter.destroyObject(*std::move(obj));
   }
@@ -603,6 +605,8 @@ public:
   }
 
   ~FONode() override {
+    if (isDestroyed())
+      return;
     for (auto &obj : m_objects)
       m_deleter.destroyObject(*std::move(obj));
   }

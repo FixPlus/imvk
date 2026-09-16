@@ -1435,6 +1435,13 @@ void GraphEditor::onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
               << " (F1 to switch)\n";
   }
 
+  // Record frame.
+  assert(m_matCtx);
+  m_matCtx->run(commands, frame);
+
+  // Rematerialization may involve swapchain usage change which will become
+  // observable on the next frame, therefore delay rematerialization until
+  // current frame is recorded.
   if (m_needRematerialization || switchScene) {
     m_matCtx.reset();
     m_materializedWorkflow = m_currentWorkflow;
@@ -1446,8 +1453,6 @@ void GraphEditor::onRecord(vkw::BufferRecorder &commands, const Frame &frame) {
     m_hasUnmaterializedChanges = false;
     m_needRematerialization = false;
   }
-  assert(m_matCtx);
-  m_matCtx->run(commands, frame);
 }
 
 void GraphEditor::m_request_rematerialization() {

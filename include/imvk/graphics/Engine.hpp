@@ -93,11 +93,13 @@ public:
         });
   }
 
+  /// @brief Updates swapchain images usage flags. It does not do it immediately
+  /// but rather delays it to next aquire image event.
+  /// @param newUsage new usage flags.
   void setSwapchainUsage(VkImageUsageFlags newUsage) {
     if (m_swapchainUsage != newUsage) {
       m_swapchainUsage = newUsage;
-      m_swapchain->destroy(true);
-      m_swapchain->construct();
+      m_needToRecreateSwapchain = true;
     }
   }
   ~GraphicsEngine() override;
@@ -116,6 +118,7 @@ private:
   Swapchain m_swapchain;
   SSemaphore m_renderComplete;
   Semaphore m_presentComplete;
+  bool m_needToRecreateSwapchain = false;
 };
 
 } // namespace imvk

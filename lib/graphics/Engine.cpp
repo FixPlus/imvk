@@ -25,6 +25,14 @@ GraphicsEngine::GraphicsEngine(Context &context,
 }
 
 bool GraphicsEngine::m_aquireSwapchainImage(const Frame &frame) {
+  if (m_needToRecreateSwapchain && !m_surface_minimized()) {
+    flush();
+    m_swapchain->destroy(/* immediate*/ true);
+    m_swapchain->construct();
+
+    m_needToRecreateSwapchain = false;
+    return false;
+  }
   auto status =
       m_swapchain.get().acquireNextImage(m_presentComplete->use(frame),
                                          /* timeout in milliseconds*/ 1000);
