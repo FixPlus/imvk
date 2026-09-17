@@ -530,6 +530,75 @@ private:
 
 static_assert(sizeof(FirstPersonCamera::Uniform) == sizeof(float) * 20);
 
+class DirectionalPBRLighting {
+public:
+  struct Uniform {
+    glm::vec4 direction{0.0f, -1.0f, 0.0f, 0.0f};
+    glm::vec4 colorIntensity{1.0f};
+    glm::vec4 ambientColorIntensity{1.0f};
+  };
+
+  DirectionalPBRLighting(imvk::GraphicsEngine &engine,
+                         imvk::examples::ShaderLoader &shaderLoader,
+                         const vkw::RenderingFormatInfo &renderingInfo)
+      : m_uniform(
+            engine,
+            [this](const imvk::Frame &, vkw::UniformBuffer<Uniform> &buffer) {
+              buffer.mapped().front() = m_uniformData();
+              buffer.flush();
+            }),
+        m_stage([&]() {
+          auto layout = imvk::StageLayout<imvk::examples::LightingStage>(
+              engine, shaderLoader, "directional_pbr", renderingInfo);
+          auto builder = imvk::StageSetBuilder{engine, layout};
+          builder.addDescriptorSet(4).addDescriptor(m_uniform, 0);
+          return imvk::StageSet<imvk::examples::LightingStage>(
+              std::move(builder));
+        }()) {}
+
+  void onGui() {
+    ImGui::Begin("directional light");
+    ImGui::ColorEdit3("Color", &m_color.x);
+    ImGui::DragFloat("Intensity", &m_intensity, 0.05f, 0.0f, 100.0f, "%.2f");
+    ImGui::DragFloat3("Direction", &m_direction.x, 0.01f, -1.0f, 1.0f, "%.2f");
+    ImGui::TextUnformatted("Direction indicates light-ray travel");
+    ImGui::SeparatorText("Ambient light");
+    ImGui::ColorEdit3("Ambient color", &m_ambientColor.x);
+    ImGui::DragFloat("Ambient intensity", &m_ambientIntensity, 0.01f, 0.0f,
+                     10.0f, "%.2f");
+    ImGui::End();
+  }
+
+  imvk::StageSet<imvk::examples::LightingStage> stage() const {
+    return m_stage;
+  }
+
+private:
+  Uniform m_uniformData() const {
+    auto direction = m_direction;
+    if (glm::dot(direction, direction) < 0.0001f)
+      direction = glm::vec3{0.0f, -1.0f, 0.0f};
+    else
+      direction = glm::normalize(direction);
+    return {.direction = glm::vec4{direction, 0.0f},
+            .colorIntensity = glm::vec4{glm::max(m_color, glm::vec3{0.0f}),
+                                        std::max(m_intensity, 0.0f)},
+            .ambientColorIntensity =
+                glm::vec4{glm::max(m_ambientColor, glm::vec3{0.0f}),
+                          std::max(m_ambientIntensity, 0.0f)}};
+  }
+
+  glm::vec3 m_direction{-0.4f, -1.0f, -0.25f};
+  glm::vec3 m_color{1.0f, 0.95f, 0.85f};
+  float m_intensity = 5.0f;
+  glm::vec3 m_ambientColor{0.55f, 0.65f, 1.0f};
+  float m_ambientIntensity = 0.25f;
+  UniformBuffer<Uniform, imvk::fon_type::swap_mut> m_uniform;
+  imvk::StageSet<imvk::examples::LightingStage> m_stage;
+};
+
+static_assert(sizeof(DirectionalPBRLighting::Uniform) == sizeof(float) * 12);
+
 class ExampleEnvironment : public imvk::examples::MaterializationEnvironment {
 public:
   ExampleEnvironment(imvk::GraphicsEngine &engine,
@@ -554,15 +623,12 @@ public:
             const imvk::graph::Scene::MaterializationInfo &sceneInfo)
       : m_env(env),
         m_gui(env.window(), env.engine(), env.copyEngine(), env.shaderLoader()),
-        m_offscreenWidget(env.engine(), m_gui) {
+        m_offscreenWidget(env.engine(), m_gui),
+        m_lighting(env.engine(), env.shaderLoader(), sceneInfo.renderingInfo) {
     assert(sceneInfo.descriptors.size() == 1);
     m_offscreenWidget.updateImage(sceneInfo.descriptors.front().descriptor);
     m_gui.updateRenderingInfo(sceneInfo.renderingInfo,
                               sceneInfo.framebufferInfo);
-    m_lighting = imvk::StageSetBuilder{
-        m_env.engine(), imvk::StageLayout<imvk::examples::LightingStage>(
-                            m_env.engine(), m_env.shaderLoader(), "identity",
-                            sceneInfo.renderingInfo)};
   }
   static imvk::graph::Scene get() {
     imvk::graph::Scene ret{};
@@ -594,11 +660,12 @@ public:
       ImGui::TextUnformatted("W/A/S/D: move, Space/Ctrl: up/down");
       ImGui::TextUnformatted("Left Shift: move faster");
       ImGui::End();
+      m_lighting.onGui();
     });
     m_env.camera().update();
     imvk::examples::PipelineManager mng{m_env.pipelinePool(), commands, frame};
     m_env.model().draw(mng, commands, frame, m_env.camera().projection(),
-                       m_lighting);
+                       m_lighting.stage());
 
     m_gui.draw(mng, commands, frame);
   }
@@ -607,7 +674,7 @@ private:
   ExampleEnvironment &m_env;
   imvk::examples::GUI m_gui;
   MySampleWidget m_offscreenWidget;
-  imvk::StageSet<imvk::examples::LightingStage> m_lighting = nullptr;
+  DirectionalPBRLighting m_lighting;
 };
 
 int app() try {
