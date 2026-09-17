@@ -1157,6 +1157,7 @@ void GLTFModel::Materialized::draw(PipelineManager &pipelineManager,
   auto &indices = m_impl->indices->use(frame);
   commands.bindVertexBuffer(vertices, 0, 0);
   commands.bindIndexBuffer(indices, 0);
+  pipelineManager.bind(m_impl->geometry, projection, lighting);
   for (const auto &primitive : m_impl->primitives) {
     const auto material = primitive.material >= 0
                               ? static_cast<size_t>(primitive.material) + 1
@@ -1164,8 +1165,7 @@ void GLTFModel::Materialized::draw(PipelineManager &pipelineManager,
     if (material >= m_impl->materials.size())
       modelError(m_impl->sourcePath,
                  "primitive references an invalid material");
-    pipelineManager.bind(m_impl->geometry, projection,
-                         m_impl->materials[material].stage, lighting);
+    pipelineManager.bind(m_impl->materials[material].stage);
     pipelineManager.bindPipeline();
     commands.drawIndexed(primitive.indexCount, 1, primitive.firstIndex, 0, 0);
   }
