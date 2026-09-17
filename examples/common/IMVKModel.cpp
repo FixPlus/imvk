@@ -730,7 +730,7 @@ VkSamplerCreateInfo samplerInfo(const tg3_model &model, int32_t samplerIndex,
   result.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   result.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   result.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  result.maxLod = 0.0f;
+  result.maxLod = VK_LOD_CLAMP_NONE;
   if (samplerIndex < 0)
     return result;
   if (static_cast<uint32_t>(samplerIndex) >= model.samplers_count)

@@ -2,6 +2,8 @@
 
 #include <vkw/StagingBuffer.hpp>
 
+#include <algorithm>
+#include <bit>
 #include <limits>
 #include <sstream>
 
@@ -58,7 +60,8 @@ SampledViewImpl::doConstructNew(FramedEngine &engine,
   samplerInfo.pNext = nullptr;
   return std::pair<vkw::ImageView<vkw::COLOR, vkw::V2D>, vkw::Sampler>(
       vkw::ImageView<vkw::COLOR, vkw::V2D>(engine.context().device(), image,
-                                           image.format()),
+                                           image.format(), 0,
+                                           image.mipLevels()),
       vkw::Sampler(engine.context().device(), samplerInfo));
 }
 
@@ -81,37 +84,30 @@ struct ImageInit : public imvk::CopyEngine::Workload {
 };
 
 void ImageInit::record(vkw::TransferPassRecorder &commands) const {
-  VkImageMemoryBarrier transitLayout1{};
-  transitLayout1.image = dst.vkw::AllocatedImage::operator VkImage_T *();
-  transitLayout1.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  transitLayout1.pNext = nullptr;
-  transitLayout1.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  transitLayout1.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-  transitLayout1.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  transitLayout1.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  transitLayout1.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  transitLayout1.subresourceRange.baseArrayLayer = 0;
-  transitLayout1.subresourceRange.baseMipLevel = 0;
-  transitLayout1.subresourceRange.layerCount = 1;
-  transitLayout1.subresourceRange.levelCount = 1;
-  transitLayout1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  transitLayout1.srcAccessMask = 0;
+  const auto image = dst.vkw::AllocatedImage::operator VkImage_T *();
+  const auto barrier = [&](uint32_t baseMipLevel, uint32_t levelCount,
+                           VkImageLayout oldLayout, VkImageLayout newLayout,
+                           VkAccessFlags srcAccess, VkAccessFlags dstAccess) {
+    VkImageMemoryBarrier result{};
+    result.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    result.image = image;
+    result.oldLayout = oldLayout;
+    result.newLayout = newLayout;
+    result.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    result.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    result.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    result.subresourceRange.baseMipLevel = baseMipLevel;
+    result.subresourceRange.levelCount = levelCount;
+    result.subresourceRange.baseArrayLayer = 0;
+    result.subresourceRange.layerCount = 1;
+    result.srcAccessMask = srcAccess;
+    result.dstAccessMask = dstAccess;
+    return result;
+  };
 
-  VkImageMemoryBarrier transitLayout2{};
-  transitLayout2.image = dst.vkw::AllocatedImage::operator VkImage_T *();
-  transitLayout2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  transitLayout2.pNext = nullptr;
-  transitLayout2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-  transitLayout2.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-  transitLayout2.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  transitLayout2.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  transitLayout2.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  transitLayout2.subresourceRange.baseArrayLayer = 0;
-  transitLayout2.subresourceRange.baseMipLevel = 0;
-  transitLayout2.subresourceRange.layerCount = 1;
-  transitLayout2.subresourceRange.levelCount = 1;
-  transitLayout2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-  transitLayout2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  const auto prepareForCopy = barrier(
+      0, dst.mipLevels(), VK_IMAGE_LAYOUT_UNDEFINED,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
 
   VkBufferImageCopy copy{};
   copy.imageExtent = {dst.width(), dst.height(), 1};
@@ -121,12 +117,54 @@ void ImageInit::record(vkw::TransferPassRecorder &commands) const {
   copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   commands.imageMemoryBarrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                               VK_PIPELINE_STAGE_TRANSFER_BIT,
-                              {&transitLayout1, 1});
+                              {&prepareForCopy, 1});
   commands.copyBufferToImage(src, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                              {&copy, 1});
+
+  auto srcWidth = dst.width();
+  auto srcHeight = dst.height();
+  for (uint32_t mipLevel = 1; mipLevel < dst.mipLevels(); ++mipLevel) {
+    const auto prepareForBlit =
+        barrier(mipLevel - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    commands.imageMemoryBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                {&prepareForBlit, 1});
+
+    const auto dstWidth = std::max(srcWidth / 2, 1u);
+    const auto dstHeight = std::max(srcHeight / 2, 1u);
+    VkImageBlit blit{};
+    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.srcSubresource.mipLevel = mipLevel - 1;
+    blit.srcSubresource.layerCount = 1;
+    blit.srcOffsets[1] = {static_cast<int32_t>(srcWidth),
+                          static_cast<int32_t>(srcHeight), 1};
+    blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.dstSubresource.mipLevel = mipLevel;
+    blit.dstSubresource.layerCount = 1;
+    blit.dstOffsets[1] = {static_cast<int32_t>(dstWidth),
+                          static_cast<int32_t>(dstHeight), 1};
+    commands.blitImage(dst, blit, false, VK_FILTER_LINEAR);
+
+    const auto finishSource =
+        barrier(mipLevel - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
+    commands.imageMemoryBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                {&finishSource, 1});
+    srcWidth = dstWidth;
+    srcHeight = dstHeight;
+  }
+
+  const auto finishLast =
+      barrier(dst.mipLevels() - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+              VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
   commands.imageMemoryBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
                               VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                              {&transitLayout2, 1});
+                              {&finishLast, 1});
 }
 
 } // namespace
@@ -173,16 +211,36 @@ vkw::Image<vkw::COLOR, vkw::I2D>
 Texture::load(FramedEngine &engine, CopyEngine &ce,
               std::span<const unsigned char> data, unsigned width,
               unsigned height, VkFormat format) {
+  if (width == 0 || height == 0)
+    throw std::runtime_error("Texture dimensions must be nonzero");
+
+  const auto mipLevels =
+      static_cast<uint32_t>(std::bit_width(std::max(width, height)));
   VmaAllocationCreateInfo allocInfo{};
 
   auto &device = ce.context().device();
+  if (mipLevels > 1) {
+    VkFormatProperties formatProperties{};
+    device.parent().core<1, 0>().vkGetPhysicalDeviceFormatProperties(
+        device.physicalDevice(), format, &formatProperties);
+    constexpr auto requiredFormatFeatures =
+        VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    if ((formatProperties.optimalTilingFeatures & requiredFormatFeatures) !=
+        requiredFormatFeatures)
+      throw std::runtime_error(
+          "Texture format does not support linear mipmap generation");
+  }
+
   allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
   allocInfo.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
   auto ret = vkw::Image<vkw::COLOR, vkw::I2D>(
       ce.context().getDeviceAllocator(), allocInfo, format,
-      static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1, 1, 1,
-      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+      static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1, 1,
+      mipLevels,
+      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+          VK_IMAGE_USAGE_SAMPLED_BIT);
   auto copyFuture = ce.copy(
       std::make_unique<ImageInit>(vkw::StagingBuffer<unsigned char>(
                                       ce.context().getDeviceAllocator(), data),
